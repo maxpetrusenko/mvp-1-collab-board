@@ -82,6 +82,22 @@ Projected monthly costs:
 
 Selected option: A.
 
+### 3.0 Build-vs-Buy Scorecard (OSS-First)
+Goal: avoid paid lock-in unless speed/risk clearly requires it.
+
+| Option | License/Cost | Strengths | Risks | Recommendation |
+|---|---|---|---|---|
+| Current: Firebase + custom sync | Managed usage-based, generous free tier | Already implemented, fastest continued delivery | Not CRDT by default, vendor coupling | Keep for MVP + immediate iteration |
+| Yjs + Hocuspocus + Postgres/Supabase | Open source core (self-hostable) | Strong CRDT collaboration model, no per-seat vendor tax | Higher ops complexity and migration effort | Best OSS migration candidate post-MVP |
+| Automerge + custom transport | Open source core | Full control, strong local-first story | Highest engineering effort for production hardening | R&D only unless team size increases |
+| Liveblocks | Commercial SaaS (free starter tier) | Fastest advanced collab features (comments, presence, threads) | Ongoing SaaS spend and dependency | Use only if deadline risk spikes |
+
+Decision checkpoint:
+- Current phase (through MVP + submission): stay on Firebase custom sync.
+- Post-MVP phase (starting 2026-02-23): run a 1-2 day Yjs/Hocuspocus spike and compare migration cost against roadmap value.
+- Escalate to Liveblocks only if we miss reliability targets under >20 concurrent users or cannot ship required collaboration features on schedule.
+- Spike output artifact: `YJS_SPIKE.md`.
+
 ### 3.1 Hosting and Deployment
 - Frontend: Firebase Hosting.
 - API and AI actions: Firebase Cloud Functions.
@@ -215,6 +231,35 @@ Mitigation:
 - TypeScript strict mode.
 - ESLint + Prettier.
 - Conventions: `camelCase` vars/functions, `PascalCase` components/types.
+
+### Post-MVP Feature Roadmap (Prioritized)
+AI-first differentiators (highest leverage):
+- Smart layout analysis and auto-arrange commands.
+- Sticky/theme synthesis from board content.
+- Layout suggestions based on board intent (retro/roadmap/brainstorm).
+- Multi-modal ingest (screenshot to stickies via OCR).
+- One-shot template generation with multi-step AI plans.
+
+Interactive parity features:
+- Connectors/arrows with snapping.
+- Frames and grouped regions with titles.
+- Undo/redo command history.
+- Comments with mentions.
+- Voting mode and facilitation timer.
+- Mini-map navigation.
+
+Unique extensions:
+- Voice commands (Web Speech API).
+- Template library with one-click board setups.
+- Export selection/full board to image and PDF.
+- Activity timeline (board replay).
+- AI chat sidebar grounded in current board state.
+
+Polish:
+- Keyboard shortcut reference panel.
+- First-run onboarding tour.
+- Loading skeleton states for async operations.
+- Lightweight object animation for create/delete/move feedback.
 
 ## 5) Final Stack Decision
 - Frontend: React + TypeScript + Konva

@@ -13,11 +13,13 @@
   },
   "dependencies": {
     "firebase": "^12.9.0",
+    "jspdf": "^4.1.0",
     "konva": "^10.2.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-konva": "^19.2.2",
     "react-router-dom": "^7.13.0",
+    "tesseract.js": "^7.0.0",
     "zustand": "^5.0.11"
   },
   "devDependencies": {

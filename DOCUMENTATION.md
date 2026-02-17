@@ -18,6 +18,9 @@ This file is the entry point for all project documents in this repository.
 
 - `DEMO_SCRIPT.md` - demo walkthrough script.
 - `SUBMISSION_PACKAGE.md` - checklist for final submission package.
+- `submission/DEMO_VIDEO.md` - demo media artifact details and URL.
+- `submission/SOCIAL_POST_DRAFT.md` - social post draft and asset references.
+- `submission/SUBMISSION_FREEZE_2026-02-17.md` - freeze record with integrity/hash manifest.
 - `AI_DEVELOPMENT_LOG.md` - required AI workflow and learnings log.
 - `AI_COST_ANALYSIS.md` - development cost + scaling projections.
 
@@ -25,7 +28,16 @@ This file is the entry point for all project documents in this repository.
 
 - `TEST_EVIDENCE.md` - verification notes and evidence summary.
 - `app/playwright.config.ts` - E2E test runner configuration.
-- `app/tests/` - end-to-end test cases.
+- `app/e2e/` - end-to-end test cases (UI and API-level concurrency).
+  - includes `app/e2e/mvp-regression.spec.ts` for MVP create/drag/undo-redo regression coverage.
+- `scripts/run-critical-checks.sh` - authenticated backend critical checks.
+- `scripts/run-submission-qa.sh` - submission package QA + link validation.
+- `submission/test-artifacts/` - generated test and QA artifacts.
+
+## Session and Ops Traceability
+
+- `Sessions/` - session transcript summaries and curriculum package for Notion export.
+- `LINEAR_T027_T039_IMPORT.md` - copy-ready Linear sync payload for post-MVP tickets.
 
 ## Architecture and Code Layout
 

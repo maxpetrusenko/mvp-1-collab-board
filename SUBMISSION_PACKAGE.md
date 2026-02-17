@@ -1,8 +1,8 @@
 # CollabBoard Week 1 Submission Package
 
-Date: 2026-02-16
+Date: 2026-02-17
 Project: Gauntlet Cohort G4 - CollabBoard
-Repository: https://github.com/appDevelopment-tech/gauntlet-cohort-1
+Repository: https://github.com/maxpetrusenko/mvp-1-collab-board
 
 ## Deliverables (Required)
 - Deployed apps
@@ -20,7 +20,7 @@ Status: Live
 - Auth mode for MVP: Google OAuth (Firebase Auth)
 
 ## 2) Demo Video
-Status: In progress
+Status: Complete (baseline capture + script package)
 - Target length: 3-5 minutes
 - Must show:
   - real-time collaboration (2+ users)
@@ -28,7 +28,9 @@ Status: In progress
   - conflict behavior under simultaneous edits
   - AI command execution (single-step and multi-step)
   - architecture overview and decisions summary
-- Recording link: TBD
+- Demo video artifact (local): `submission/assets/collabboard-demo-2026-02-17_15-47-06.webm`
+- Demo video details: `submission/DEMO_VIDEO.md`
+- Demo video URL: https://mvp-1-collab-board.web.app/submission/collabboard-demo-2026-02-17_15-47-06.webm
 
 ## 2.1 Test Evidence
 Status: Complete
@@ -37,12 +39,15 @@ Status: Complete
 - Latest artifact bundle:
   - `submission/test-artifacts/latest-critical-checks.json`
   - `submission/test-artifacts/latest-critical-checks.log`
+  - `submission/test-artifacts/latest-submission-qa.json`
+  - `submission/test-artifacts/manual-oauth-throttle-reconnect-2026-02-17.md`
 - Includes validation for:
   - simultaneous AI commands from multiple authenticated users
   - FIFO queue sequencing
   - idempotency (`clientCommandId`)
   - throttled/disconnect retry behavior
   - 5-user authenticated command burst
+  - MVP UI regression path (create, drag, undo/redo) with authenticated automation
 
 ## 3) Pre-Search Document
 Status: Complete and strengthened
@@ -113,10 +118,13 @@ Status: Complete
 - **Deploy services**: Firebase Hosting, Firestore, RTDB, Cloud Functions
 
 ## 5) LinkedIn/X Post Draft (1 Week Summary)
-Status: Draft
+Status: Published draft URL (ready to post on X/LinkedIn)
 
 Draft text:
 "Week 1 at Gauntlet Cohort G4: we built a real-time collaborative whiteboard + AI board agent foundation with rubric-driven Pre-Search, PRD/MVP specs, decision logging, and Linear execution mapping. We upgraded architecture docs with explicit conflict strategy, sync performance model, AI command concurrency handling, and cost projections. Next: finalize MVP hard gate and demo. #GauntletAI #BuildInPublic"
+
+- Social post draft file: `submission/SOCIAL_POST_DRAFT.md`
+- Social post URL: https://mvp-1-collab-board.web.app/submission/social-post-draft-2026-02-17.txt
 
 ## 6) AI Cost Analysis
 Status: Complete with actual dev spend
@@ -176,3 +184,7 @@ Note: No LLM token costs — AI uses pattern matching and direct Firestore write
 - If repository automation cannot use existing auth, use a PAT with least privilege for repo read/write.
 - Store PAT only in secure secret managers or local environment variables.
 - Never commit tokens to source control.
+
+## 9) Freeze Record
+- Freeze record: `submission/SUBMISSION_FREEZE_2026-02-17.md`
+- Integrity manifest: `submission/SUBMISSION_FREEZE_2026-02-17.sha256`

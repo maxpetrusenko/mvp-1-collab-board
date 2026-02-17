@@ -1,7 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth'
+import { onAuthStateChanged, signInWithEmailAndPassword, signInWithPopup, signOut } from 'firebase/auth'
 import type { User } from 'firebase/auth'
 
 import { missingFirebaseEnvKeys } from '../config/env'
@@ -13,6 +13,7 @@ type AuthContextValue = {
   configured: boolean
   configError: string | null
   signInWithGoogle: () => Promise<void>
+  signInWithEmailPassword: (email: string, password: string) => Promise<void>
   signOutUser: () => Promise<void>
 }
 
@@ -51,6 +52,15 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           throw new Error(firebaseConfigError || 'Firebase auth is not configured')
         }
         await signInWithPopup(auth, googleProvider)
+      },
+      signInWithEmailPassword: async (email: string, password: string) => {
+        if (!auth) {
+          throw new Error(firebaseConfigError || 'Firebase auth is not configured')
+        }
+        if (!email.trim() || !password) {
+          throw new Error('Email and password are required')
+        }
+        await signInWithEmailAndPassword(auth, email.trim(), password)
       },
       signOutUser: async () => {
         if (!auth) {

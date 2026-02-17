@@ -1,6 +1,6 @@
 # Test Evidence (Critical Requirements)
 
-Date: 2026-02-16  
+Date: 2026-02-17  
 Project: CollabBoard MVP-1
 
 ## Automated Evidence Run
@@ -11,8 +11,12 @@ scripts/run-critical-checks.sh
 ```
 
 Latest artifact:
-- `submission/test-artifacts/critical-checks-1771279723.json`
-- `submission/test-artifacts/critical-checks-1771279723.log`
+- `submission/test-artifacts/critical-checks-1771344969.json`
+- `submission/test-artifacts/critical-checks-1771344969.log`
+- `submission/test-artifacts/latest-critical-checks.json`
+- `submission/test-artifacts/latest-critical-checks.log`
+- `submission/test-artifacts/manual-oauth-throttle-reconnect-2026-02-17.md`
+- `submission/test-artifacts/latest-submission-qa.json`
 
 ## Results Summary
 
@@ -32,8 +36,26 @@ cd app && npm run test:e2e
 ```
 
 Result:
-- 6 passed
-- 5 skipped (manual/auth-required demo flows)
+- 13 passed
+- 0 skipped
+
+Additional automated spec:
+```bash
+cd app && npx playwright test e2e/ai-concurrency.spec.ts
+```
+
+Result:
+- 2 passed
+- Validated concurrent authenticated AI command execution, FIFO queue ordering evidence, idempotency, and 5-user burst
+
+MVP regression spec:
+```bash
+cd app && npx playwright test e2e/mvp-regression.spec.ts
+```
+
+Result:
+- 1 passed
+- Validated core MVP board flows: create sticky, drag sticky (position persisted), create shape, undo/redo state transitions
 
 ## Requirement Coverage Matrix
 
@@ -43,9 +65,10 @@ Result:
 | Simultaneous AI commands from multiple users | PASS | Verified with 2 real authenticated users and queue evidence |
 | 5+ users with auth | PASS (backend/API path) | Verified with 5 authenticated temp users |
 | Reconnect/disconnect recovery | PASS (backend/API retry semantics) | Timeout/retry succeeded without duplicate corruption |
-| Full authenticated UI E2E (Google OAuth flow) | PARTIAL | Manual due OAuth interactive constraints |
+| Full authenticated UI E2E (automated auth path) | PASS | QA email/password auth path via `/login?qaAuth=1` covers authenticated board UI flows |
+| Google OAuth popup click-through flow | PARTIAL | Popup interaction itself remains manual; auth-required board behavior is automated |
 
 ## Notes
 
-- The backend critical behaviors are now reproducibly validated with real Firebase-authenticated users.
-- Remaining manual portion is end-to-end UI OAuth interaction (expected for hosted Google popup auth).
+- Backend critical behaviors are reproducibly validated with real Firebase-authenticated users.
+- MVP UI regression path is automated end-to-end with authenticated board actions.

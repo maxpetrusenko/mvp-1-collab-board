@@ -159,7 +159,76 @@ Purpose: log system decisions, alternatives, rationale, and change history.
 - Consequences: Adds imperative stage-management layer.
 - Revisit Trigger: If simpler model meets performance targets in production.
 
+### D-017
+- Date: 2026-02-17
+- Status: Accepted
+- Decision: Keep collaboration infrastructure in-house for MVP (Firebase + custom sync) instead of adopting Liveblocks during sprint.
+- Alternatives Considered: Liveblocks managed collaboration SDK, Supabase Realtime + Yjs, PartyKit/Socket.IO custom server.
+- Rationale: Team learning goal is to demonstrate end-to-end understanding of multiplayer sync, conflict behavior, and failure recovery; managed SDKs would reduce learning surface and hide key tradeoffs.
+- Consequences: More engineering/testing effort is required for presence, conflict handling, and realtime reliability.
+- Revisit Trigger: Timeline risk, reliability gaps, or enterprise requirements (threads/comments/CRDT-grade guarantees) exceed team capacity.
+
+### D-018
+- Date: 2026-02-17
+- Status: Accepted
+- Decision: Use AI as a coding copilot with human-owned architecture and test verification, rather than copy-pasting full starter projects.
+- Alternatives Considered: Clone-ready boilerplates with minimal edits, low-test copy/paste workflow.
+- Rationale: Produces defensible technical decisions for demo/review and validates whether AI can help build features from scratch under constraints.
+- Consequences: Slightly slower initial velocity, stronger system comprehension, and clearer audit trail of why decisions changed.
+- Revisit Trigger: Hard deadline pressure requires selective use of prebuilt modules to ship critical scope.
+
+### D-019
+- Date: 2026-02-17
+- Status: Accepted
+- Decision: Maintain an OSS-first collaboration strategy; paid collaboration SaaS is fallback, not default.
+- Alternatives Considered: Immediate migration to Liveblocks or equivalent managed collaboration platform.
+- Rationale: Controls recurring cost, preserves architecture ownership, and aligns with learning objective to implement collaboration primitives directly.
+- Consequences: Team must absorb more implementation and reliability testing work for advanced collaboration features.
+- Revisit Trigger: If OSS/custom path cannot meet reliability or delivery targets for required concurrency and feature scope.
+
+### D-020
+- Date: 2026-02-17
+- Status: Accepted
+- Decision: Model connectors as first-class board objects with absolute `start/end` points plus optional anchor bindings to sticky/shape objects.
+- Alternatives Considered: Treat connectors as purely visual overlays or store only object-to-object references without explicit coordinates.
+- Rationale: Explicit coordinates keep rendering deterministic and support drag interactions; anchor bindings enable snap behavior while preserving graceful fallback to free endpoints.
+- Consequences: Connector updates write more fields (`start/end/position/size` and bindings), requiring additional reconcile logic.
+- Revisit Trigger: If connector-heavy boards show write amplification or require CRDT-grade edge editing semantics.
+
+### D-021
+- Date: 2026-02-17
+- Status: Accepted
+- Decision: Implement post-MVP collaboration/facilitation features incrementally on current architecture (frames, local undo/redo history, comments, voting/timer, timeline replay, mini-map, OCR/voice inputs) before any realtime backend migration.
+- Alternatives Considered: Pause feature delivery and migrate to Yjs/CRDT stack first.
+- Rationale: Preserves delivery momentum and validates product value quickly while migration risk is evaluated in parallel via dedicated spike work.
+- Consequences: Some advanced semantics remain LWW-based and may need rework if migrating to CRDT later.
+- Revisit Trigger: If multi-user conflict quality or scale targets fail under test scenarios.
+
+### D-022
+- Date: 2026-02-17
+- Status: Accepted
+- Decision: Publish submission-only demo/social artifacts as static files under Firebase Hosting and enforce a scripted submission QA gate.
+- Alternatives Considered: Keep links as local/private-repo-only references; rely on manual checklist verification.
+- Rationale: Public URLs are required for evaluator access, and scripted QA reduces last-minute misses across PDFs, links, and artifact presence.
+- Consequences: Hosting deployment now includes submission assets and periodic QA script execution.
+- Revisit Trigger: If submission assets need to move to a dedicated public docs bucket/CDN.
+
+### D-023
+- Date: 2026-02-17
+- Status: Accepted
+- Decision: Add an automated QA auth path (`/login?qaAuth=1`) using Firebase email/password for Playwright, while keeping Google OAuth as primary user-facing sign-in.
+- Alternatives Considered: Continue manual OAuth-only e2e checks with skipped tests.
+- Rationale: Eliminates skipped core authenticated UI tests and enforces MVP regression checks in CI-style automation.
+- Consequences: Additional login UI branch exists for test automation and requires secure handling of test accounts.
+- Revisit Trigger: If service-account/custom-token auth setup replaces UI-based QA login automation.
+
 ## Change Log
 - 2026-02-16: Initial decision set created.
 - 2026-02-16: Added auth provider, deployment URL strategy, and error recovery UX decisions.
 - 2026-02-16: Added schema contracts, LWW write semantics, AI idempotency/queueing, offline strategy, testing tooling, and Konva performance decision.
+- 2026-02-17: Added build-vs-buy decision for Liveblocks alternatives and AI-first-from-scratch workflow policy.
+- 2026-02-17: Added OSS-first policy for collaboration infrastructure and paid SaaS fallback trigger.
+- 2026-02-17: Added connector object modeling and anchor snap decision.
+- 2026-02-17: Added incremental post-MVP feature delivery decision ahead of CRDT migration.
+- 2026-02-17: Added hosted submission artifact and scripted submission QA decision.
+- 2026-02-17: Added automated QA auth decision to remove skipped authenticated e2e tests.

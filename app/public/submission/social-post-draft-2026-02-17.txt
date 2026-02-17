@@ -1,0 +1,15 @@
+Week 1 at @GauntletAI: shipped a realtime collaborative whiteboard MVP with AI board commands.
+
+What is live now:
+- multiplayer presence + object sync
+- sticky notes, shapes, frames, connectors
+- undo/redo, comments, voting, timer, mini-map
+- AI commands for templates, layout organization, and sticky-theme synthesis
+- export to PNG/PDF + OCR ingest + voice command input
+
+Stack: React + Konva + Firebase (Auth, Firestore, RTDB, Functions)
+
+Live app: https://mvp-1-collab-board.web.app
+Repository docs package: private repo + exported PDFs in submission package
+
+#GauntletAI #BuildInPublic #Firebase #React #AI

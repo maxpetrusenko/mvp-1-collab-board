@@ -243,5 +243,8 @@ jq -n \
     queueEvidence: $queue
   }' >"$SUMMARY_JSON"
 
+cp "$SUMMARY_JSON" "$OUT_DIR/latest-critical-checks.json"
+cp "$RAW_LOG" "$OUT_DIR/latest-critical-checks.log"
+
 log "Done. Summary: $SUMMARY_JSON"
 cat "$SUMMARY_JSON"

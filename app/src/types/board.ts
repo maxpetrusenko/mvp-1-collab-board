@@ -1,5 +1,6 @@
-export type BoardObjectKind = 'stickyNote' | 'shape'
-export type ShapeKind = 'rectangle'
+export type BoardObjectKind = 'stickyNote' | 'shape' | 'frame' | 'connector'
+export type ShapeKind = 'rectangle' | 'circle' | 'diamond' | 'triangle'
+export type AnchorKind = 'top' | 'right' | 'bottom' | 'left' | 'center'
 
 export type Point = {
   x: number
@@ -9,6 +10,14 @@ export type Point = {
 export type Size = {
   width: number
   height: number
+}
+
+export type BoardComment = {
+  id: string
+  text: string
+  createdBy: string
+  createdByName: string
+  createdAt: number
 }
 
 type BoardObjectBase = {
@@ -23,6 +32,8 @@ type BoardObjectBase = {
   updatedBy: string
   updatedAt: number
   version: number
+  comments?: BoardComment[]
+  votesByUser?: Record<string, true>
   deleted?: boolean
 }
 
@@ -38,7 +49,35 @@ export type ShapeObject = BoardObjectBase & {
   color: string
 }
 
-export type BoardObject = StickyNoteObject | ShapeObject
+export type FrameObject = BoardObjectBase & {
+  type: 'frame'
+  title: string
+  color: string
+}
+
+export type ConnectorObject = BoardObjectBase & {
+  type: 'connector'
+  start: Point
+  end: Point
+  color: string
+  fromObjectId?: string | null
+  toObjectId?: string | null
+  fromAnchor?: AnchorKind | null
+  toAnchor?: AnchorKind | null
+}
+
+export type BoardObject = StickyNoteObject | ShapeObject | FrameObject | ConnectorObject
+
+export type BoardActivityEvent = {
+  id: string
+  boardId: string
+  actorId: string
+  actorName: string
+  action: string
+  targetId?: string | null
+  targetType?: BoardObjectKind | null
+  createdAt: number
+}
 
 export type CursorPresence = {
   boardId: string

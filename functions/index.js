@@ -142,6 +142,20 @@ const getBoardState = async (boardId) => {
 }
 
 const getNextZIndex = (objects) => objects.reduce((maxZ, obj) => Math.max(maxZ, obj.zIndex || 0), 0) + 1
+const toConnectorBounds = (start, end) => ({
+  position: {
+    x: Math.min(start.x, end.x),
+    y: Math.min(start.y, end.y),
+  },
+  size: {
+    width: Math.max(1, Math.abs(end.x - start.x)),
+    height: Math.max(1, Math.abs(end.y - start.y)),
+  },
+})
+const getObjectCenter = (object) => ({
+  x: parseNumber(object?.position?.x, 0) + parseNumber(object?.size?.width, 0) / 2,
+  y: parseNumber(object?.position?.y, 0) + parseNumber(object?.size?.height, 0) / 2,
+})
 
 const writeObject = async ({ boardId, objectId, payload, merge = false }) => {
   const ref = getObjectsRef(boardId).doc(objectId)
@@ -208,37 +222,81 @@ const createShape = async (ctx, args) => {
 }
 
 const createFrame = async (ctx, args) => {
-  const frame = await createShape(ctx, {
-    type: 'rectangle',
-    x: parseNumber(args.x, 120),
-    y: parseNumber(args.y, 120),
-    width: parseNumber(args.width, 480),
-    height: parseNumber(args.height, 300),
+  const id = crypto.randomUUID()
+  const now = nowMs()
+  const zIndex = getNextZIndex(ctx.state)
+  const frame = {
+    id,
+    boardId: ctx.boardId,
+    type: 'frame',
+    title: sanitizeText(args.title || 'Frame'),
     color: '#e2e8f0',
-  })
-
-  if (args.title) {
-    await createStickyNote(ctx, {
-      text: sanitizeText(args.title),
-      x: frame.position.x + 16,
-      y: frame.position.y + 12,
-      color: '#ffffff',
-    })
+    position: {
+      x: parseNumber(args.x, 120),
+      y: parseNumber(args.y, 120),
+    },
+    size: {
+      width: parseNumber(args.width, 480),
+      height: parseNumber(args.height, 300),
+    },
+    zIndex,
+    createdBy: ctx.userId,
+    createdAt: now,
+    updatedBy: ctx.userId,
+    updatedAt: now,
+    version: 1,
   }
 
+  await writeObject({ boardId: ctx.boardId, objectId: id, payload: frame })
+  ctx.state.push(frame)
   ctx.executedTools.push({ tool: 'createFrame', id: frame.id })
   return frame
 }
 
 const createConnector = async (ctx, args) => {
-  ctx.executedTools.push({
-    tool: 'createConnector',
-    skipped: true,
-    reason: 'Connector rendering is not in MVP frontend; command acknowledged.',
-    fromId: args.fromId || null,
-    toId: args.toId || null,
-  })
-  return null
+  const id = crypto.randomUUID()
+  const now = nowMs()
+  const zIndex = getNextZIndex(ctx.state)
+  const fromObject = ctx.state.find((candidate) => candidate.id === args.fromId)
+  const toObject = ctx.state.find((candidate) => candidate.id === args.toId)
+  const start = fromObject
+    ? getObjectCenter(fromObject)
+    : {
+        x: parseNumber(args.startX, parseNumber(args.x1, 180)),
+        y: parseNumber(args.startY, parseNumber(args.y1, 180)),
+      }
+  const end = toObject
+    ? getObjectCenter(toObject)
+    : {
+        x: parseNumber(args.endX, parseNumber(args.x2, start.x + 180)),
+        y: parseNumber(args.endY, parseNumber(args.y2, start.y + 40)),
+      }
+  const bounds = toConnectorBounds(start, end)
+
+  const connector = {
+    id,
+    boardId: ctx.boardId,
+    type: 'connector',
+    color: toColor(args.color, '#0f172a'),
+    start,
+    end,
+    fromObjectId: fromObject?.id || null,
+    toObjectId: toObject?.id || null,
+    fromAnchor: null,
+    toAnchor: null,
+    ...bounds,
+    zIndex,
+    createdBy: ctx.userId,
+    createdAt: now,
+    updatedBy: ctx.userId,
+    updatedAt: now,
+    version: 1,
+  }
+
+  await writeObject({ boardId: ctx.boardId, objectId: id, payload: connector })
+  ctx.state.push(connector)
+  ctx.executedTools.push({ tool: 'createConnector', id, fromId: args.fromId || null, toId: args.toId || null })
+  return connector
 }
 
 const moveObject = async (ctx, args) => {
@@ -399,6 +457,87 @@ const createJourneyMap = async (ctx, stages) => {
   ctx.executedTools.push({ tool: 'createJourneyMap', count })
 }
 
+const organizeBoardByType = async (ctx) => {
+  const movable = ctx.state.filter((item) => item.type !== 'connector')
+  if (movable.length === 0) {
+    ctx.executedTools.push({ tool: 'organizeBoardByType', count: 0 })
+    return
+  }
+
+  const groups = {
+    frame: movable.filter((item) => item.type === 'frame'),
+    shape: movable.filter((item) => item.type === 'shape'),
+    sticky: movable.filter((item) => item.type === 'stickyNote'),
+  }
+  const orderedGroups = [groups.frame, groups.shape, groups.sticky].filter((group) => group.length > 0)
+  const startX = 80
+  const startY = 90
+  const colGap = 280
+  const rowGap = 160
+
+  for (let col = 0; col < orderedGroups.length; col += 1) {
+    const group = orderedGroups[col]
+    for (let row = 0; row < group.length; row += 1) {
+      const object = group[row]
+      await moveObject(ctx, {
+        objectId: object.id,
+        x: startX + col * colGap,
+        y: startY + row * rowGap,
+      })
+    }
+  }
+
+  ctx.executedTools.push({ tool: 'organizeBoardByType', count: movable.length })
+}
+
+const synthesizeStickyThemes = async (ctx) => {
+  const stickyNotes = ctx.state.filter((item) => item.type === 'stickyNote')
+  if (stickyNotes.length === 0) {
+    ctx.executedTools.push({ tool: 'synthesizeStickyThemes', count: 0 })
+    return
+  }
+
+  const themeMap = new Map()
+  for (const sticky of stickyNotes) {
+    const firstWord = sanitizeText(sticky.text)
+      .toLowerCase()
+      .split(/\W+/)
+      .find((token) => token.length > 2)
+    const key = firstWord || 'general'
+    if (!themeMap.has(key)) {
+      themeMap.set(key, [])
+    }
+    themeMap.get(key).push(sticky)
+  }
+
+  const topThemes = Array.from(themeMap.entries())
+    .sort((left, right) => right[1].length - left[1].length)
+    .slice(0, 5)
+
+  const startX = 920
+  const startY = 120
+  const gapY = 180
+
+  for (let i = 0; i < topThemes.length; i += 1) {
+    const [theme, entries] = topThemes[i]
+    await createFrame(ctx, {
+      x: startX,
+      y: startY + i * gapY,
+      width: 260,
+      height: 150,
+      title: `Theme: ${theme}`,
+    })
+    await createStickyNote(ctx, {
+      text: `${entries.length} notes mention "${theme}"`,
+      x: startX + 16,
+      y: startY + i * gapY + 44,
+      color: '#ffffff',
+    })
+  }
+
+  ctx.executedTools.push({ tool: 'synthesizeStickyThemes', count: topThemes.length })
+}
+
 const runCommandPlan = async (ctx, command) => {
   const normalizedCommand = normalizeCommand(command)
   const lower = normalizedCommand.toLowerCase()
@@ -430,6 +569,19 @@ const runCommandPlan = async (ctx, command) => {
     return
   }
 
+  const connectorMatch = normalizedCommand.match(
+    /^(?:add|create)\s+(?:a|an)?\s*(?:(\w+)\s+)?(?:connector|arrow|line)(?:\s+from\s+([a-z0-9-]+)\s+to\s+([a-z0-9-]+))?/i,
+  )
+  if (connectorMatch) {
+    const [, colorCandidate, fromId, toId] = connectorMatch
+    await createConnector(ctx, {
+      color: colorCandidate,
+      fromId: fromId || undefined,
+      toId: toId || undefined,
+    })
+    return
+  }
+
   if (lower.includes('swot')) {
     await createSwotTemplate(ctx)
     return
@@ -449,6 +601,24 @@ const runCommandPlan = async (ctx, command) => {
   if (lower.includes('arrange') && lower.includes('grid')) {
     const stickyNotes = ctx.state.filter((item) => item.type === 'stickyNote')
     await arrangeGrid(ctx, stickyNotes)
+    return
+  }
+
+  if (
+    lower.includes('organize this board') ||
+    (lower.includes('organize') && lower.includes('column')) ||
+    (lower.includes('layout') && lower.includes('board'))
+  ) {
+    await organizeBoardByType(ctx)
+    return
+  }
+
+  if (
+    (lower.includes('summarize') && lower.includes('stick')) ||
+    (lower.includes('synthesize') && lower.includes('theme')) ||
+    lower.includes('group into themes')
+  ) {
+    await synthesizeStickyThemes(ctx)
     return
   }
 
@@ -481,7 +651,7 @@ const runCommandPlan = async (ctx, command) => {
   }
 
   throw new Error(
-    'Unsupported command. Try: "add hello world sticker", "add rectangle", "arrange in grid", "create SWOT template", "retrospective", or "user journey map with 5 stages".',
+    'Unsupported command. Try: "add hello world sticker", "add rectangle", "add connector", "organize this board", "summarize all stickies into themes", "arrange in grid", "create SWOT template", "retrospective", or "user journey map with 5 stages".',
   )
 }
 

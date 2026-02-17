@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { createTempUser, deleteTempUser, loginWithEmail } from './helpers/auth'
 
 const APP_URL = 'https://mvp-1-collab-board.web.app'
 
@@ -26,30 +27,49 @@ test.describe('CollabBoard MVP E2E', () => {
   })
 })
 
-test.describe('CollabBoard Authenticated (Manual)', () => {
-  // These tests require manual auth - skip by default
-  test.skip(true, 'Run with authenticated session')
+test.describe('CollabBoard Authenticated', () => {
+  let testUser: Awaited<ReturnType<typeof createTempUser>> | null = null
+  const boardId = `pw-ui-${Date.now()}`
+
+  test.beforeAll(async () => {
+    testUser = await createTempUser()
+  })
+
+  test.afterAll(async () => {
+    if (!testUser) {
+      return
+    }
+    await deleteTempUser(testUser.idToken)
+  })
+
+  test.beforeEach(async ({ page }) => {
+    if (!testUser) {
+      throw new Error('Test user was not created')
+    }
+    await loginWithEmail(page, APP_URL, testUser.email, testUser.password)
+    await page.goto(`${APP_URL}/b/${boardId}`)
+  })
 
   test('board loads with canvas', async ({ page }) => {
-    await page.goto(`${APP_URL}/b/mvp-demo-board`)
     await expect(page.locator('.board-stage')).toBeVisible()
-    await expect(page.locator('canvas')).toHaveCount(expect.any(Number))
+    expect(await page.locator('canvas').count()).toBeGreaterThan(0)
   })
 
   test('create buttons exist', async ({ page }) => {
-    await page.goto(`${APP_URL}/b/mvp-demo-board`)
     await expect(page.locator('button:has-text("Add Sticky")')).toBeVisible()
+    await expect(page.locator('button:has-text("Add Frame")')).toBeVisible()
     await expect(page.locator('button:has-text("Add Rectangle")')).toBeVisible()
+    await expect(page.locator('button:has-text("Add Connector")')).toBeVisible()
+    await expect(page.locator('button:has-text("Undo")')).toBeVisible()
+    await expect(page.locator('button:has-text("Export PNG")')).toBeVisible()
   })
 
   test('AI panel exists', async ({ page }) => {
-    await page.goto(`${APP_URL}/b/mvp-demo-board`)
     await expect(page.locator('.ai-panel')).toBeVisible()
     await expect(page.locator('.ai-input')).toBeVisible()
   })
 
   test('presence strip visible', async ({ page }) => {
-    await page.goto(`${APP_URL}/b/mvp-demo-board`)
     await expect(page.locator('.presence-strip')).toBeVisible()
   })
 })

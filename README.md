@@ -54,6 +54,9 @@ firebase deploy
 
 - Lint: `cd app && npm run lint`
 - E2E tests: `cd app && npm run test:e2e`
+- MVP regression test: `cd app && npx playwright test e2e/mvp-regression.spec.ts`
+- Critical backend checks: `bash scripts/run-critical-checks.sh`
+- Submission QA: `bash scripts/run-submission-qa.sh`
 
 ## Documentation
 
