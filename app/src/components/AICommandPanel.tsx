@@ -7,7 +7,62 @@ type AICommandPanelProps = {
 }
 
 type SpeechRecognitionEventLike = {
-  results: ArrayLike<ArrayLike<{ transcript: string }>>
+  resultIndex?: number
+  results: ArrayLike<
+    ArrayLike<{
+      transcript?: string
+    }> & {
+      isFinal?: boolean
+    }
+  >
+}
+
+type SpeechRecognitionInstanceLike = {
+  start: () => void
+  stop: () => void
+  abort?: () => void
+  continuous: boolean
+  interimResults: boolean
+  lang?: string
+  maxAlternatives?: number
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null
+  onerror: ((event: { error?: string }) => void) | null
+  onend: (() => void) | null
+}
+
+type SpeechRecognitionConstructorLike = new () => SpeechRecognitionInstanceLike
+
+const getSpeechRecognitionCtor = (): SpeechRecognitionConstructorLike | null => {
+  if (typeof window === 'undefined') {
+    return null
+  }
+
+  const speechWindow = window as Window & {
+    SpeechRecognition?: SpeechRecognitionConstructorLike
+    webkitSpeechRecognition?: SpeechRecognitionConstructorLike
+  }
+
+  return speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition || null
+}
+
+const toVoiceErrorMessage = (errorCode?: string): string => {
+  if (errorCode === 'not-allowed' || errorCode === 'service-not-allowed') {
+    return 'Microphone permission denied. Enable microphone access and try again.'
+  }
+
+  if (errorCode === 'audio-capture') {
+    return 'No microphone detected. Connect a microphone and try again.'
+  }
+
+  if (errorCode === 'no-speech') {
+    return 'No speech detected. Try again and speak clearly.'
+  }
+
+  if (errorCode === 'network') {
+    return 'Voice recognition network error. Check connection and retry.'
+  }
+
+  return `Voice input error: ${errorCode || 'unknown error'}`
 }
 
 export const AICommandPanel = ({ disabled, onSubmit, onIngestTextLines }: AICommandPanelProps) => {
@@ -16,23 +71,17 @@ export const AICommandPanel = ({ disabled, onSubmit, onIngestTextLines }: AIComm
   const [message, setMessage] = useState('')
   const [isListening, setIsListening] = useState(false)
   const [ocrRunning, setOcrRunning] = useState(false)
-  const recognitionRef = useRef<
-    | {
-        start: () => void
-        stop: () => void
-        continuous: boolean
-        interimResults: boolean
-        onresult: ((event: SpeechRecognitionEventLike) => void) | null
-        onerror: ((event: { error?: string }) => void) | null
-        onend: (() => void) | null
-      }
-    | null
-  >(null)
+  const recognitionRef = useRef<SpeechRecognitionInstanceLike | null>(null)
+  const stoppingVoiceRef = useRef(false)
+  const heardFinalSpeechRef = useRef(false)
+  const voiceSupported = Boolean(getSpeechRecognitionCtor())
 
   useEffect(() => {
     return () => {
       if (recognitionRef.current) {
+        stoppingVoiceRef.current = true
         recognitionRef.current.stop()
+        recognitionRef.current.abort?.()
       }
     }
   }, [])
@@ -41,6 +90,12 @@ export const AICommandPanel = ({ disabled, onSubmit, onIngestTextLines }: AIComm
     const trimmed = command.trim()
     if (!trimmed || disabled) {
       return
+    }
+
+    if (isListening && recognitionRef.current) {
+      stoppingVoiceRef.current = true
+      recognitionRef.current.stop()
+      setIsListening(false)
     }
 
     setStatus('running')
@@ -61,16 +116,13 @@ export const AICommandPanel = ({ disabled, onSubmit, onIngestTextLines }: AIComm
     }
 
     if (isListening && recognitionRef.current) {
+      stoppingVoiceRef.current = true
       recognitionRef.current.stop()
       setIsListening(false)
       return
     }
 
-    const SpeechRecognitionCtor =
-      (window as Window & { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown })
-        .SpeechRecognition ||
-      (window as Window & { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown })
-        .webkitSpeechRecognition
+    const SpeechRecognitionCtor = getSpeechRecognitionCtor()
 
     if (!SpeechRecognitionCtor) {
       setStatus('error')
@@ -78,46 +130,84 @@ export const AICommandPanel = ({ disabled, onSubmit, onIngestTextLines }: AIComm
       return
     }
 
-    const recognition = new (SpeechRecognitionCtor as new () => {
-      start: () => void
-      stop: () => void
-      continuous: boolean
-      interimResults: boolean
-      onresult: ((event: SpeechRecognitionEventLike) => void) | null
-      onerror: ((event: { error?: string }) => void) | null
-      onend: (() => void) | null
-    })()
+    const recognition = new SpeechRecognitionCtor()
 
-    recognition.continuous = true
-    recognition.interimResults = false
+    recognition.continuous = false
+    recognition.interimResults = true
+    recognition.lang = 'en-US'
+    recognition.maxAlternatives = 1
+    stoppingVoiceRef.current = false
+    heardFinalSpeechRef.current = false
+
     recognition.onresult = (event) => {
-      const fragments: string[] = []
-      for (let i = 0; i < event.results.length; i += 1) {
+      let finalFragments = ''
+      let interimFragments = ''
+      const startIndex = Number.isFinite(event.resultIndex) ? Number(event.resultIndex) : 0
+
+      for (let i = startIndex; i < event.results.length; i += 1) {
         const result = event.results[i]
-        if (result?.[0]?.transcript) {
-          fragments.push(result[0].transcript.trim())
+        const transcript = String(result?.[0]?.transcript || '').trim()
+        if (!transcript) {
+          continue
+        }
+
+        if (result?.isFinal) {
+          finalFragments = `${finalFragments} ${transcript}`.trim()
+        } else {
+          interimFragments = `${interimFragments} ${transcript}`.trim()
         }
       }
 
-      const transcript = fragments.join(' ').trim()
-      if (!transcript) {
-        return
+      if (finalFragments) {
+        heardFinalSpeechRef.current = true
+        setCommand((prev) => (prev ? `${prev} ${finalFragments}`.trim() : finalFragments))
+        setStatus('success')
+        setMessage('Voice captured. Review and press Send Command.')
+      } else if (interimFragments) {
+        setStatus('idle')
+        setMessage(`Listening: ${interimFragments}`)
       }
-
-      setCommand((prev) => (prev ? `${prev} ${transcript}` : transcript))
     }
     recognition.onerror = (event) => {
       setStatus('error')
-      setMessage(`Voice input error: ${event.error || 'unknown error'}`)
+      setMessage(toVoiceErrorMessage(event.error))
       setIsListening(false)
+      recognitionRef.current = null
+      stoppingVoiceRef.current = false
     }
     recognition.onend = () => {
+      const stoppedManually = stoppingVoiceRef.current
+      stoppingVoiceRef.current = false
       setIsListening(false)
+      recognitionRef.current = null
+
+      if (stoppedManually) {
+        if (!heardFinalSpeechRef.current) {
+          setStatus('idle')
+          setMessage('Voice input stopped.')
+        }
+        return
+      }
+
+      if (!heardFinalSpeechRef.current) {
+        setStatus('error')
+        setMessage('No speech detected. Try again and speak clearly.')
+      }
     }
 
     recognitionRef.current = recognition
-    recognition.start()
-    setIsListening(true)
+    try {
+      recognition.start()
+      setIsListening(true)
+      setStatus('idle')
+      setMessage('Listening…')
+    } catch (error) {
+      setStatus('error')
+      setMessage(error instanceof Error ? error.message : 'Failed to start voice input')
+      setIsListening(false)
+      recognitionRef.current = null
+      stoppingVoiceRef.current = false
+    }
   }
 
   const handleImageUpload = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -176,7 +266,14 @@ export const AICommandPanel = ({ disabled, onSubmit, onIngestTextLines }: AIComm
         }}
       />
       <div className="ai-tools-row">
-        <button type="button" className="secondary-button" onClick={toggleVoiceInput} disabled={disabled}>
+        <button
+          type="button"
+          className={`secondary-button ${isListening ? 'mode-active-button' : ''}`}
+          onClick={toggleVoiceInput}
+          disabled={disabled || !voiceSupported}
+          aria-pressed={isListening}
+          title={voiceSupported ? 'Start or stop microphone input' : 'Voice input is not supported in this browser'}
+        >
           {isListening ? 'Stop Voice' : 'Voice Input'}
         </button>
         <label className={`secondary-button upload-label ${disabled || ocrRunning ? 'disabled' : ''}`}>
