@@ -274,7 +274,6 @@ export const BoardPage = () => {
   const [inlineEditor, setInlineEditor] = useState<InlineEditorDraft | null>(null)
   const [nowMsValue, setNowMsValue] = useState(Date.now())
   const [showShortcuts, setShowShortcuts] = useState(false)
-  const [isAiWidgetOpen, setIsAiWidgetOpen] = useState(false)
   const [isTimelineReplaying, setIsTimelineReplaying] = useState(false)
   const [yjsPilotMetrics, setYjsPilotMetrics] = useState({ objects: 0, bytes: 0 })
 
@@ -2875,44 +2874,6 @@ export const BoardPage = () => {
             </div>
           </div>
 
-          <div className="ai-chat-widget">
-            {isAiWidgetOpen ? (
-              <section className="ai-chat-widget-panel" data-testid="ai-chat-widget">
-                <div className="ai-chat-widget-header">
-                  <span className="ai-chat-widget-title">AI Chat</span>
-                  <button
-                    type="button"
-                    className="button-icon ai-chat-widget-toggle with-tooltip"
-                    onClick={() => setIsAiWidgetOpen(false)}
-                    title="Minimize AI chat"
-                    data-tooltip="Minimize AI chat"
-                    aria-label="Minimize AI chat panel"
-                  >
-                    −
-                  </button>
-                </div>
-                <AICommandPanel
-                  disabled={!user}
-                  onSubmit={handleAiCommandSubmit}
-                  onIngestTextLines={ingestTextLinesAsStickies}
-                />
-              </section>
-            ) : (
-              <button
-                type="button"
-                className="ai-chat-widget-launcher with-tooltip"
-                onClick={() => setIsAiWidgetOpen(true)}
-                title="Open AI chat"
-                data-tooltip="Open AI chat"
-                aria-label="Open AI chat panel"
-                data-testid="ai-chat-widget-launcher"
-              >
-                <span className="ai-chat-widget-launcher-icon" aria-hidden="true">
-                  💬
-                </span>
-              </button>
-            )}
-          </div>
         </section>
 
         <aside className="right-column">
@@ -2920,8 +2881,11 @@ export const BoardPage = () => {
             <button
               type="button"
               className={`side-tab-button ${showCommentsPanel ? 'active' : ''}`}
-              onClick={() => setShowCommentsPanel((current) => !current)}
-              title={showCommentsPanel ? 'Hide comments panel' : 'Show comments panel'}
+              onClick={() => {
+                setShowCommentsPanel(true)
+                setShowTimelinePanel(false)
+              }}
+              title="Show comments panel"
               aria-pressed={showCommentsPanel}
             >
               Comments
@@ -2929,11 +2893,26 @@ export const BoardPage = () => {
             <button
               type="button"
               className={`side-tab-button ${showTimelinePanel ? 'active' : ''}`}
-              onClick={() => setShowTimelinePanel((current) => !current)}
-              title={showTimelinePanel ? 'Hide activity timeline' : 'Show activity timeline'}
+              onClick={() => {
+                setShowCommentsPanel(false)
+                setShowTimelinePanel(true)
+              }}
+              title="Show activity timeline"
               aria-pressed={showTimelinePanel}
             >
               Timeline
+            </button>
+            <button
+              type="button"
+              className={`side-tab-button ${!showCommentsPanel && !showTimelinePanel ? 'active' : ''}`}
+              onClick={() => {
+                setShowCommentsPanel(false)
+                setShowTimelinePanel(false)
+              }}
+              title="Show AI assistant"
+              aria-pressed={!showCommentsPanel && !showTimelinePanel}
+            >
+              AI
             </button>
           </div>
           {showCommentsPanel ? (
@@ -3013,8 +2992,12 @@ export const BoardPage = () => {
           ) : null}
 
           {!showCommentsPanel && !showTimelinePanel ? (
-            <section className="side-panel side-panel-empty">
-              <p className="panel-note">Enable Comments or Timeline to show collaboration details.</p>
+            <section className="side-panel ai-panel-sidebar">
+              <AICommandPanel
+                disabled={!user}
+                onSubmit={handleAiCommandSubmit}
+                onIngestTextLines={ingestTextLinesAsStickies}
+              />
             </section>
           ) : null}
         </aside>
