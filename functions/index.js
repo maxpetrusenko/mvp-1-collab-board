@@ -553,18 +553,42 @@ const runCommandPlan = async (ctx, command) => {
     return
   }
 
-  const rectangleMatch = normalizedCommand.match(
-    /^(?:add|create)\s+(?:a|an)?\s*(?:(\w+)\s+)?(?:rectangle|box|shape)(?:\s+at(?:\s+position)?\s*(-?\d+)\s*,\s*(-?\d+))?[.!?]?\s*$/i,
+  const shapeMatch = normalizedCommand.match(
+    /^(?:add|create)\s+(?:a|an)?\s*(?:(\w+)\s+)?(rectangle|box|shape|circle|diamond|rhombus|romb|triangle)(?:\s+at(?:\s+position)?\s*(-?\d+)\s*,\s*(-?\d+))?[.!?]?\s*$/i,
   )
-  if (rectangleMatch) {
-    const [, colorCandidate, xRaw, yRaw] = rectangleMatch
+  if (shapeMatch) {
+    const [, colorCandidate, rawShapeType, xRaw, yRaw] = shapeMatch
+    const normalizedShapeType = String(rawShapeType || '').toLowerCase()
+    const shapeType =
+      normalizedShapeType === 'circle'
+        ? 'circle'
+        : normalizedShapeType === 'diamond' || normalizedShapeType === 'rhombus' || normalizedShapeType === 'romb'
+          ? 'diamond'
+          : normalizedShapeType === 'triangle'
+            ? 'triangle'
+            : 'rectangle'
     await createShape(ctx, {
-      type: 'rectangle',
+      type: shapeType,
       x: parseNumber(xRaw, 200),
       y: parseNumber(yRaw, 200),
       width: 220,
       height: 140,
       color: toColor(colorCandidate, '#93c5fd'),
+    })
+    return
+  }
+
+  const frameMatch = normalizedCommand.match(
+    /^(?:add|create)\s+(?:a|an)?\s*frame(?:\s+named\s+(.+?))?(?:\s+at(?:\s+position)?\s*(-?\d+)\s*,\s*(-?\d+))?[.!?]?\s*$/i,
+  )
+  if (frameMatch) {
+    const [, titleRaw, xRaw, yRaw] = frameMatch
+    await createFrame(ctx, {
+      title: sanitizeText(titleRaw || 'New Frame'),
+      x: parseNumber(xRaw, 120),
+      y: parseNumber(yRaw, 120),
+      width: 480,
+      height: 300,
     })
     return
   }
@@ -653,7 +677,7 @@ const runCommandPlan = async (ctx, command) => {
   }
 
   throw new Error(
-    'Unsupported command. Try: "add hello world sticker", "add rectangle", "add connector", "organize this board into groups", "summarize all stickies into themes", "arrange in grid", "create SWOT template", "retrospective", or "user journey map with 5 stages".',
+    'Unsupported command. Try: "add hello world sticker", "add rectangle", "add circle", "add diamond", "add frame", "add connector", "organize this board into groups", "summarize all stickies into themes", "arrange in grid", "create SWOT template", "retrospective", or "user journey map with 5 stages".',
   )
 }
 

@@ -73,12 +73,32 @@ test.describe('CollabBoard Authenticated', () => {
   })
 
   test('AI panel exists', async ({ page }) => {
+    await expect(page.getByTestId('ai-chat-widget')).toBeVisible()
     await expect(page.locator('.ai-panel')).toBeVisible()
     await expect(page.locator('.ai-input')).toBeVisible()
   })
 
+  test('AI chat widget can minimize and reopen', async ({ page }) => {
+    await expect(page.getByTestId('ai-chat-widget')).toBeVisible()
+    await page.getByLabel('Minimize AI chat panel').click()
+    await expect(page.getByTestId('ai-chat-widget-launcher')).toBeVisible()
+    await page.getByTestId('ai-chat-widget-launcher').click()
+    await expect(page.getByTestId('ai-chat-widget')).toBeVisible()
+  })
+
   test('presence strip visible', async ({ page }) => {
     await expect(page.locator('.presence-strip')).toBeVisible()
+  })
+
+  test('active user presence indicator stays green', async ({ page }) => {
+    if (!testUser) {
+      throw new Error('Test user was not created')
+    }
+
+    const selfPresence = page.locator('.presence-pill', { hasText: testUser.email })
+    await expect(selfPresence).toBeVisible()
+    await expect(selfPresence.locator('.presence-dot')).toBeVisible()
+    await expect(selfPresence.locator('.presence-dot.away')).toHaveCount(0)
   })
 
   test('laptop layout keeps minimap and side tabs visible without page scrolling', async ({ page }) => {

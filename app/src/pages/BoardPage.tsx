@@ -92,6 +92,7 @@ const LOCAL_POSITION_PENDING_TTL_MS = 3_000
 const CONNECTOR_SNAP_THRESHOLD_PX = 36
 const CONNECTOR_HANDLE_RADIUS = 7
 const TIMER_DEFAULT_MS = 5 * 60 * 1000
+const PRESENCE_AWAY_THRESHOLD_MS = 25_000
 const MIN_ZOOM_SCALE = 0.25
 const MAX_ZOOM_SCALE = 3
 const MAX_EXPORT_PIXEL_COUNT = 16_000_000
@@ -102,6 +103,26 @@ const STICKY_COLOR_OPTIONS = ['#fde68a', '#fdba74', '#fca5a5', '#86efac', '#93c5
 const SHAPE_COLOR_OPTIONS = ['#93c5fd', '#67e8f9', '#86efac', '#fcd34d', '#fca5a5', '#c4b5fd']
 const FRAME_COLOR_OPTIONS = ['#e2e8f0', '#dbeafe', '#dcfce7', '#fee2e2', '#fef3c7']
 const CONNECTOR_COLOR_OPTIONS = ['#0f172a', '#1d4ed8', '#dc2626', '#0f766e', '#6d28d9']
+const COLOR_LABELS: Record<string, string> = {
+  '#fde68a': 'yellow',
+  '#fdba74': 'orange',
+  '#fca5a5': 'red',
+  '#86efac': 'green',
+  '#93c5fd': 'blue',
+  '#c4b5fd': 'purple',
+  '#67e8f9': 'cyan',
+  '#fcd34d': 'amber',
+  '#e2e8f0': 'slate',
+  '#dbeafe': 'sky',
+  '#dcfce7': 'mint',
+  '#fee2e2': 'rose',
+  '#fef3c7': 'cream',
+  '#0f172a': 'charcoal',
+  '#1d4ed8': 'royal blue',
+  '#dc2626': 'crimson',
+  '#0f766e': 'teal',
+  '#6d28d9': 'violet',
+}
 const DEFAULT_SHAPE_SIZES: Record<ShapeKind, { width: number; height: number }> = {
   rectangle: { width: 180, height: 110 },
   circle: { width: 130, height: 130 },
@@ -109,6 +130,12 @@ const DEFAULT_SHAPE_SIZES: Record<ShapeKind, { width: number; height: number }> 
   triangle: { width: 170, height: 120 },
 }
 const DEFAULT_FRAME_SIZE = { width: 520, height: 320 }
+const SHAPE_TYPE_OPTIONS: Array<{ kind: ShapeKind; label: string; icon: string }> = [
+  { kind: 'rectangle', label: 'Rect', icon: '▭' },
+  { kind: 'circle', label: 'Circle', icon: '○' },
+  { kind: 'diamond', label: 'Diamond', icon: '◇' },
+  { kind: 'triangle', label: 'Triangle', icon: '△' },
+]
 
 const isEditableTarget = (target: EventTarget | null) => {
   if (!(target instanceof HTMLElement)) {
@@ -214,6 +241,7 @@ const wait = (ms: number) => new Promise<void>((resolve) => window.setTimeout(re
 const notifyExportComplete = (detail: { format: 'png' | 'pdf'; scope: 'full' | 'selection'; fileBase: string }) => {
   window.dispatchEvent(new CustomEvent('board-export-complete', { detail }))
 }
+const getColorLabel = (color: string) => COLOR_LABELS[color.toLowerCase()] || color
 
 export const BoardPage = () => {
   const { boardId: boardIdParam } = useParams()
@@ -245,6 +273,7 @@ export const BoardPage = () => {
   const [inlineEditor, setInlineEditor] = useState<InlineEditorDraft | null>(null)
   const [nowMsValue, setNowMsValue] = useState(Date.now())
   const [showShortcuts, setShowShortcuts] = useState(false)
+  const [isAiWidgetOpen, setIsAiWidgetOpen] = useState(true)
   const [isTimelineReplaying, setIsTimelineReplaying] = useState(false)
   const [yjsPilotMetrics, setYjsPilotMetrics] = useState({ objects: 0, bytes: 0 })
 
@@ -634,6 +663,18 @@ export const BoardPage = () => {
       }
     }
 
+    if (inlineEditor.field === 'text' && inlineEditorTarget.type === 'shape') {
+      const inset = 10 * viewport.scale
+      return {
+        left: objectLeft + inset,
+        top: objectTop + inset,
+        width: Math.max(120, inlineEditorTarget.size.width * viewport.scale - inset * 2),
+        height: Math.max(36, inlineEditorTarget.size.height * viewport.scale - inset * 2),
+        fontSize: Math.max(12, 14 * viewport.scale),
+        multiline: true,
+      }
+    }
+
     if (inlineEditor.field === 'title' && inlineEditorTarget.type === 'frame') {
       return {
         left: objectLeft + 10 * viewport.scale,
@@ -708,7 +749,7 @@ export const BoardPage = () => {
     }
   }, [objects, stageSize.height, stageSize.width, viewport.scale, viewport.x, viewport.y])
   const startInlineEdit = useCallback((boardObject: BoardObject, field: InlineEditorDraft['field']) => {
-    if (field === 'text' && boardObject.type !== 'stickyNote') {
+    if (field === 'text' && boardObject.type !== 'stickyNote' && boardObject.type !== 'shape') {
       return
     }
     if (field === 'title' && boardObject.type !== 'frame') {
@@ -720,8 +761,8 @@ export const BoardPage = () => {
       objectId: boardObject.id,
       field,
       value:
-        field === 'text' && boardObject.type === 'stickyNote'
-          ? boardObject.text
+        field === 'text' && (boardObject.type === 'stickyNote' || boardObject.type === 'shape')
+          ? boardObject.text || ''
           : boardObject.type === 'frame'
             ? boardObject.title || 'Frame'
             : '',
@@ -802,6 +843,7 @@ export const BoardPage = () => {
                 type: 'shape',
                 shapeType,
                 color: SHAPE_COLOR_OPTIONS[0],
+                text: 'New shape',
               }
             : objectType === 'frame'
               ? {
@@ -918,6 +960,13 @@ export const BoardPage = () => {
       }
     }
 
+    if (inlineEditor.field === 'text' && boardObject.type === 'shape') {
+      const nextText = inlineEditor.value
+      if (nextText !== (boardObject.text || '')) {
+        await patchObject(boardObject.id, { text: nextText || ' ' })
+      }
+    }
+
     if (inlineEditor.field === 'title' && boardObject.type === 'frame') {
       const nextTitle = inlineEditor.value.trim() || 'Frame'
       if (nextTitle !== boardObject.title) {
@@ -952,7 +1001,9 @@ export const BoardPage = () => {
     }
 
     if (
-      (inlineEditor.field === 'text' && inlineEditorTarget.type !== 'stickyNote') ||
+      (inlineEditor.field === 'text' &&
+        inlineEditorTarget.type !== 'stickyNote' &&
+        inlineEditorTarget.type !== 'shape') ||
       (inlineEditor.field === 'title' && inlineEditorTarget.type !== 'frame')
     ) {
       setInlineEditor(null)
@@ -1763,15 +1814,33 @@ export const BoardPage = () => {
             <span className="timer-icon">⏱</span>
             <span>{formatTimerLabel(effectiveTimerMs)}</span>
             {timerState.running ? (
-              <button type="button" className="button-icon" onClick={() => void pauseTimer()} title="Pause timer">
+              <button
+                type="button"
+                className="button-icon with-tooltip"
+                onClick={() => void pauseTimer()}
+                title="Pause timer"
+                data-tooltip="Pause timer"
+              >
                 ⏸
               </button>
             ) : (
-              <button type="button" className="button-icon" onClick={() => void startTimer()} title="Start timer">
+              <button
+                type="button"
+                className="button-icon with-tooltip"
+                onClick={() => void startTimer()}
+                title="Start timer"
+                data-tooltip="Start timer"
+              >
                 ▶
               </button>
             )}
-            <button type="button" className="button-icon" onClick={() => void resetTimer()} title="Reset timer">
+            <button
+              type="button"
+              className="button-icon with-tooltip"
+              onClick={() => void resetTimer()}
+              title="Reset timer"
+              data-tooltip="Reset timer"
+            >
               ↺
             </button>
           </div>
@@ -1779,17 +1848,19 @@ export const BoardPage = () => {
         <div className="header-actions">
           <button
             type="button"
-            className="button-icon"
+            className="button-icon with-tooltip"
             onClick={() => setShowShortcuts((prev) => !prev)}
             title="Keyboard shortcuts (?)"
+            data-tooltip="Keyboard shortcuts"
           >
             ?
           </button>
           <button
             type="button"
-            className="button-icon"
+            className="button-icon with-tooltip"
             onClick={() => void signOutUser()}
             title="Sign out"
+            data-tooltip="Sign out"
           >
             →
           </button>
@@ -1801,25 +1872,28 @@ export const BoardPage = () => {
         <div className="tool-group">
           <button
             type="button"
-            className="button-icon button-primary"
+            className="button-icon button-primary with-tooltip"
             onClick={() => void createObject('stickyNote')}
             title="Add sticky note (S)"
+            data-tooltip="Add sticky note (S)"
           >
             ◻
           </button>
           <button
             type="button"
-            className="button-icon"
+            className="button-icon with-tooltip"
             onClick={() => void createObject('frame')}
             title="Add frame (F)"
+            data-tooltip="Add frame (F)"
           >
             ⛶
           </button>
           <button
             type="button"
-            className="button-icon"
+            className="button-icon with-tooltip"
             onClick={() => void createObject('connector')}
             title="Add connector (C)"
+            data-tooltip="Add connector (C)"
           >
             ↝
           </button>
@@ -1830,25 +1904,28 @@ export const BoardPage = () => {
         <div className="tool-group">
           <button
             type="button"
-            className="button-icon"
+            className="button-icon with-tooltip"
             onClick={() => void createObject('shape', { shapeType: 'rectangle' })}
             title="Add rectangle (R)"
+            data-tooltip="Add rectangle (R)"
           >
             ▭
           </button>
           <button
             type="button"
-            className="button-icon"
+            className="button-icon with-tooltip"
             onClick={() => void createObject('shape', { shapeType: 'circle' })}
             title="Add circle (O)"
+            data-tooltip="Add circle (O)"
           >
             ○
           </button>
           <button
             type="button"
-            className="button-icon"
+            className="button-icon with-tooltip"
             onClick={() => void createObject('shape', { shapeType: 'diamond' })}
             title="Add diamond (D)"
+            data-tooltip="Add diamond (D)"
           >
             ◇
           </button>
@@ -1859,17 +1936,19 @@ export const BoardPage = () => {
         <div className="tool-group">
           <button
             type="button"
-            className="button-icon"
+            className="button-icon with-tooltip"
             onClick={() => void undo()}
             title="Undo (Cmd+Z)"
+            data-tooltip="Undo"
           >
             ↶
           </button>
           <button
             type="button"
-            className="button-icon"
+            className="button-icon with-tooltip"
             onClick={() => void redo()}
             title="Redo (Cmd+Shift+Z)"
+            data-tooltip="Redo"
           >
             ↷
           </button>
@@ -1880,36 +1959,39 @@ export const BoardPage = () => {
         <div className="tool-group">
           <button
             type="button"
-            className={`button-icon ${isVotingMode ? 'button-primary' : ''}`}
+            className={`button-icon with-tooltip ${isVotingMode ? 'button-primary' : ''}`}
             onClick={() => setIsVotingMode((prev) => !prev)}
             title="Toggle voting mode (V)"
+            data-tooltip={isVotingMode ? 'Disable voting mode' : 'Enable voting mode'}
             aria-label="Toggle voting mode"
           >
             {isVotingMode ? '●' : '○'}
           </button>
           <button
             type="button"
-            className="button-icon"
+            className="button-icon with-tooltip"
             data-testid="export-viewport-png"
             onClick={() => void exportBoard('png', 'selection')}
             title="Export current viewport as PNG"
+            data-tooltip="Export current viewport as PNG"
             aria-label="Export current viewport as PNG"
           >
             ⬇
           </button>
           <button
             type="button"
-            className="button-icon button-icon-text"
+            className="button-icon button-icon-text with-tooltip"
             data-testid="export-viewport-pdf"
             onClick={() => void exportBoard('pdf', 'selection')}
             title="Export current viewport as PDF"
+            data-tooltip="Export current viewport as PDF"
             aria-label="Export current viewport as PDF"
           >
             PDF
           </button>
           <button
             type="button"
-            className="button-icon"
+            className="button-icon with-tooltip"
             onClick={() => {
               if (selectedObject) {
                 void deleteSelected()
@@ -1917,6 +1999,7 @@ export const BoardPage = () => {
             }}
             disabled={!selectedObject}
             title="Delete selected (Del/Backspace)"
+            data-tooltip="Delete selected object"
             aria-label="Delete selected object"
           >
             ✕
@@ -1926,15 +2009,46 @@ export const BoardPage = () => {
         {/* Selected object color options */}
         {selectedObject && (
           <>
+            {selectedObject.type === 'shape' ? (
+              <>
+                <div className="toolbar-divider" />
+                <div className="tool-group" data-testid="shape-type-picker">
+                  {SHAPE_TYPE_OPTIONS.map((shapeOption) => (
+                    <button
+                      key={`${selectedObject.id}-${shapeOption.kind}`}
+                      type="button"
+                      className={`shape-option with-tooltip ${
+                        normalizeShapeKind(selectedObject.shapeType) === shapeOption.kind ? 'active' : ''
+                      }`}
+                      onClick={() =>
+                        void patchObject(
+                          selectedObject.id,
+                          { shapeType: shapeOption.kind },
+                          { actionLabel: `changed shape to ${shapeOption.kind}` },
+                        )
+                      }
+                      title={`Set shape to ${shapeOption.label}`}
+                      data-tooltip={`Set shape to ${shapeOption.label}`}
+                      aria-label={`Set selected shape to ${shapeOption.label}`}
+                    >
+                      <span className="shape-icon">{shapeOption.icon}</span>
+                      {shapeOption.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : null}
             <div className="toolbar-divider" />
             <div className="tool-group">
               {selectedColorOptions.slice(0, 6).map((color) => (
                 <button
                   key={`${selectedObject.id}-${color}`}
                   type="button"
-                  className={`swatch-button ${selectedObject.color === color ? 'active' : ''}`}
+                  className={`swatch-button with-tooltip ${selectedObject.color === color ? 'active' : ''}`}
                   style={{ backgroundColor: color }}
                   onClick={() => void patchObject(selectedObject.id, { color })}
+                  title={`Set color to ${getColorLabel(color)}`}
+                  data-tooltip={`Set color to ${getColorLabel(color)}`}
                   aria-label={`Set ${selectedObject.type} color to ${color}`}
                 />
               ))}
@@ -1948,7 +2062,14 @@ export const BoardPage = () => {
           <div className="presence-strip">
             {Object.values(cursors).map((cursor) => (
               <span key={cursor.userId} className="presence-pill">
-                <span className="presence-dot" style={{ backgroundColor: cursor.color }} />
+                <span
+                  className={`presence-dot ${
+                    typeof cursor.lastSeen === 'number' &&
+                    nowMsValue - cursor.lastSeen > PRESENCE_AWAY_THRESHOLD_MS
+                      ? 'away'
+                      : ''
+                  }`}
+                />
                 {cursor.displayName}
               </span>
             ))}
@@ -2459,6 +2580,9 @@ export const BoardPage = () => {
                     draggable
                     onClick={() => setSelectedId(boardObject.id)}
                     onTap={() => setSelectedId(boardObject.id)}
+                    onDblClick={() => {
+                      startInlineEdit(boardObject, 'text')
+                    }}
                     onDragStart={() => {
                       setDraggingObjectId(boardObject.id)
                     }}
@@ -2552,6 +2676,20 @@ export const BoardPage = () => {
                         shadowOpacity={0.2}
                       />
                     ) : null}
+                    {boardObject.text ? (
+                      <Text
+                        text={boardObject.text}
+                        x={12}
+                        y={10}
+                        width={Math.max(40, boardObject.size.width - 24)}
+                        height={Math.max(24, boardObject.size.height - 20)}
+                        fontSize={14}
+                        align="center"
+                        verticalAlign="middle"
+                        fill="#0f172a"
+                        wrap="word"
+                      />
+                    ) : null}
                   </Group>
                 )
               })}
@@ -2641,28 +2779,31 @@ export const BoardPage = () => {
           <div className="zoom-controls">
             <button
               type="button"
-              className="zoom-button"
+              className="zoom-button with-tooltip"
               onClick={zoomIn}
               disabled={viewport.scale >= MAX_ZOOM_SCALE}
               title="Zoom in (Cmd/Ctrl +)"
+              data-tooltip="Zoom in"
               aria-label="Zoom in"
             >
               +
             </button>
             <button
               type="button"
-              className="zoom-fit-button"
+              className="zoom-fit-button with-tooltip"
               onClick={zoomToFit}
               title="Fit all objects (Cmd/Ctrl + Shift + F)"
+              data-tooltip="Fit all objects"
               aria-label="Fit all objects"
             >
               Fit
             </button>
             <button
               type="button"
-              className="zoom-percentage"
+              className="zoom-percentage with-tooltip"
               onClick={zoomReset}
               title="Reset zoom to 100% (Cmd/Ctrl + 0)"
+              data-tooltip="Reset zoom to 100%"
               aria-label="Reset zoom to 100%"
               data-testid="zoom-percentage"
             >
@@ -2670,16 +2811,22 @@ export const BoardPage = () => {
             </button>
             <button
               type="button"
-              className="zoom-button"
+              className="zoom-button with-tooltip"
               onClick={zoomOut}
               disabled={viewport.scale <= MIN_ZOOM_SCALE}
               title="Zoom out (Cmd/Ctrl -)"
+              data-tooltip="Zoom out"
               aria-label="Zoom out"
             >
               -
             </button>
           </div>
-          <div className="minimap" onClick={handleMinimapNavigate}>
+          <div
+            className="minimap with-tooltip"
+            onClick={handleMinimapNavigate}
+            title="Mini-map navigation"
+            data-tooltip="Mini-map navigation"
+          >
             <div className="minimap-title">Mini-map</div>
             <div
               className="minimap-canvas"
@@ -2726,14 +2873,46 @@ export const BoardPage = () => {
               />
             </div>
           </div>
+
+          <div className="ai-chat-widget">
+            {isAiWidgetOpen ? (
+              <section className="ai-chat-widget-panel" data-testid="ai-chat-widget">
+                <div className="ai-chat-widget-header">
+                  <span className="ai-chat-widget-title">AI Chat</span>
+                  <button
+                    type="button"
+                    className="button-icon ai-chat-widget-toggle with-tooltip"
+                    onClick={() => setIsAiWidgetOpen(false)}
+                    title="Minimize AI chat"
+                    data-tooltip="Minimize AI chat"
+                    aria-label="Minimize AI chat panel"
+                  >
+                    −
+                  </button>
+                </div>
+                <AICommandPanel
+                  disabled={!user}
+                  onSubmit={handleAiCommandSubmit}
+                  onIngestTextLines={ingestTextLinesAsStickies}
+                />
+              </section>
+            ) : (
+              <button
+                type="button"
+                className="ai-chat-widget-launcher with-tooltip"
+                onClick={() => setIsAiWidgetOpen(true)}
+                title="Open AI chat"
+                data-tooltip="Open AI chat"
+                aria-label="Open AI chat panel"
+                data-testid="ai-chat-widget-launcher"
+              >
+                ✨ AI
+              </button>
+            )}
+          </div>
         </section>
 
         <aside className="right-column">
-          <AICommandPanel
-            disabled={!user}
-            onSubmit={handleAiCommandSubmit}
-            onIngestTextLines={ingestTextLinesAsStickies}
-          />
           <div className="side-tabs">
             <button
               type="button"

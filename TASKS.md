@@ -1,7 +1,7 @@
 # TASKS.md
 
 Date initialized: 2026-02-16
-Last updated: 2026-02-17 (responsive UI + full e2e regression verified)
+Last updated: 2026-02-17 (shape editing + AI command UI coverage verified)
 Cadence: 1-hour deliverables with hard deadlines
 Source: `mvp-1-collab-board/G4 Week 1 - CollabBoard-requirements.pdf`
 
@@ -58,10 +58,14 @@ Source: `mvp-1-collab-board/G4 Week 1 - CollabBoard-requirements.pdf`
 | T-040 | 2026-02-17 20:00 | Add Yjs pilot mirror scaffold behind env flag (`VITE_SYNC_BACKEND`) | E | Max | Done |
 | T-041 | 2026-02-17 21:00 | Optimize laptop-height layout (compact chrome, non-scrolling board shell, tabbed side navigation) | E | Max | Done |
 | T-042 | 2026-02-17 21:30 | Refresh Playwright assertions for modern login/header and add laptop viewport fit regression test | A | Max | Done |
+| T-043 | 2026-02-17 22:00 | Add explicit icon tooltips and convert AI assistant into open/minimize chat widget | E | Max | Done |
+| T-044 | 2026-02-17 22:20 | Fix presence status colors (green online/orange away) from heartbeat + add e2e regression | A | Max | Done |
+| T-045 | 2026-02-17 22:45 | Make shapes editable (inline text + shape type switch for rectangle/circle/diamond/triangle) | E | Max | Done |
+| T-046 | 2026-02-17 23:00 | Add UI AI-command e2e (chat widget submit -> board object created) | A | Max | Done |
 
 ## Current Evidence Snapshot
 - Deployed app: `https://mvp-1-collab-board.web.app`
-- Playwright run: `15 passed, 0 skipped` (`npm run test:e2e`, 2026-02-17)
+- Playwright run: `19 passed, 0 skipped` (`npm run test:e2e`, 2026-02-17)
 - Auth strategy for automation: QA email/password flow via `/login?qaAuth=1`
 - MVP regression spec: `1 passed` (`npx playwright test e2e/mvp-regression.spec.ts`, 2026-02-17)
 - Critical backend checks: `scripts/run-critical-checks.sh`
@@ -94,6 +98,8 @@ Source: `mvp-1-collab-board/G4 Week 1 - CollabBoard-requirements.pdf`
 - T-033 through T-038 block AI-first differentiation milestone.
 - T-041 depends on T-039 baseline minimap/toolbar work.
 - T-042 validates T-041 and updated login/header UX selectors.
+- T-045 extends editable-object parity for non-sticky shapes.
+- T-046 validates end-to-end AI command execution through the UI widget.
 
 ## Execution Roles
 - Max: accountable owner and final decision maker.

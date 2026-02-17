@@ -47,6 +47,7 @@ export type ShapeObject = BoardObjectBase & {
   type: 'shape'
   shapeType: ShapeKind
   color: string
+  text?: string
 }
 
 export type FrameObject = BoardObjectBase & {
