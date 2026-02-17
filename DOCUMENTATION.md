@@ -1,0 +1,47 @@
+# Documentation Index
+
+This file is the entry point for all project documents in this repository.
+
+## Deployment
+
+- Production URL: https://mvp-1-collab-board.web.app/b/mvp-demo-board
+
+## Product and Planning
+
+- `PRESEARCH.md` - pre-search research and system exploration.
+- `PRD.md` - product requirements and scope.
+- `MVP.md` - MVP boundaries and implementation focus.
+- `TASKS.md` - active execution checklist and task tracking.
+- `DECISIONS.md` - decision log with rationale and tradeoffs.
+
+## Delivery and Demo
+
+- `DEMO_SCRIPT.md` - demo walkthrough script.
+- `SUBMISSION_PACKAGE.md` - checklist for final submission package.
+- `AI_DEVELOPMENT_LOG.md` - required AI workflow and learnings log.
+- `AI_COST_ANALYSIS.md` - development cost + scaling projections.
+
+## Testing and Evidence
+
+- `TEST_EVIDENCE.md` - verification notes and evidence summary.
+- `app/playwright.config.ts` - E2E test runner configuration.
+- `app/tests/` - end-to-end test cases.
+
+## Architecture and Code Layout
+
+- `app/` - React + Vite + TypeScript client and collaborative UI.
+- `functions/` - Firebase Cloud Functions APIs.
+- `firebase.json` - Firebase Hosting, Functions, and rewrite rules.
+- `firestore.rules` - Firestore access/security rules.
+- `database.rules.json` - Realtime Database rules.
+- `firestore.indexes.json` - Firestore indexes config.
+
+## Environment and Setup
+
+- `.firebaserc.example` - Firebase project alias template.
+- `.gitignore` - ignored files, env files, and local tool state.
+- `README.md` - quickstart and local/deploy commands.
+
+## Source Requirement Document
+
+- `G4 Week 1 - CollabBoard-requirements.pdf` - original assignment requirements PDF.
