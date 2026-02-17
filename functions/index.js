@@ -40,6 +40,14 @@ const parseNumber = (value, fallback) => {
 }
 
 const sanitizeText = (text) => String(text || '').trim().slice(0, 300)
+const normalizeCommand = (value) =>
+  String(value || '')
+    .normalize('NFKC')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim()
 const isKnownColor = (value) => Boolean(value && COLOR_MAP[String(value).toLowerCase().trim()])
 
 const stripWrappingQuotes = (value) => {
@@ -71,30 +79,52 @@ const extractColorAndText = (raw) => {
 }
 
 const parseStickyCommand = (command) => {
-  const typeFirstMatch = command.match(
-    /^(?:add|create)\s+(?:a|an)?\s*(?:(\w+)\s+)?(?:sticky(?:\s*note)?|sticker)s?(?:\s+(?:that\s+says|saying|with\s+text))?\s*(.*)$/i,
-  )
-  if (typeFirstMatch) {
-    const [, colorCandidate, rawText] = typeFirstMatch
-    const text = sanitizeText(stripWrappingQuotes(rawText)) || 'New sticky note'
-    return { color: colorCandidate, text }
+  const normalized = normalizeCommand(command)
+  if (!/^(?:add|create)\b/i.test(normalized)) {
+    return null
   }
 
-  const textFirstMatch = command.match(
-    /^(?:add|create)\s+(?:a|an)?\s*(.+?)\s+(?:sticky(?:\s*note)?|sticker)s?\s*$/i,
-  )
-  if (textFirstMatch) {
-    const [, rawText] = textFirstMatch
-    const { color, text } = extractColorAndText(rawText)
-    return { color, text: sanitizeText(text) || 'New sticky note' }
+  const stickyMarker = normalized.match(/\b(?:sticky(?:\s*note)?|sticker)s?\b/i)
+  if (!stickyMarker) {
+    return null
   }
 
-  const typeOnlyMatch = command.match(/^(?:add|create)\s+(?:a|an)?\s*(?:sticky(?:\s*note)?|sticker)s?\s*$/i)
-  if (typeOnlyMatch) {
+  const markerStart = stickyMarker.index || 0
+  const markerText = stickyMarker[0]
+  const beforeMarker = normalized
+    .slice(0, markerStart)
+    .replace(/^(?:add|create)\b/i, '')
+    .replace(/^\s*(?:a|an)\b/i, '')
+    .trim()
+
+  const afterMarker = normalized.slice(markerStart + markerText.length).trim()
+  const cueMatch = normalized.match(/\b(?:that\s+says|saying|with\s+text)\b\s*(.+)$/i)
+  const cueText = cueMatch ? cueMatch[1].trim() : ''
+  const suffixText = afterMarker.replace(/^[.!?]+|[.!?]+$/g, '').trim()
+
+  let textSource = cueText || suffixText || beforeMarker
+  let colorCandidate
+
+  if (beforeMarker) {
+    const beforeParts = beforeMarker.split(/\s+/).filter(Boolean)
+    if (beforeParts.length === 1 && isKnownColor(beforeParts[0])) {
+      colorCandidate = beforeParts[0]
+      if (!cueText && !suffixText) {
+        textSource = ''
+      }
+    }
+  }
+
+  const parsed = extractColorAndText(textSource)
+  if (!colorCandidate) {
+    colorCandidate = parsed.color
+  }
+
+  if (!parsed.text) {
     return { color: undefined, text: 'New sticky note' }
   }
 
-  return null
+  return { color: colorCandidate, text: sanitizeText(parsed.text) || 'New sticky note' }
 }
 
 const getObjectsRef = (boardId) => db.collection('boards').doc(boardId).collection('objects')
@@ -370,9 +400,10 @@ const createJourneyMap = async (ctx, stages) => {
 }
 
 const runCommandPlan = async (ctx, command) => {
-  const lower = command.toLowerCase()
+  const normalizedCommand = normalizeCommand(command)
+  const lower = normalizedCommand.toLowerCase()
 
-  const stickyCommand = parseStickyCommand(command)
+  const stickyCommand = parseStickyCommand(normalizedCommand)
   if (stickyCommand) {
     await createStickyNote(ctx, {
       text: stickyCommand.text,
@@ -383,8 +414,8 @@ const runCommandPlan = async (ctx, command) => {
     return
   }
 
-  const rectangleMatch = command.match(
-    /^(?:add|create)\s+(?:a|an)?\s*(?:(\w+)\s+)?rectangle(?:\s+at(?:\s+position)?\s*(-?\d+)\s*,\s*(-?\d+))?\s*$/i,
+  const rectangleMatch = normalizedCommand.match(
+    /^(?:add|create)\s+(?:a|an)?\s*(?:(\w+)\s+)?(?:rectangle|box|shape)(?:\s+at(?:\s+position)?\s*(-?\d+)\s*,\s*(-?\d+))?[.!?]?\s*$/i,
   )
   if (rectangleMatch) {
     const [, colorCandidate, xRaw, yRaw] = rectangleMatch
@@ -409,7 +440,7 @@ const runCommandPlan = async (ctx, command) => {
     return
   }
 
-  const journeyMatch = command.match(/user journey map\s+with\s+(\d+)\s+stages?/i)
+  const journeyMatch = normalizedCommand.match(/user journey map\s+with\s+(\d+)\s+stages?/i)
   if (journeyMatch) {
     await createJourneyMap(ctx, Number(journeyMatch[1]))
     return
@@ -421,7 +452,7 @@ const runCommandPlan = async (ctx, command) => {
     return
   }
 
-  const moveColorMatch = command.match(/move\s+all\s+the\s+(\w+)\s+sticky notes\s+to\s+the\s+right side/i)
+  const moveColorMatch = normalizedCommand.match(/move\s+all\s+the\s+(\w+)\s+sticky notes\s+to\s+the\s+right side/i)
   if (moveColorMatch) {
     const requestedColor = toColor(moveColorMatch[1], moveColorMatch[1])
     const stickyNotes = ctx.state.filter(
@@ -440,7 +471,7 @@ const runCommandPlan = async (ctx, command) => {
     return
   }
 
-  const changeColorMatch = command.match(/change\s+the\s+sticky note color\s+to\s+(\w+)/i)
+  const changeColorMatch = normalizedCommand.match(/change\s+the\s+sticky note color\s+to\s+(\w+)/i)
   if (changeColorMatch) {
     const sticky = ctx.state.find((item) => item.type === 'stickyNote')
     if (sticky) {
@@ -570,6 +601,7 @@ exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) =>
   let boardIdForError = ''
   let clientCommandIdForError = ''
   let queueSequenceForError = null
+  let commandForError = ''
 
   try {
     const authHeader = String(req.headers.authorization || '')
@@ -592,6 +624,7 @@ exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) =>
     const userId = decodedToken.uid
     const userDisplayName = String(req.body?.userDisplayName || decodedToken.name || '').trim()
     const command = sanitizeText(req.body?.command)
+    commandForError = command
     const clientCommandId = String(req.body?.clientCommandId || crypto.randomUUID()).trim()
     boardIdForError = boardId
     clientCommandIdForError = clientCommandId
@@ -702,7 +735,12 @@ exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) =>
       console.error('Failed to store AI command error', innerError)
     }
 
-    console.error('AI command execution failed', error)
+    console.error('AI command execution failed', {
+      error: error instanceof Error ? error.message : String(error),
+      boardId: boardIdForError,
+      command: commandForError,
+      normalizedCommand: normalizeCommand(commandForError),
+    })
     res.status(500).json({ error: errorMessage })
   }
 })
