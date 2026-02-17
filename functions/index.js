@@ -40,6 +40,62 @@ const parseNumber = (value, fallback) => {
 }
 
 const sanitizeText = (text) => String(text || '').trim().slice(0, 300)
+const isKnownColor = (value) => Boolean(value && COLOR_MAP[String(value).toLowerCase().trim()])
+
+const stripWrappingQuotes = (value) => {
+  const trimmed = String(value || '').trim()
+  if (!trimmed) return ''
+  return trimmed.replace(/^['"]|['"]$/g, '').trim()
+}
+
+const extractColorAndText = (raw) => {
+  const normalized = stripWrappingQuotes(raw)
+  if (!normalized) {
+    return { color: undefined, text: '' }
+  }
+
+  const parts = normalized.split(/\s+/)
+  const [first, ...rest] = parts
+
+  if (isKnownColor(first)) {
+    return {
+      color: first,
+      text: rest.join(' ').trim(),
+    }
+  }
+
+  return {
+    color: undefined,
+    text: normalized,
+  }
+}
+
+const parseStickyCommand = (command) => {
+  const typeFirstMatch = command.match(
+    /^(?:add|create)\s+(?:a|an)?\s*(?:(\w+)\s+)?(?:sticky(?:\s*note)?|sticker)s?(?:\s+(?:that\s+says|saying|with\s+text))?\s*(.*)$/i,
+  )
+  if (typeFirstMatch) {
+    const [, colorCandidate, rawText] = typeFirstMatch
+    const text = sanitizeText(stripWrappingQuotes(rawText)) || 'New sticky note'
+    return { color: colorCandidate, text }
+  }
+
+  const textFirstMatch = command.match(
+    /^(?:add|create)\s+(?:a|an)?\s*(.+?)\s+(?:sticky(?:\s*note)?|sticker)s?\s*$/i,
+  )
+  if (textFirstMatch) {
+    const [, rawText] = textFirstMatch
+    const { color, text } = extractColorAndText(rawText)
+    return { color, text: sanitizeText(text) || 'New sticky note' }
+  }
+
+  const typeOnlyMatch = command.match(/^(?:add|create)\s+(?:a|an)?\s*(?:sticky(?:\s*note)?|sticker)s?\s*$/i)
+  if (typeOnlyMatch) {
+    return { color: undefined, text: 'New sticky note' }
+  }
+
+  return null
+}
 
 const getObjectsRef = (boardId) => db.collection('boards').doc(boardId).collection('objects')
 const getCommandsRef = (boardId) => db.collection('boards').doc(boardId).collection('aiCommands')
@@ -316,19 +372,20 @@ const createJourneyMap = async (ctx, stages) => {
 const runCommandPlan = async (ctx, command) => {
   const lower = command.toLowerCase()
 
-  const stickyMatch = command.match(/add\s+(?:a\s+)?(\w+)?\s*sticky note(?:\s+that\s+says|\s+saying|\s+with\s+text)?\s*['\"]?(.+?)['\"]?$/i)
-  if (stickyMatch) {
-    const [, colorCandidate, textCandidate] = stickyMatch
+  const stickyCommand = parseStickyCommand(command)
+  if (stickyCommand) {
     await createStickyNote(ctx, {
-      text: textCandidate || 'New sticky note',
-      color: toColor(colorCandidate, '#fde68a'),
+      text: stickyCommand.text,
+      color: toColor(stickyCommand.color, '#fde68a'),
       x: 120,
       y: 120,
     })
     return
   }
 
-  const rectangleMatch = command.match(/create\s+(?:a\s+)?(\w+)?\s*rectangle(?:\s+at\s+position\s*(\d+)\s*,\s*(\d+))?/i)
+  const rectangleMatch = command.match(
+    /^(?:add|create)\s+(?:a|an)?\s*(?:(\w+)\s+)?rectangle(?:\s+at(?:\s+position)?\s*(-?\d+)\s*,\s*(-?\d+))?\s*$/i,
+  )
   if (rectangleMatch) {
     const [, colorCandidate, xRaw, yRaw] = rectangleMatch
     await createShape(ctx, {
@@ -392,7 +449,9 @@ const runCommandPlan = async (ctx, command) => {
     return
   }
 
-  throw new Error('Unsupported command. Try sticky note, rectangle, grid, SWOT, retrospective, or journey map commands.')
+  throw new Error(
+    'Unsupported command. Try: "add hello world sticker", "add rectangle", "arrange in grid", "create SWOT template", "retrospective", or "user journey map with 5 stages".',
+  )
 }
 
 const reserveQueueSequence = async (boardId) => {
