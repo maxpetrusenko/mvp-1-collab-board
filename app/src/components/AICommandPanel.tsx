@@ -142,7 +142,7 @@ export const AICommandPanel = ({ disabled, onSubmit, onIngestTextLines }: AIComm
 
     const recognition = new SpeechRecognitionCtor()
 
-    recognition.continuous = false
+    recognition.continuous = true
     recognition.interimResults = true
     recognition.lang = 'en-US'
     recognition.maxAlternatives = 1
@@ -176,8 +176,9 @@ export const AICommandPanel = ({ disabled, onSubmit, onIngestTextLines }: AIComm
         heardAnySpeechRef.current = true
         latestTranscriptRef.current = finalFragments
         setCommand((prev) => (prev ? `${prev} ${finalFragments}`.trim() : finalFragments))
-        setStatus('success')
-        setMessage('Voice captured. Review and press Send Command.')
+        // Keep listening and showing live transcript
+        setStatus('idle')
+        setMessage(`Listening: ${finalFragments}`)
       } else if (interimFragments) {
         heardAnySpeechRef.current = true
         latestTranscriptRef.current = interimFragments
@@ -207,40 +208,38 @@ export const AICommandPanel = ({ disabled, onSubmit, onIngestTextLines }: AIComm
       voiceErrorCodeRef.current = null
 
       if (stoppedManually) {
-        if (!heardFinalSpeechRef.current && fallbackTranscript) {
+        if (fallbackTranscript) {
           setCommand((prev) => (prev ? `${prev} ${fallbackTranscript}`.trim() : fallbackTranscript))
           setStatus('success')
           setMessage('Voice captured. Review and press Send Command.')
-        } else if (!heardFinalSpeechRef.current) {
+        } else {
           setStatus('idle')
           setMessage('Voice input stopped.')
         }
         return
       }
 
-      if (!heardFinalSpeechRef.current && fallbackTranscript) {
+      if (fallbackTranscript) {
         setCommand((prev) => (prev ? `${prev} ${fallbackTranscript}`.trim() : fallbackTranscript))
         setStatus('success')
         setMessage('Voice captured. Review and press Send Command.')
         return
       }
 
-      if (!heardFinalSpeechRef.current && heardAnySpeechRef.current) {
+      if (heardAnySpeechRef.current) {
         setStatus('success')
         setMessage('Voice captured. Review and press Send Command.')
         return
       }
 
-      if (!heardFinalSpeechRef.current && voiceErrorCode) {
+      if (voiceErrorCode) {
         setStatus('error')
         setMessage(toVoiceErrorMessage(voiceErrorCode))
         return
       }
 
-      if (!heardFinalSpeechRef.current) {
-        setStatus('error')
-        setMessage('No speech detected. Try again and speak clearly.')
-      }
+      setStatus('error')
+      setMessage('No speech detected. Try again and speak clearly.')
     }
 
     recognitionRef.current = recognition
