@@ -1,7 +1,14 @@
-import { test, expect } from '@playwright/test'
-import { createTempUser, deleteTempUser, loginWithEmail } from './helpers/auth'
+import { test, expect, type Page } from '@playwright/test'
+import { cleanupTestUser, createOrReuseTestUser, loginWithEmail } from './helpers/auth'
 
 const APP_URL = process.env.PLAYWRIGHT_BASE_URL || 'https://mvp-1-collab-board.web.app'
+
+const openAiWidgetIfNeeded = async (page: Page) => {
+  const launcher = page.getByTestId('ai-chat-widget-launcher')
+  if (await launcher.count()) {
+    await launcher.click()
+  }
+}
 
 test.describe('CollabBoard MVP E2E', () => {
   test('loads login page', async ({ page }) => {
@@ -28,18 +35,16 @@ test.describe('CollabBoard MVP E2E', () => {
 })
 
 test.describe('CollabBoard Authenticated', () => {
-  let testUser: Awaited<ReturnType<typeof createTempUser>> | null = null
+  test.setTimeout(180_000)
+  let testUser: Awaited<ReturnType<typeof createOrReuseTestUser>> | null = null
   const boardId = `pw-ui-${Date.now()}`
 
   test.beforeAll(async () => {
-    testUser = await createTempUser()
+    testUser = await createOrReuseTestUser()
   })
 
   test.afterAll(async () => {
-    if (!testUser) {
-      return
-    }
-    await deleteTempUser(testUser.idToken)
+    await cleanupTestUser(testUser)
   })
 
   test.beforeEach(async ({ page }) => {
@@ -73,17 +78,87 @@ test.describe('CollabBoard Authenticated', () => {
   })
 
   test('AI panel exists', async ({ page }) => {
+    await openAiWidgetIfNeeded(page)
     await expect(page.getByTestId('ai-chat-widget')).toBeVisible()
     await expect(page.locator('.ai-panel')).toBeVisible()
     await expect(page.locator('.ai-input')).toBeVisible()
   })
 
+  test('AI chat starts as launcher icon on the right side', async ({ page }) => {
+    const launcher = page.getByTestId('ai-chat-widget-launcher')
+    await expect(launcher).toBeVisible()
+    await expect(page.getByTestId('ai-chat-widget')).toHaveCount(0)
+    await expect(launcher.locator('.ai-chat-widget-launcher-icon')).toHaveText('💬')
+
+    const layout = await page.evaluate(() => {
+      const widgetRoot = document.querySelector('.ai-chat-widget') as HTMLElement | null
+      const launcherButton = document.querySelector(
+        '[data-testid="ai-chat-widget-launcher"]',
+      ) as HTMLElement | null
+      if (!widgetRoot || !launcherButton) {
+        return null
+      }
+      const style = window.getComputedStyle(widgetRoot)
+      const rect = launcherButton.getBoundingClientRect()
+      return {
+        position: style.position,
+        right: style.right,
+        launcherCenterX: rect.left + rect.width / 2,
+        viewportWidth: window.innerWidth,
+      }
+    })
+
+    expect(layout).not.toBeNull()
+    if (!layout) {
+      return
+    }
+    expect(layout.position).toBe('absolute')
+    expect(layout.right).not.toBe('auto')
+    expect(layout.launcherCenterX).toBeGreaterThan(layout.viewportWidth * 0.5)
+  })
+
   test('AI chat widget can minimize and reopen', async ({ page }) => {
+    await openAiWidgetIfNeeded(page)
     await expect(page.getByTestId('ai-chat-widget')).toBeVisible()
     await page.getByLabel('Minimize AI chat panel').click()
     await expect(page.getByTestId('ai-chat-widget-launcher')).toBeVisible()
     await page.getByTestId('ai-chat-widget-launcher').click()
     await expect(page.getByTestId('ai-chat-widget')).toBeVisible()
+  })
+
+  test('comments and timeline toggles work independently', async ({ page }) => {
+    const commentsButton = page.getByRole('button', { name: 'Comments' })
+    const timelineButton = page.getByRole('button', { name: 'Timeline' })
+    const commentsPanel = page.locator('.comments-panel')
+    const timelinePanel = page.locator('.timeline-panel')
+
+    await expect(commentsPanel).toBeVisible()
+    await expect(timelinePanel).toHaveCount(0)
+    await expect(commentsButton).toHaveAttribute('aria-pressed', 'true')
+    await expect(timelineButton).toHaveAttribute('aria-pressed', 'false')
+
+    await timelineButton.click()
+    await expect(commentsPanel).toBeVisible()
+    await expect(timelinePanel).toBeVisible()
+    await expect(commentsButton).toHaveAttribute('aria-pressed', 'true')
+    await expect(timelineButton).toHaveAttribute('aria-pressed', 'true')
+
+    await commentsButton.click()
+    await expect(commentsPanel).toHaveCount(0)
+    await expect(timelinePanel).toBeVisible()
+    await expect(commentsButton).toHaveAttribute('aria-pressed', 'false')
+    await expect(timelineButton).toHaveAttribute('aria-pressed', 'true')
+
+    await timelineButton.click()
+    await expect(commentsPanel).toHaveCount(0)
+    await expect(timelinePanel).toHaveCount(0)
+    await expect(page.locator('.side-panel-empty')).toBeVisible()
+    await expect(commentsButton).toHaveAttribute('aria-pressed', 'false')
+    await expect(timelineButton).toHaveAttribute('aria-pressed', 'false')
+
+    await commentsButton.click()
+    await expect(commentsPanel).toBeVisible()
+    await expect(page.locator('.side-panel-empty')).toHaveCount(0)
   })
 
   test('presence strip visible', async ({ page }) => {

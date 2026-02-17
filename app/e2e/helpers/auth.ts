@@ -13,6 +13,13 @@ type TempUser = {
   idToken: string
 }
 
+type TestUser = {
+  email: string
+  password: string
+  idToken: string
+  ephemeral: boolean
+}
+
 const parseEnvFile = (filePath: string): Record<string, string> => {
   if (!existsSync(filePath)) {
     return {}
@@ -52,24 +59,90 @@ export const loadAuthTestConfig = (): EnvConfig => {
   return { firebaseApiKey, firebaseProjectId }
 }
 
-export const createTempUser = async (): Promise<TempUser> => {
-  const { firebaseApiKey } = loadAuthTestConfig()
-  const suffix = `${Date.now()}-${Math.floor(Math.random() * 100000)}`
-  const email = `qa.ui.${suffix}@example.com`
-  const password = `QATest!${suffix}Aa1`
+const loadRawEnv = (): Record<string, string> => {
+  const envPath = path.resolve(process.cwd(), '.env')
+  const fileEnv = parseEnvFile(envPath)
+  return {
+    ...fileEnv,
+    ...Object.fromEntries(Object.entries(process.env).filter(([, value]) => typeof value === 'string')),
+  }
+}
 
-  const response = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${firebaseApiKey}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password, returnSecureToken: true }),
-  })
+const getReusableCredentialPair = (): { email: string; password: string } | null => {
+  const env = loadRawEnv()
+  const email = [
+    env.E2E_EMAIL,
+    env.QA_EMAIL,
+    env.EMAIL,
+    env.EMAIL1,
+    env.EMAIL2,
+    env.EMAIL3,
+    env.EMAIL4,
+  ]
+    .map((value) => String(value || '').trim())
+    .find((value) => value.length > 0)
+  const password = [env.E2E_PASSWORD, env.QA_PASSWORD, env.PW]
+    .map((value) => String(value || '').trim())
+    .find((value) => value.length > 0)
 
-  const body = (await response.json()) as { idToken?: string; error?: { message?: string } }
-  if (!response.ok || !body.idToken) {
-    throw new Error(`Failed to create test user ${email}: ${body.error?.message ?? 'unknown error'}`)
+  if (!email || !password) {
+    return null
   }
 
-  return { email, password, idToken: body.idToken }
+  return { email, password }
+}
+
+const signInWithEmailPassword = async (email: string, password: string): Promise<string | null> => {
+  const { firebaseApiKey } = loadAuthTestConfig()
+  const response = await fetch(
+    `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${firebaseApiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, returnSecureToken: true }),
+    },
+  )
+  const body = (await response.json()) as { idToken?: string }
+  if (!response.ok || !body.idToken) {
+    return null
+  }
+  return body.idToken
+}
+
+export const createTempUser = async (): Promise<TempUser> => {
+  const { firebaseApiKey } = loadAuthTestConfig()
+  const maxAttempts = 8
+  let lastErrorMessage = 'unknown error'
+  let lastEmail = ''
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const suffix = `${Date.now()}-${Math.floor(Math.random() * 100000)}`
+    const email = `qa.ui.${suffix}@example.com`
+    const password = `QATest!${suffix}Aa1`
+    lastEmail = email
+
+    const response = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${firebaseApiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, returnSecureToken: true }),
+    })
+
+    const body = (await response.json()) as { idToken?: string; error?: { message?: string } }
+    if (response.ok && body.idToken) {
+      return { email, password, idToken: body.idToken }
+    }
+
+    lastErrorMessage = body.error?.message ?? `HTTP_${response.status}`
+    const isRateLimited = lastErrorMessage === 'TOO_MANY_ATTEMPTS_TRY_LATER' || response.status === 429
+    if (!isRateLimited || attempt === maxAttempts) {
+      break
+    }
+
+    const backoffMs = Math.min(15_000, 1_000 * 2 ** (attempt - 1)) + Math.floor(Math.random() * 400)
+    await new Promise((resolve) => setTimeout(resolve, backoffMs))
+  }
+
+  throw new Error(`Failed to create test user ${lastEmail}: ${lastErrorMessage}`)
 }
 
 export const deleteTempUser = async (idToken: string): Promise<void> => {
@@ -79,6 +152,34 @@ export const deleteTempUser = async (idToken: string): Promise<void> => {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ idToken }),
   })
+}
+
+export const createOrReuseTestUser = async (): Promise<TestUser> => {
+  const reusable = getReusableCredentialPair()
+  if (reusable) {
+    const idToken = await signInWithEmailPassword(reusable.email, reusable.password)
+    if (idToken) {
+      return {
+        email: reusable.email,
+        password: reusable.password,
+        idToken,
+        ephemeral: false,
+      }
+    }
+  }
+
+  const tempUser = await createTempUser()
+  return {
+    ...tempUser,
+    ephemeral: true,
+  }
+}
+
+export const cleanupTestUser = async (user: TestUser | null): Promise<void> => {
+  if (!user || !user.ephemeral) {
+    return
+  }
+  await deleteTempUser(user.idToken)
 }
 
 export const loginWithEmail = async (page: Page, appUrl: string, email: string, password: string): Promise<void> => {

@@ -7,7 +7,8 @@
     "node": "22"
   },
   "scripts": {
-    "deploy": "firebase deploy --only functions"
+    "deploy": "firebase deploy --only functions",
+    "test": "node --test"
   },
   "dependencies": {
     "firebase-admin": "^13.5.0",

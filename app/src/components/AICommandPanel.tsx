@@ -81,6 +81,9 @@ export const AICommandPanel = ({ disabled, onSubmit, onIngestTextLines }: AIComm
   const recognitionRef = useRef<SpeechRecognitionInstanceLike | null>(null)
   const stoppingVoiceRef = useRef(false)
   const heardFinalSpeechRef = useRef(false)
+  const heardAnySpeechRef = useRef(false)
+  const latestTranscriptRef = useRef('')
+  const voiceErrorCodeRef = useRef<string | null>(null)
   const voiceSupported = Boolean(getSpeechRecognitionCtor())
 
   useEffect(() => {
@@ -145,6 +148,9 @@ export const AICommandPanel = ({ disabled, onSubmit, onIngestTextLines }: AIComm
     recognition.maxAlternatives = 1
     stoppingVoiceRef.current = false
     heardFinalSpeechRef.current = false
+    heardAnySpeechRef.current = false
+    latestTranscriptRef.current = ''
+    voiceErrorCodeRef.current = null
 
     recognition.onresult = (event) => {
       let finalFragments = ''
@@ -167,32 +173,67 @@ export const AICommandPanel = ({ disabled, onSubmit, onIngestTextLines }: AIComm
 
       if (finalFragments) {
         heardFinalSpeechRef.current = true
+        heardAnySpeechRef.current = true
+        latestTranscriptRef.current = finalFragments
         setCommand((prev) => (prev ? `${prev} ${finalFragments}`.trim() : finalFragments))
         setStatus('success')
         setMessage('Voice captured. Review and press Send Command.')
       } else if (interimFragments) {
+        heardAnySpeechRef.current = true
+        latestTranscriptRef.current = interimFragments
         setStatus('idle')
         setMessage(`Listening: ${interimFragments}`)
       }
     }
     recognition.onerror = (event) => {
+      const errorCode = String(event.error || '')
+      voiceErrorCodeRef.current = errorCode || null
+      if (errorCode === 'no-speech') {
+        return
+      }
       setStatus('error')
-      setMessage(toVoiceErrorMessage(event.error))
+      setMessage(toVoiceErrorMessage(errorCode))
       setIsListening(false)
       recognitionRef.current = null
       stoppingVoiceRef.current = false
     }
     recognition.onend = () => {
       const stoppedManually = stoppingVoiceRef.current
+      const fallbackTranscript = latestTranscriptRef.current.trim()
+      const voiceErrorCode = voiceErrorCodeRef.current
       stoppingVoiceRef.current = false
       setIsListening(false)
       recognitionRef.current = null
+      voiceErrorCodeRef.current = null
 
       if (stoppedManually) {
-        if (!heardFinalSpeechRef.current) {
+        if (!heardFinalSpeechRef.current && fallbackTranscript) {
+          setCommand((prev) => (prev ? `${prev} ${fallbackTranscript}`.trim() : fallbackTranscript))
+          setStatus('success')
+          setMessage('Voice captured. Review and press Send Command.')
+        } else if (!heardFinalSpeechRef.current) {
           setStatus('idle')
           setMessage('Voice input stopped.')
         }
+        return
+      }
+
+      if (!heardFinalSpeechRef.current && fallbackTranscript) {
+        setCommand((prev) => (prev ? `${prev} ${fallbackTranscript}`.trim() : fallbackTranscript))
+        setStatus('success')
+        setMessage('Voice captured. Review and press Send Command.')
+        return
+      }
+
+      if (!heardFinalSpeechRef.current && heardAnySpeechRef.current) {
+        setStatus('success')
+        setMessage('Voice captured. Review and press Send Command.')
+        return
+      }
+
+      if (!heardFinalSpeechRef.current && voiceErrorCode) {
+        setStatus('error')
+        setMessage(toVoiceErrorMessage(voiceErrorCode))
         return
       }
 

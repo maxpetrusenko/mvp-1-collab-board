@@ -263,7 +263,8 @@ export const BoardPage = () => {
   >({})
   const [activityEvents, setActivityEvents] = useState<BoardActivityEvent[]>([])
   const [commentDraft, setCommentDraft] = useState('')
-  const [activeSidePanel, setActiveSidePanel] = useState<'comments' | 'timeline'>('comments')
+  const [showCommentsPanel, setShowCommentsPanel] = useState(true)
+  const [showTimelinePanel, setShowTimelinePanel] = useState(false)
   const [isVotingMode, setIsVotingMode] = useState(false)
   const [timerState, setTimerState] = useState<TimerState>({
     running: false,
@@ -273,7 +274,7 @@ export const BoardPage = () => {
   const [inlineEditor, setInlineEditor] = useState<InlineEditorDraft | null>(null)
   const [nowMsValue, setNowMsValue] = useState(Date.now())
   const [showShortcuts, setShowShortcuts] = useState(false)
-  const [isAiWidgetOpen, setIsAiWidgetOpen] = useState(true)
+  const [isAiWidgetOpen, setIsAiWidgetOpen] = useState(false)
   const [isTimelineReplaying, setIsTimelineReplaying] = useState(false)
   const [yjsPilotMetrics, setYjsPilotMetrics] = useState({ objects: 0, bytes: 0 })
 
@@ -2906,7 +2907,9 @@ export const BoardPage = () => {
                 aria-label="Open AI chat panel"
                 data-testid="ai-chat-widget-launcher"
               >
-                ✨ AI
+                <span className="ai-chat-widget-launcher-icon" aria-hidden="true">
+                  💬
+                </span>
               </button>
             )}
           </div>
@@ -2916,22 +2919,24 @@ export const BoardPage = () => {
           <div className="side-tabs">
             <button
               type="button"
-              className={`side-tab-button ${activeSidePanel === 'comments' ? 'active' : ''}`}
-              onClick={() => setActiveSidePanel('comments')}
-              title="Show comments panel"
+              className={`side-tab-button ${showCommentsPanel ? 'active' : ''}`}
+              onClick={() => setShowCommentsPanel((current) => !current)}
+              title={showCommentsPanel ? 'Hide comments panel' : 'Show comments panel'}
+              aria-pressed={showCommentsPanel}
             >
               Comments
             </button>
             <button
               type="button"
-              className={`side-tab-button ${activeSidePanel === 'timeline' ? 'active' : ''}`}
-              onClick={() => setActiveSidePanel('timeline')}
-              title="Show activity timeline"
+              className={`side-tab-button ${showTimelinePanel ? 'active' : ''}`}
+              onClick={() => setShowTimelinePanel((current) => !current)}
+              title={showTimelinePanel ? 'Hide activity timeline' : 'Show activity timeline'}
+              aria-pressed={showTimelinePanel}
             >
               Timeline
             </button>
           </div>
-          {activeSidePanel === 'comments' ? (
+          {showCommentsPanel ? (
             <section className="side-panel comments-panel">
               <div className="side-panel-header">
                 <h3>Comments</h3>
@@ -2969,7 +2974,9 @@ export const BoardPage = () => {
                 <p className="panel-note">Select an object to view and add comments.</p>
               )}
             </section>
-          ) : (
+          ) : null}
+
+          {showTimelinePanel ? (
             <section className="side-panel timeline-panel">
               <div className="side-panel-header">
                 <h3>Activity Timeline</h3>
@@ -3003,7 +3010,13 @@ export const BoardPage = () => {
                 </div>
               </div>
             </section>
-          )}
+          ) : null}
+
+          {!showCommentsPanel && !showTimelinePanel ? (
+            <section className="side-panel side-panel-empty">
+              <p className="panel-note">Enable Comments or Timeline to show collaboration details.</p>
+            </section>
+          ) : null}
         </aside>
       </section>
       {showShortcuts ? (

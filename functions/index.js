@@ -48,6 +48,14 @@ const normalizeCommand = (value) =>
     .replace(/[‘’]/g, "'")
     .replace(/\s+/g, ' ')
     .trim()
+const normalizeCommandForPlan = (value) =>
+  normalizeCommand(value)
+    .replace(/\borganise\b/gi, 'organize')
+    .replace(/\bcolour\b/gi, 'color')
+const isOrganizeByColorCommand = (lowerCommand) =>
+  (lowerCommand.includes('organize') && lowerCommand.includes('color')) ||
+  (lowerCommand.includes('group') && lowerCommand.includes('color')) ||
+  (lowerCommand.includes('sort') && lowerCommand.includes('color'))
 const isKnownColor = (value) => Boolean(value && COLOR_MAP[String(value).toLowerCase().trim()])
 
 const stripWrappingQuotes = (value) => {
@@ -490,6 +498,52 @@ const organizeBoardByType = async (ctx) => {
   ctx.executedTools.push({ tool: 'organizeBoardByType', count: movable.length })
 }
 
+const organizeBoardByColor = async (ctx) => {
+  const movable = ctx.state.filter((item) => item.type !== 'connector' && item.color)
+  if (movable.length === 0) {
+    ctx.executedTools.push({ tool: 'organizeBoardByColor', count: 0, groups: 0 })
+    return
+  }
+
+  const groups = new Map()
+  for (const item of movable) {
+    const colorKey = String(toColor(item.color, item.color)).toLowerCase().trim()
+    if (!groups.has(colorKey)) {
+      groups.set(colorKey, [])
+    }
+    groups.get(colorKey).push(item)
+  }
+
+  const orderedGroups = Array.from(groups.entries())
+    .sort((left, right) => left[0].localeCompare(right[0]))
+    .map(([, items]) =>
+      items.slice().sort((left, right) => {
+        const yDelta = parseNumber(left.position?.y, 0) - parseNumber(right.position?.y, 0)
+        if (yDelta !== 0) return yDelta
+        return parseNumber(left.position?.x, 0) - parseNumber(right.position?.x, 0)
+      }),
+    )
+
+  const startX = 80
+  const startY = 90
+  const colGap = 260
+  const rowGap = 150
+
+  for (let col = 0; col < orderedGroups.length; col += 1) {
+    const group = orderedGroups[col]
+    for (let row = 0; row < group.length; row += 1) {
+      const object = group[row]
+      await moveObject(ctx, {
+        objectId: object.id,
+        x: startX + col * colGap,
+        y: startY + row * rowGap,
+      })
+    }
+  }
+
+  ctx.executedTools.push({ tool: 'organizeBoardByColor', count: movable.length, groups: orderedGroups.length })
+}
+
 const synthesizeStickyThemes = async (ctx) => {
   const stickyNotes = ctx.state.filter((item) => item.type === 'stickyNote')
   if (stickyNotes.length === 0) {
@@ -539,7 +593,7 @@ const synthesizeStickyThemes = async (ctx) => {
 }
 
 const runCommandPlan = async (ctx, command) => {
-  const normalizedCommand = normalizeCommand(command)
+  const normalizedCommand = normalizeCommandForPlan(command)
   const lower = normalizedCommand.toLowerCase()
 
   const stickyCommand = parseStickyCommand(normalizedCommand)
@@ -628,6 +682,11 @@ const runCommandPlan = async (ctx, command) => {
     return
   }
 
+  if (isOrganizeByColorCommand(lower)) {
+    await organizeBoardByColor(ctx)
+    return
+  }
+
   if (
     lower.includes('organize this board') ||
     (lower.includes('organize') && lower.includes('column')) ||
@@ -677,7 +736,7 @@ const runCommandPlan = async (ctx, command) => {
   }
 
   throw new Error(
-    'Unsupported command. Try: "add hello world sticker", "add rectangle", "add circle", "add diamond", "add frame", "add connector", "organize this board into groups", "summarize all stickies into themes", "arrange in grid", "create SWOT template", "retrospective", or "user journey map with 5 stages".',
+    'Unsupported command. Try: "add hello world sticker", "add rectangle", "add circle", "add diamond", "add frame", "add connector", "organize by color", "organize this board into groups", "summarize all stickies into themes", "arrange in grid", "create SWOT template", "retrospective", or "user journey map with 5 stages".',
   )
 }
 
@@ -940,3 +999,8 @@ exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) =>
     res.status(500).json({ error: errorMessage })
   }
 })
+
+exports.__test = {
+  normalizeCommandForPlan,
+  isOrganizeByColorCommand,
+}
