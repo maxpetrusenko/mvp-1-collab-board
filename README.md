@@ -80,5 +80,4 @@ firebase deploy
 | `docs/DEMO_SCRIPT.md` | 3-5 min demo walkthrough |
 | `docs/AI_DEVELOPMENT_LOG.md` | 1-page AI tool usage log |
 | `docs/AI_COST_ANALYSIS.md` | Dev spend + user projections |
-| `docs/TEST_EVIDENCE.md` | E2E test results |
 | `docs/DOCUMENTATION.md` | Architecture overview |

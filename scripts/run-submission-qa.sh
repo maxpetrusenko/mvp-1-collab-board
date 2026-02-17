@@ -10,15 +10,14 @@ SUMMARY_JSON="$OUT_DIR/submission-qa-$TS.json"
 LATEST_JSON="$OUT_DIR/latest-submission-qa.json"
 
 required_markdown=(
-  "PRESEARCH.md"
-  "PRD.md"
-  "MVP.md"
-  "DECISIONS.md"
+  "docs/PRESEARCH.md"
+  "docs/PRD.md"
+  "docs/MVP.md"
+  "docs/DECISIONS.md"
   "TASKS.md"
-  "SUBMISSION_PACKAGE.md"
-  "AI_DEVELOPMENT_LOG.md"
-  "AI_COST_ANALYSIS.md"
-  "TEST_EVIDENCE.md"
+  "docs/SUBMISSION_PACKAGE.md"
+  "docs/AI_DEVELOPMENT_LOG.md"
+  "docs/AI_COST_ANALYSIS.md"
 )
 
 required_pdfs=(
@@ -30,7 +29,6 @@ required_pdfs=(
   "submission/SUBMISSION_PACKAGE.pdf"
   "submission/AI_DEVELOPMENT_LOG.pdf"
   "submission/AI_COST_ANALYSIS.pdf"
-  "submission/TEST_EVIDENCE.pdf"
 )
 
 required_artifacts=(

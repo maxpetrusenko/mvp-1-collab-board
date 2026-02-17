@@ -34,8 +34,6 @@ Status: Complete (baseline capture + script package)
 
 ## 2.1 Test Evidence
 Status: Complete
-- File: `TEST_EVIDENCE.md`
-- PDF: `submission/TEST_EVIDENCE.pdf`
 - Latest artifact bundle:
   - `submission/test-artifacts/latest-critical-checks.json`
   - `submission/test-artifacts/latest-critical-checks.log`
@@ -178,7 +176,6 @@ Note: No LLM token costs — AI uses pattern matching and direct Firestore write
   - `SUBMISSION_PACKAGE.pdf`
   - `AI_DEVELOPMENT_LOG.pdf`
   - `AI_COST_ANALYSIS.pdf`
-  - `TEST_EVIDENCE.pdf`
 
 ## 8) GitHub PAT Token Note
 - If repository automation cannot use existing auth, use a PAT with least privilege for repo read/write.

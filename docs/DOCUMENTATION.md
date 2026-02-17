@@ -26,7 +26,6 @@ This file is the entry point for all project documents in this repository.
 
 ## Testing and Evidence
 
-- `TEST_EVIDENCE.md` - verification notes and evidence summary.
 - `app/playwright.config.ts` - E2E test runner configuration.
 - `app/e2e/` - end-to-end test cases (UI and API-level concurrency).
   - includes `app/e2e/mvp-regression.spec.ts` for MVP create/drag/undo-redo regression coverage.

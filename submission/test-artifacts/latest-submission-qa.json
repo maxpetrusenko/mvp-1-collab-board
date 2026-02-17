@@ -1,27 +1,27 @@
 {
-  "timestamp": 1771345026,
+  "timestamp": 1771354339,
   "pass": true,
   "missingCount": 0,
   "failedUrls": 0,
   "fileChecks": [
     {
       "kind": "markdown",
-      "path": "PRESEARCH.md",
+      "path": "docs/PRESEARCH.md",
       "exists": true
     },
     {
       "kind": "markdown",
-      "path": "PRD.md",
+      "path": "docs/PRD.md",
       "exists": true
     },
     {
       "kind": "markdown",
-      "path": "MVP.md",
+      "path": "docs/MVP.md",
       "exists": true
     },
     {
       "kind": "markdown",
-      "path": "DECISIONS.md",
+      "path": "docs/DECISIONS.md",
       "exists": true
     },
     {
@@ -31,22 +31,17 @@
     },
     {
       "kind": "markdown",
-      "path": "SUBMISSION_PACKAGE.md",
+      "path": "docs/SUBMISSION_PACKAGE.md",
       "exists": true
     },
     {
       "kind": "markdown",
-      "path": "AI_DEVELOPMENT_LOG.md",
+      "path": "docs/AI_DEVELOPMENT_LOG.md",
       "exists": true
     },
     {
       "kind": "markdown",
-      "path": "AI_COST_ANALYSIS.md",
-      "exists": true
-    },
-    {
-      "kind": "markdown",
-      "path": "TEST_EVIDENCE.md",
+      "path": "docs/AI_COST_ANALYSIS.md",
       "exists": true
     },
     {
@@ -87,11 +82,6 @@
     {
       "kind": "pdf",
       "path": "submission/AI_COST_ANALYSIS.pdf",
-      "exists": true
-    },
-    {
-      "kind": "pdf",
-      "path": "submission/TEST_EVIDENCE.pdf",
       "exists": true
     },
     {

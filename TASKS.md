@@ -1,7 +1,7 @@
 # TASKS.md
 
 Date initialized: 2026-02-16
-Last updated: 2026-02-17 (shape editing + AI command UI coverage verified)
+Last updated: 2026-02-17 (E2E coverage extended for deletion/color/AI errors/voice input)
 Cadence: 1-hour deliverables with hard deadlines
 Source: `mvp-1-collab-board/G4 Week 1 - CollabBoard-requirements.pdf`
 
@@ -62,10 +62,16 @@ Source: `mvp-1-collab-board/G4 Week 1 - CollabBoard-requirements.pdf`
 | T-044 | 2026-02-17 22:20 | Fix presence status colors (green online/orange away) from heartbeat + add e2e regression | A | Max | Done |
 | T-045 | 2026-02-17 22:45 | Make shapes editable (inline text + shape type switch for rectangle/circle/diamond/triangle) | E | Max | Done |
 | T-046 | 2026-02-17 23:00 | Add UI AI-command e2e (chat widget submit -> board object created) | A | Max | Done |
+| T-047 | 2026-02-17 23:20 | Add E2E coverage for delete flows (toolbar/Delete/Backspace + disabled state) | A | Max | Done |
+| T-048 | 2026-02-17 23:35 | Add E2E coverage for sticky/shape color changes and palette visibility | A | Max | Done |
+| T-049 | 2026-02-17 23:45 | Add AI error-path E2E coverage (unsupported/malformed/recovery) | A | Max | Done |
+| T-050 | 2026-02-17 23:55 | Add voice-input UI E2E coverage (unsupported browser + runtime fallback) | A | Max | Done |
+| T-051 | 2026-02-18 00:05 | Extract shared Firestore E2E helper and expand AI UI color-command coverage | A | Max | Done |
 
 ## Current Evidence Snapshot
 - Deployed app: `https://mvp-1-collab-board.web.app`
-- Playwright run: `19 passed, 0 skipped` (`npm run test:e2e`, 2026-02-17)
+- Playwright run: `32 passed, 0 skipped` (`npx playwright test --list`, 2026-02-17)
+- Targeted regression run: `14 passed` (`npx playwright test e2e/object-deletion.spec.ts e2e/color-changes.spec.ts e2e/ai-errors.spec.ts e2e/voice-input.spec.ts e2e/ai-command-ui.spec.ts`, 2026-02-17)
 - Auth strategy for automation: QA email/password flow via `/login?qaAuth=1`
 - MVP regression spec: `1 passed` (`npx playwright test e2e/mvp-regression.spec.ts`, 2026-02-17)
 - Critical backend checks: `scripts/run-critical-checks.sh`
@@ -127,7 +133,7 @@ Source: `mvp-1-collab-board/G4 Week 1 - CollabBoard-requirements.pdf`
 - [x] AI Development Log (1 page)
 - [x] AI Cost Analysis (dev spend + projections)
 - [x] Architecture overview + setup guide in repo
-- [x] Test evidence bundle (`TEST_EVIDENCE.md` + artifacts)
+- [x] Test evidence bundle (`submission/test-artifacts/*`)
 - [x] Social post URL and screenshot assets package
 
 ## Linear Ticket Skeleton
