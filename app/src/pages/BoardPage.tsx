@@ -18,7 +18,14 @@ type Viewport = {
   scale: number
 }
 
+type LocalPositionOverride = {
+  point: Point
+  mode: 'dragging' | 'pending'
+  updatedAt: number
+}
+
 const BOARD_HEADER_HEIGHT = 76
+const LOCAL_POSITION_PENDING_TTL_MS = 3_000
 const aiApiBaseUrl = (import.meta.env.VITE_AI_API_BASE_URL || '').replace(/\/$/, '')
 const aiCommandEndpoint = `${aiApiBaseUrl}/api/ai/command`
 
@@ -31,6 +38,8 @@ const isEditableTarget = (target: EventTarget | null) => {
 }
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
+const positionsEqual = (left: Point, right: Point, epsilon = 0.5) =>
+  Math.abs(left.x - right.x) <= epsilon && Math.abs(left.y - right.y) <= epsilon
 
 export const BoardPage = () => {
   const { boardId: boardIdParam } = useParams()
@@ -43,7 +52,9 @@ export const BoardPage = () => {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [clipboardObject, setClipboardObject] = useState<BoardObject | null>(null)
   const [draggingObjectId, setDraggingObjectId] = useState<string | null>(null)
-  const [localObjectPositions, setlocalObjectPositions] = useState<Record<string, Point>>({})
+  const [localObjectPositions, setLocalObjectPositions] = useState<
+    Record<string, LocalPositionOverride>
+  >({})
 
   const [cursors, setCursors] = useState<Record<string, CursorPresence>>({})
 
@@ -101,6 +112,52 @@ export const BoardPage = () => {
           )
         }
         return nextObjects
+      })
+
+      setLocalObjectPositions((prev) => {
+        if (Object.keys(prev).length === 0) {
+          return prev
+        }
+
+        const now = Date.now()
+        const objectById = new Map(nextObjects.map((boardObject) => [boardObject.id, boardObject]))
+        const next: Record<string, LocalPositionOverride> = {}
+        let changed = false
+
+        Object.entries(prev).forEach(([objectId, localOverride]) => {
+          const serverObject = objectById.get(objectId)
+          if (!serverObject) {
+            changed = true
+            return
+          }
+
+          if (positionsEqual(serverObject.position, localOverride.point)) {
+            changed = true
+            return
+          }
+
+          if (
+            localOverride.mode === 'pending' &&
+            now - localOverride.updatedAt > LOCAL_POSITION_PENDING_TTL_MS
+          ) {
+            changed = true
+            return
+          }
+
+          if (localOverride.mode === 'dragging' && draggingObjectId !== objectId) {
+            next[objectId] = {
+              ...localOverride,
+              mode: 'pending',
+              updatedAt: now,
+            }
+            changed = true
+            return
+          }
+
+          next[objectId] = localOverride
+        })
+
+        return changed ? next : prev
       })
     })
 
@@ -533,7 +590,8 @@ export const BoardPage = () => {
               {objects.map((boardObject) => {
                 const selected = boardObject.id === selectedId
                 // Use local position during drag, server position otherwise
-                const position = localObjectPositions[boardObject.id] || boardObject.position
+                const position =
+                  localObjectPositions[boardObject.id]?.point || boardObject.position
 
                 if (boardObject.type === 'stickyNote') {
                   return (
@@ -555,16 +613,26 @@ export const BoardPage = () => {
                       }}
                       onDragMove={(event) => {
                         const newPos = { x: event.target.x(), y: event.target.y() }
-                        setlocalObjectPositions((prev) => ({ ...prev, [boardObject.id]: newPos }))
+                        setLocalObjectPositions((prev) => ({
+                          ...prev,
+                          [boardObject.id]: {
+                            point: newPos,
+                            mode: 'dragging',
+                            updatedAt: Date.now(),
+                          },
+                        }))
                         getDragPublisher(boardObject.id)(newPos)
                       }}
                       onDragEnd={(event) => {
                         const finalPos = { x: event.target.x(), y: event.target.y() }
-                        setlocalObjectPositions((prev) => {
-                          const next = { ...prev }
-                          delete next[boardObject.id]
-                          return next
-                        })
+                        setLocalObjectPositions((prev) => ({
+                          ...prev,
+                          [boardObject.id]: {
+                            point: finalPos,
+                            mode: 'pending',
+                            updatedAt: Date.now(),
+                          },
+                        }))
                         setDraggingObjectId(null)
                         void patchObject(boardObject.id, { position: finalPos })
                       }}
@@ -611,16 +679,26 @@ export const BoardPage = () => {
                     }}
                     onDragMove={(event) => {
                       const newPos = { x: event.target.x(), y: event.target.y() }
-                      setlocalObjectPositions((prev) => ({ ...prev, [boardObject.id]: newPos }))
+                      setLocalObjectPositions((prev) => ({
+                        ...prev,
+                        [boardObject.id]: {
+                          point: newPos,
+                          mode: 'dragging',
+                          updatedAt: Date.now(),
+                        },
+                      }))
                       getDragPublisher(boardObject.id)(newPos)
                     }}
                     onDragEnd={(event) => {
                       const finalPos = { x: event.target.x(), y: event.target.y() }
-                      setlocalObjectPositions((prev) => {
-                        const next = { ...prev }
-                        delete next[boardObject.id]
-                        return next
-                      })
+                      setLocalObjectPositions((prev) => ({
+                        ...prev,
+                        [boardObject.id]: {
+                          point: finalPos,
+                          mode: 'pending',
+                          updatedAt: Date.now(),
+                        },
+                      }))
                       setDraggingObjectId(null)
                       void patchObject(boardObject.id, { position: finalPos })
                     }}
