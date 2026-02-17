@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 
+const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'https://mvp-1-collab-board.web.app'
+
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: false, // Run serially for Firebase tests
@@ -8,7 +10,7 @@ export default defineConfig({
   workers: 1,
   reporter: 'html',
   use: {
-    baseURL: 'https://mvp-1-collab-board.web.app',
+    baseURL,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },

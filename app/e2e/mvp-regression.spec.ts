@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 
 import { createTempUser, deleteTempUser, loadAuthTestConfig, loginWithEmail } from './helpers/auth'
 
-const APP_URL = 'https://mvp-1-collab-board.web.app'
+const APP_URL = process.env.PLAYWRIGHT_BASE_URL || 'https://mvp-1-collab-board.web.app'
 
 type FirestoreValue = {
   stringValue?: string
@@ -101,7 +101,7 @@ test.describe('MVP regression', () => {
       const initialStickyCount = countByType(initialObjects, 'stickyNote')
       const initialShapeCount = countByType(initialObjects, 'shape')
 
-      await page.getByRole('button', { name: 'Add Sticky' }).click()
+      await page.locator('button[title="Add sticky note (S)"]').click()
 
       await expect
         .poll(async () => {
@@ -143,7 +143,7 @@ test.describe('MVP regression', () => {
         })
         .not.toBe(initialStickyPosition)
 
-      await page.getByRole('button', { name: 'Add Rectangle' }).click()
+      await page.locator('button[title="Add rectangle (R)"]').click()
 
       await expect
         .poll(async () => {
@@ -152,7 +152,7 @@ test.describe('MVP regression', () => {
         })
         .toBe(initialShapeCount + 1)
 
-      await page.getByRole('button', { name: 'Undo' }).click()
+      await page.locator('button[title="Undo (Cmd+Z)"]').click()
 
       await expect
         .poll(async () => {
@@ -161,7 +161,7 @@ test.describe('MVP regression', () => {
         })
         .toBe(initialShapeCount)
 
-      await page.getByRole('button', { name: 'Redo' }).click()
+      await page.locator('button[title="Redo (Cmd+Shift+Z)"]').click()
 
       await expect
         .poll(async () => {

@@ -65,6 +65,13 @@ const toVoiceErrorMessage = (errorCode?: string): string => {
   return `Voice input error: ${errorCode || 'unknown error'}`
 }
 
+const quickActions = [
+  { label: 'SWOT', prompt: 'Create a SWOT template with four quadrants', icon: '⊞' },
+  { label: 'Retro', prompt: 'Create a retrospective template with columns', icon: '▦' },
+  { label: 'Organize', prompt: 'Organize this board into groups', icon: '⊗' },
+  { label: 'Summarize', prompt: 'Summarize all sticky notes into themes', icon: '≣' },
+]
+
 export const AICommandPanel = ({ disabled, onSubmit, onIngestTextLines }: AICommandPanelProps) => {
   const [command, setCommand] = useState('')
   const [status, setStatus] = useState<'idle' | 'running' | 'success' | 'error'>('idle')
@@ -249,12 +256,13 @@ export const AICommandPanel = ({ disabled, onSubmit, onIngestTextLines }: AIComm
   return (
     <aside className="ai-panel">
       <div className="ai-panel-header">
-        <h3>AI Command Panel</h3>
+        <h3>AI Assistant</h3>
         <span className={`status-pill ${status}`}>{status}</span>
       </div>
+
       <textarea
         className="ai-input"
-        placeholder="Create a SWOT template with four quadrants"
+        placeholder="Describe what you want to create or ask me to organize your board..."
         value={command}
         onChange={(event) => setCommand(event.target.value)}
         disabled={disabled}
@@ -265,19 +273,59 @@ export const AICommandPanel = ({ disabled, onSubmit, onIngestTextLines }: AIComm
           }
         }}
       />
+
+      <div className="ai-quick-actions">
+        {quickActions.map((action) => (
+          <button
+            key={action.label}
+            type="button"
+            className="button-ghost"
+            onClick={() => setCommand(action.prompt)}
+            disabled={disabled}
+            title={action.prompt}
+          >
+            <span className="quick-action-icon">{action.icon}</span>
+            {action.label}
+          </button>
+        ))}
+      </div>
+
       <div className="ai-tools-row">
         <button
           type="button"
-          className={`secondary-button ${isListening ? 'mode-active-button' : ''}`}
+          className={`button ${isListening ? 'button-primary' : 'button-secondary'}`}
           onClick={toggleVoiceInput}
           disabled={disabled || !voiceSupported}
           aria-pressed={isListening}
           title={voiceSupported ? 'Start or stop microphone input' : 'Voice input is not supported in this browser'}
         >
-          {isListening ? 'Stop Voice' : 'Voice Input'}
+          {isListening ? (
+            <>
+              <span className="mic-active">●</span>
+              Listening...
+            </>
+          ) : (
+            <>
+              <span className="mic-icon">🎤</span>
+              Voice Input
+            </>
+          )}
         </button>
-        <label className={`secondary-button upload-label ${disabled || ocrRunning ? 'disabled' : ''}`}>
-          {ocrRunning ? 'OCR Running…' : 'Import Screenshot'}
+
+        <label
+          className={`button button-secondary upload-label ${disabled || ocrRunning ? 'disabled' : ''}`}
+        >
+          {ocrRunning ? (
+            <>
+              <span className="spinner">○</span>
+              Processing...
+            </>
+          ) : (
+            <>
+              <span>📷</span>
+              Import Screenshot
+            </>
+          )}
           <input
             type="file"
             accept="image/*"
@@ -286,11 +334,28 @@ export const AICommandPanel = ({ disabled, onSubmit, onIngestTextLines }: AIComm
           />
         </label>
       </div>
-      <button type="button" className="primary-button" onClick={() => void handleSubmit()} disabled={disabled}>
+
+      <button
+        type="button"
+        className="button button-primary"
+        onClick={() => void handleSubmit()}
+        disabled={disabled || !command.trim()}
+      >
         Send Command
       </button>
-      {message && <p className="panel-note">{message}</p>}
-      <p className="panel-note">AI commands are dispatched through the backend tool executor.</p>
+
+      {message && (
+        <div className={`ai-message ${status}`}>
+          <span className="message-icon">
+            {status === 'success' ? '✓' : status === 'error' ? '✕' : '○'}
+          </span>
+          {message}
+        </div>
+      )}
+
+      <p className="panel-note">
+        <strong>Tip:</strong> Try commands like "Create 5 yellow stickies in a circle" or "Organize by color"
+      </p>
     </aside>
   )
 }

@@ -36,7 +36,12 @@ VITE_FIREBASE_MESSAGING_SENDER_ID=
 VITE_FIREBASE_APP_ID=
 VITE_FIREBASE_DATABASE_URL=
 VITE_DEFAULT_BOARD_ID=mvp-demo-board
+VITE_SYNC_BACKEND=firebase-lww
 ```
+
+`VITE_SYNC_BACKEND` options:
+- `firebase-lww` (default): current production sync path.
+- `yjs-pilot`: enables in-app Yjs mirror instrumentation for migration staging.
 
 4. Run dev server:
 ```bash

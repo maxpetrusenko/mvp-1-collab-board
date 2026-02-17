@@ -1,128 +1,154 @@
-# Gauntle cohort G4
-```sunsay midnight is project deadline ```
-* Government companies will be hiring. so we need to a part of the context
-* We have gemini pro, nano banana pro, all google models with our email max.petrusenko@gfachallenger.gauntletai.com
-* tech stack might be different for a different project ( Typescript, Python, Go, Rails we should know why its better used than the other )
+# Gauntlet G4 - Agent Protocol
 
-the project we will be building?
-https://gauntlet-portal.web.app/login
-max.petrusenko@gfachallenger.gauntletai.com
+> **Deadline**: Sunday 10:59 PM CT | **Portal**: https://gauntlet-portal.web.app | **Email**: max.petrusenko@gfachallacker.gauntletai.com
 
-Project i might want to do: ( its might be different than client's project. look further )
-AI avatar  + ai images + late.dev + scheduling + latest news search + open claw ( should ahve access to create boards,)
+---
 
-Critical:
-- thinking claude, speed cursor, + clarity codex to review
-- if we change desicions. why did we change desicions ( we will have all the context, we will need to defent those desicions. so keep a file DESIONS.md, we should have smth impressive )
-- we're making system decisions
-- critical peace of thinking
-- e2e ttd ( end to end test driven development, don't use for front end )
-- front end ( cursor agent use tests and review them, dont rewrite tests to pass them, use cursor (60$) and 100$ cc)
-- does code scale, does code perform well?
-- session folder contain our transcripts from live sessions ( and also screenshots)
-- If we build UI we should be components and types ( if react use 17 or newer version)
-- we should use indexing on cursor docs
+## Project Overview
 
-Tell Lera:
-- Zack generated preseach doc and asked questions about it ( do presearch doc and throw it in different ai's to get all responses from multiple directions )
-- why we choose certain stack and why?
-- where we will host? ( what is main focus now should be( it might change later) system design -> store data, security, file structure, legacy code, naming, testing, refactoring, improve it )
-- use google deep research functionality for research, if not use perplexity
-- review if we covered everything and ak me questions if we have everything is set 
-- Time to ship? requirements? scaling and load profiles? budget? time to ship? team? authentication?
-- we will use presearch doc ( $60 save it to drive and save as pdf ), then prd and stack
-cc - use init then put in tasks
+**Context**: Government companies hiring; participation requires full context + defendable decisions.
 
+**Tech Stack Awareness**: TypeScript, Python, Go, Rails — know tradeoffs.
 
+**Potential Project**: AI avatar + images + late.dev + scheduling + news search + OpenAI (board creation access)
 
-Docs & Tests:
-- skip if done -> generate PRD and MVP for the doc we received (requirements.md ) as you reviwing docs as me questions so i can make sure you understand it too 
-- walk throught the documentation every time if smth got updated. ( PRD, MVP, Patterns, duplcation)
-- use www.Skills.sh url we can download progressively ( project level skill + symlink)
-- we must build TESTS for every new feature we build ( examples: https://github.com/steipete/CodexBar/tree/main/Tests, e2e ttd is what guys like jeffrey emanuel and steve yegge  )
-- we should use Linear to follow our tickes
-- maintenance cost?
-- Did we updated tasks.md, tests after implementing a new feature?
+---
 
+## 1. Development Workflow
 
-AI will go through our project to rate it
+### Core Principles
+- **E2E TDD**: End-to-end test driven development (not frontend)
+- **Frontend**: Cursor agent + tests/review (no rewriting tests to pass)
+- **Scalability**: Does code scale? Perform well?
+- **Components**: React 17+ with types
+- **Reuse**: Pre-built solutions over scratch builds
 
-Tasks ( should have Tasks.md )
-1. can i download all transcript and save it from google to gauntle notion page as curriculum
-2. 1 hour deliverables. hard deadlines
-3. good resource for system design? ( search top rate and most forked repos, we look at META, OPenAI, Claude,  )
-4. IP if we select hiring parner
-5. If using cursor rules and skills
-6. give this to open claw
-7. remind to use aqua and whisper for talking to ai instead of writing
+### Tools & Agents
+- **Review**: Thinking Claude, Speed Cursor, Clarity Codex
+- **Decisions**: Track in `DECISIONS.md` — defend every change
+- **Research**: Google Deep Research → Perplexity fallback
+- **Presearch**: Generate doc, throw at multiple AIs for diverse responses
+- **Cursor**: Use indexing if available
+- **Voice**: Aqua + Whisper for AI interaction
 
-## Submission Requirements (Must Include)
-- deployed apps
-- demo video
-- pre-search doc
-- ai development log (1 page dev log)
-- LinkedIn or X post of what I did in 1 week
-- ai cost analysis
-- doc submission is PDF
-- add PAT token if GitHub repo access needs it
+### Session Management
+- `Sessions/` folder: transcripts + screenshots
+- `www.Skills.sh`: project-level skills + symlinks
+- **Linear**: ticket tracking
 
-## AI Development Log (Required)
-Submit a 1-page document covering:
-- Tools & Workflow: which AI coding tools were used and how they were integrated.
-- MCP Usage: which MCPs were used (if any) and what they enabled.
-- Effective Prompts: 3-5 prompts that worked well (include actual prompts).
-- Code Analysis: rough % of AI-generated vs hand-written code.
-- Strengths & Limitations: where AI excelled and where it struggled.
-- Key Learnings: insights about working with coding agents.
+---
 
-## AI Cost Analysis (Required)
-Track development and testing costs:
-- LLM API costs (OpenAI, Anthropic, etc.).
-- Total tokens consumed (input/output breakdown).
-- Number of API calls made.
-- Any other AI-related costs (embeddings, hosting, etc.).
+## 2. Documentation Structure
 
-Production cost projections must include:
-- 100 users: $___/month
-- 1,000 users: $___/month
-- 10,000 users: $___/month
-- 100,000 users: $___/month
+```
+/docs/
+├── PRESEARCH.md           # Phase 1-3 checklist
+├── PRD.md                 # Product requirements
+├── MVP.md                 # Minimum viable features
+├── DECISIONS.md           # Defendable choices
+├── DEMO_SCRIPT.md         # 3-5 min demo
+├── AI_DEVELOPMENT_LOG.md  # 1-page dev log
+├── AI_COST_ANALYSIS.md    # Dev spend + projections
+├── SUBMISSION_PACKAGE.md  # Deliverables checklist
+├── TEST_EVIDENCE.md       # Test results
+├── YJS_SPIKE.md           # CRDT research
+└── DOCUMENTATION.md       # Architecture
+```
 
-Include assumptions:
-- average AI commands per user per session
-- average sessions per user per month
-- token counts per command type
+**Walk docs every update** (PRD, MVP, Patterns, Duplication check)
 
-## Technical Stack (Possible Paths)
-- Backend: Firebase (Firestore, Realtime DB, Auth), Supabase, AWS (DynamoDB, Lambda, WebSockets), or custom WebSocket server.
-- Frontend: React/Vue/Svelte with Konva.js, Fabric.js, PixiJS, HTML5 Canvas, Vanilla JS, or any framework with canvas support.
-- AI integration: OpenAI GPT-4 or Anthropic Claude with function calling.
-- Deployment: Vercel, Firebase Hosting, or Render.
+---
 
-Use whichever stack helps ship fastest, but complete Pre-Search first to justify decisions.
+## 3. Submission Requirements
 
-## Build Strategy (Priority Order)
-1. Cursor sync - get two cursors moving across browsers.
-2. Object sync - create sticky notes that appear for all users.
-3. Conflict handling - handle simultaneous edits.
-4. State persistence - survive refreshes and reconnects.
-5. Board features - shapes, frames, connectors, transforms.
-6. AI commands (basic) - single-step creation/manipulation.
-7. AI commands (complex) - multi-step template generation.
+| Deliverable | Format |
+|-------------|--------|
+| Deployed app | Public URL, 5+ users, auth |
+| Demo video | 3-5 min: collaboration + AI + architecture |
+| Pre-search doc | PDF (complete checklist) |
+| AI dev log | 1 page (see template below) |
+| AI cost analysis | Dev spend + 100/1K/10K/100K projections |
+| Social post | X or LinkedIn, tag @GauntletAI |
+| GitHub repo | Setup guide, architecture, deployed link |
 
-## Critical Guidance
-- Multiplayer sync is the hardest part; start here.
-- Build vertically: finish one layer before the next.
-- Test with multiple browser windows continuously.
-- Throttle network speed during testing.
-- Test simultaneous AI commands from multiple users.
+### AI Development Log Template
+- Tools & Workflow (AI coding tools, integration)
+- MCP Usage (which + what enabled)
+- Effective Prompts (3-5 actual prompts)
+- Code Analysis (% AI vs handwritten)
+- Strengths & Limitations
+- Key Learnings
 
-## Deadline and Deliverables
-- Deadline: Sunday 10:59 PM CT.
-- GitHub repository: setup guide, architecture overview, deployed link.
-- Demo video (3-5 min): realtime collaboration, AI commands, architecture explanation.
-- Pre-Search document: completed checklist from Phase 1-3.
-- AI Development Log: 1-page breakdown using required template.
-- AI Cost Analysis: dev spend + projections for 100/1K/10K/100K users.
-- Deployed app: publicly accessible, supports 5+ users with auth.
-- Social post: X or LinkedIn with description, features, demo/screenshots, tag @GauntletAI.
+### Cost Analysis Projections
+Track: LLM costs, tokens in/out, API calls, other costs
+
+**Per 100/1K/10K/100K users**: Include assumptions for commands/session, sessions/month, tokens per command
+
+---
+
+## 4. Technical Stack Options
+
+**Backend**: Firebase (Firestore/Realtime DB/Auth), Supabase, AWS (DynamoDB/Lambda/WebSockets), custom WebSocket
+
+**Frontend**: React/Vue/Svelte + Konva.js/Fabric.js/PixiJS/HTML5 Canvas
+
+**AI**: OpenAI GPT-4 or Anthropic Claude (function calling)
+
+**Deployment**: Vercel, Firebase Hosting, Render
+
+> Ship fastest path; justify with Pre-Search
+
+---
+
+## 5. Build Strategy (Priority)
+
+1. Cursor sync — two browsers, real-time movement
+2. Object sync — sticky notes for all users
+3. Conflict handling — simultaneous edits
+4. State persistence — survive refresh/reconnect
+5. Board features — shapes, frames, connectors, transforms
+6. AI commands (basic) — single-step create/manipulate
+7. AI commands (complex) — multi-step templates
+
+**Critical**: Multiplayer sync is hardest. Build vertically, test continuously with multiple browsers, throttle network, test concurrent AI commands.
+
+---
+
+## 6. System Design Focus
+
+**Main focus now**: System design → data storage, security, file structure, legacy code, naming, testing, refactoring
+
+**Presearch → PRD → Stack**: All PDFs
+
+**Questions**: Requirements? Scaling/load profiles? Budget? Ship timeline? Team? Auth?
+
+---
+
+## 7. Quality Gates
+
+- [ ] Updated `TASKS.md` after feature
+- [ ] Tests for every new feature
+- [ ] E2E examples: github.com/steipete/CodexBar/tree/main/Tests
+- [ ] Linear tickets synced
+- [ ] Review covered everything
+
+---
+
+## 8. Quick Tasks (1-hr deliverables)
+
+1. Download all transcripts → Gauntlet Notion curriculum
+2. System design resources (top forked: META, OpenAI, Claude)
+3. IP selection if hiring partner
+4. Cursor rules + skills setup
+5. OpenAI integration
+6. Aqua/Whisper for voice AI
+
+---
+
+## 9. Resources
+
+**System Design**: Search top-rated/forked repos (META, OpenAI, Claude)
+
+**Test Examples**: [CodexBar Tests](https://github.com/steipete/CodexBar/tree/main/Tests)
+
+**Session Transcripts**: `Sessions/` folder

@@ -12,6 +12,12 @@ Evaluate whether we should migrate from Firebase LWW sync to an OSS CRDT path (`
 - Defined transport/deployment plan for Hocuspocus.
 - Designed migration bridge from Firestore snapshots to Yjs updates.
 - Assessed engineering cost, risk, and rollback path.
+- Added runnable Yjs pilot scaffold in app code:
+  - `app/src/collab/yjs/boardDoc.ts`
+  - `app/src/collab/yjs/firebaseBridge.ts`
+  - `app/src/collab/yjs/yjsPilotMirror.ts`
+  - `app/src/config/env.ts` (`VITE_SYNC_BACKEND`)
+  - Header sync mode pill in board UI for runtime verification.
 
 ## Proposed Yjs Document Shape
 - `doc.getMap('objects')`: key = `objectId`, value = Y.Map with object fields.
@@ -49,6 +55,11 @@ Object field mapping:
 - Do not migrate before submission deadline.
 - Continue current implementation for near-term delivery.
 - Start a controlled Yjs staging track immediately after submission with dual-write testing.
+
+## Pilot Enablement
+- Default mode remains `firebase-lww`.
+- Set `VITE_SYNC_BACKEND=yjs-pilot` to enable Yjs mirror instrumentation in the UI.
+- In pilot mode, Firestore remains canonical while Yjs mirrors board snapshots and tracks encoded state size.
 
 ## Exit Criteria for Future Migration
 - No critical data-loss or divergence in 500+ staged interaction runs.

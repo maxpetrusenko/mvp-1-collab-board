@@ -27,3 +27,13 @@ export const firebaseConfig = {
 }
 
 export const defaultBoardId = import.meta.env.VITE_DEFAULT_BOARD_ID || 'mvp-demo-board'
+
+export type SyncBackendMode = 'firebase-lww' | 'yjs-pilot'
+
+const normalizeSyncBackend = (raw: unknown): SyncBackendMode => {
+  const normalized = String(raw || '').trim().toLowerCase()
+  return normalized === 'yjs-pilot' ? 'yjs-pilot' : 'firebase-lww'
+}
+
+export const syncBackend: SyncBackendMode = normalizeSyncBackend(import.meta.env.VITE_SYNC_BACKEND)
+export const isYjsPilotEnabled = syncBackend === 'yjs-pilot'

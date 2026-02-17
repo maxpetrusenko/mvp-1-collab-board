@@ -13,11 +13,22 @@ Live deployment: https://mvp-1-collab-board.web.app/b/mvp-demo-board
 
 ## Repository Structure
 
-- `app/` - React client (Vite, TypeScript, Konva canvas).
-- `functions/` - Firebase Cloud Functions API.
-- `scripts/` - helper scripts used during delivery/testing.
-- `submission/` - deliverable artifacts.
-- Root `*.md` files - product, architecture, planning, cost, and delivery documentation.
+```
+mvp-1-collab-board/
+├── app/              # React client (Vite, TypeScript, Konva)
+├── functions/        # Firebase Cloud Functions API
+├── scripts/          # QA and deployment helper scripts
+├── docs/             # All project documentation
+├── tests/            # Test evidence and outputs
+├── submission/       # Deliverable artifacts (PDFs, videos)
+├── Sessions/         # Transcript archives
+└── thoughts/         # Research notes and spikes
+```
+
+**Root files**:
+- `README.md` — this file
+- `AGENTS.md` — Agent protocol and workflow instructions
+- `TASKS.md` — Active task tracking
 
 ## Local Development
 
@@ -60,4 +71,14 @@ firebase deploy
 
 ## Documentation
 
-See `DOCUMENTATION.md` for a complete map of architecture and project docs.
+| Doc | Purpose |
+|-----|---------|
+| `docs/PRESEARCH.md` | Phase 1-3 research checklist |
+| `docs/PRD.md` | Product requirements |
+| `docs/MVP.md` | Minimum viable feature set |
+| `docs/DECISIONS.md` | Defendable technical decisions |
+| `docs/DEMO_SCRIPT.md` | 3-5 min demo walkthrough |
+| `docs/AI_DEVELOPMENT_LOG.md` | 1-page AI tool usage log |
+| `docs/AI_COST_ANALYSIS.md` | Dev spend + user projections |
+| `docs/TEST_EVIDENCE.md` | E2E test results |
+| `docs/DOCUMENTATION.md` | Architecture overview |

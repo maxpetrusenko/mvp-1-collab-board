@@ -21,18 +21,19 @@ export const LoginPage = () => {
   return (
     <main className="login-shell">
       <section className="login-card">
-        <h1>CollabBoard MVP-1</h1>
-        <p>Sign in to join realtime collaboration and cursor presence.</p>
+        <h1>CollabBoard</h1>
+        <p>Real-time collaborative whiteboard with AI-powered features</p>
         {configError && <p className="error-text">{configError}</p>}
         {emailError && <p className="error-text">{emailError}</p>}
         <button
           type="button"
-          className="primary-button"
+          className="button button-primary"
           disabled={loading || !configured}
           data-testid="google-signin-button"
           onClick={() => void signInWithGoogle()}
         >
-          Sign in with Google
+          <span className="google-icon">G</span>
+          Continue with Google
         </button>
 
         {qaAuthEnabled && (
@@ -51,12 +52,16 @@ export const LoginPage = () => {
                 })
             }}
           >
-            <h2>QA Email Sign-In</h2>
-            <label htmlFor="qa-email">Email</label>
+            <div className="qa-form-header">
+              <h2>QA Sign-In</h2>
+              <span className="qa-badge">Testing Only</span>
+            </div>
+            <label htmlFor="qa-email">Email address</label>
             <input
               id="qa-email"
               data-testid="qa-email-input"
               type="email"
+              placeholder="you@example.com"
               value={email}
               onChange={(event) => setEmail(event.target.value)}
               autoComplete="username"
@@ -67,6 +72,7 @@ export const LoginPage = () => {
               id="qa-password"
               data-testid="qa-password-input"
               type="password"
+              placeholder="••••••••"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               autoComplete="current-password"
@@ -74,11 +80,11 @@ export const LoginPage = () => {
             />
             <button
               type="submit"
-              className="secondary-button"
+              className="button button-secondary"
               data-testid="qa-email-submit"
               disabled={loading || emailLoading || !configured}
             >
-              {emailLoading ? 'Signing in...' : 'Sign in with Email'}
+              {emailLoading ? 'Signing in…' : 'Sign In'}
             </button>
           </form>
         )}

@@ -222,6 +222,24 @@ Purpose: log system decisions, alternatives, rationale, and change history.
 - Consequences: Additional login UI branch exists for test automation and requires secure handling of test accounts.
 - Revisit Trigger: If service-account/custom-token auth setup replaces UI-based QA login automation.
 
+### D-024
+- Date: 2026-02-17
+- Status: Accepted
+- Decision: Introduce a staged Yjs pilot mirror behind `VITE_SYNC_BACKEND` while keeping Firebase LWW as canonical production sync.
+- Alternatives Considered: Immediate hard cutover to Yjs/Hocuspocus; defer all Yjs code until after full migration plan.
+- Rationale: Reduces migration risk by validating object-model compatibility and state size behavior before transport/backend cutover.
+- Consequences: Additional pilot-only codepath to maintain; no production conflict-semantics change yet.
+- Revisit Trigger: Pilot metrics and staged dual-write tests consistently pass migration exit criteria.
+
+### D-025
+- Date: 2026-02-17
+- Status: Accepted
+- Decision: Optimize board chrome for 15"/16" laptop screens with compact-height responsive rules and tabbed right-panel navigation while preserving icon-first controls with tooltip hints.
+- Alternatives Considered: Keep full stacked panels with page-level scrolling; hide minimap/comments/timeline by default behind separate routes.
+- Rationale: Ensures minimap and panel navigation stay reachable without vertical page scrolling on common laptop resolutions and keeps interaction discoverable through button tooltips.
+- Consequences: Slightly denser controls on short displays and more responsive CSS states to maintain.
+- Revisit Trigger: If usability tests show compact mode hurts discoverability or accessibility.
+
 ## Change Log
 - 2026-02-16: Initial decision set created.
 - 2026-02-16: Added auth provider, deployment URL strategy, and error recovery UX decisions.
@@ -232,3 +250,5 @@ Purpose: log system decisions, alternatives, rationale, and change history.
 - 2026-02-17: Added incremental post-MVP feature delivery decision ahead of CRDT migration.
 - 2026-02-17: Added hosted submission artifact and scripted submission QA decision.
 - 2026-02-17: Added automated QA auth decision to remove skipped authenticated e2e tests.
+- 2026-02-17: Added staged Yjs pilot mirror decision behind feature flag.
+- 2026-02-17: Added compact laptop layout decision (responsive toolbar/panel/minimap fit without page scroll).

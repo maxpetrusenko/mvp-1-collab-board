@@ -1,7 +1,7 @@
 # TASKS.md
 
 Date initialized: 2026-02-16
-Last updated: 2026-02-17 (mvp regression verified)
+Last updated: 2026-02-17 (responsive UI + full e2e regression verified)
 Cadence: 1-hour deliverables with hard deadlines
 Source: `mvp-1-collab-board/G4 Week 1 - CollabBoard-requirements.pdf`
 
@@ -55,12 +55,15 @@ Source: `mvp-1-collab-board/G4 Week 1 - CollabBoard-requirements.pdf`
 | T-037 | 2026-02-28 14:00 | Add voice command input (Web Speech API) to AI panel | E | Max | Done |
 | T-038 | 2026-02-28 18:00 | Add activity timeline (event replay baseline) | E | Max | Done |
 | T-039 | 2026-03-01 14:00 | Add mini-map navigation and keyboard shortcuts reference panel | E | Max | Done |
+| T-040 | 2026-02-17 20:00 | Add Yjs pilot mirror scaffold behind env flag (`VITE_SYNC_BACKEND`) | E | Max | Done |
+| T-041 | 2026-02-17 21:00 | Optimize laptop-height layout (compact chrome, non-scrolling board shell, tabbed side navigation) | E | Max | Done |
+| T-042 | 2026-02-17 21:30 | Refresh Playwright assertions for modern login/header and add laptop viewport fit regression test | A | Max | Done |
 
 ## Current Evidence Snapshot
 - Deployed app: `https://mvp-1-collab-board.web.app`
-- Playwright run: `13 passed, 0 skipped` (`npm run test:e2e`)
+- Playwright run: `15 passed, 0 skipped` (`npm run test:e2e`, 2026-02-17)
 - Auth strategy for automation: QA email/password flow via `/login?qaAuth=1`
-- MVP regression spec: `1 passed` (`npx playwright test e2e/mvp-regression.spec.ts`)
+- MVP regression spec: `1 passed` (`npx playwright test e2e/mvp-regression.spec.ts`, 2026-02-17)
 - Critical backend checks: `scripts/run-critical-checks.sh`
 - Latest artifact bundle:
   - `submission/test-artifacts/latest-critical-checks.json`
@@ -72,7 +75,8 @@ Source: `mvp-1-collab-board/G4 Week 1 - CollabBoard-requirements.pdf`
   - `submission/test-artifacts/manual-oauth-throttle-reconnect-2026-02-17.md`
 - Freeze record:
   - `submission/SUBMISSION_FREEZE_2026-02-17.md`
-- Architecture spike notes: `YJS_SPIKE.md`
+- Architecture spike notes: `docs/YJS_SPIKE.md`
+- Yjs pilot scaffold: `app/src/collab/yjs/*` + sync mode pill (`[data-testid=\"sync-mode-pill\"]`)
 
 ## Dependency Map
 - T-004 blocked T-005, T-006, T-007.
@@ -88,6 +92,8 @@ Source: `mvp-1-collab-board/G4 Week 1 - CollabBoard-requirements.pdf`
 - T-027 informs long-term collaboration architecture path.
 - T-028 through T-032 block post-MVP collaboration parity milestone.
 - T-033 through T-038 block AI-first differentiation milestone.
+- T-041 depends on T-039 baseline minimap/toolbar work.
+- T-042 validates T-041 and updated login/header UX selectors.
 
 ## Execution Roles
 - Max: accountable owner and final decision maker.

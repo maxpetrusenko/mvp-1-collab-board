@@ -14,10 +14,11 @@ import {
 } from 'firebase/firestore'
 import { onDisconnect, onValue, ref, remove, set, update } from 'firebase/database'
 
-import { defaultBoardId } from '../config/env'
+import { defaultBoardId, syncBackend } from '../config/env'
 import { db, rtdb } from '../firebase/client'
 import { stableColor } from '../lib/color'
 import { useAuth } from '../state/AuthContext'
+import { YjsPilotMirror } from '../collab/yjs'
 import type {
   AnchorKind,
   BoardActivityEvent,
@@ -70,6 +71,12 @@ type TimerState = {
   remainingMs: number
 }
 
+type InlineEditorDraft = {
+  objectId: string
+  field: 'text' | 'title'
+  value: string
+}
+
 type HistoryEntry =
   | { type: 'create'; object: BoardObject }
   | { type: 'delete'; object: BoardObject }
@@ -80,23 +87,21 @@ type HistoryEntry =
       after: Partial<BoardObject>
     }
 
-const BOARD_HEADER_HEIGHT = 76
+const BOARD_HEADER_HEIGHT = 64
 const LOCAL_POSITION_PENDING_TTL_MS = 3_000
 const CONNECTOR_SNAP_THRESHOLD_PX = 36
 const CONNECTOR_HANDLE_RADIUS = 7
 const TIMER_DEFAULT_MS = 5 * 60 * 1000
+const MIN_ZOOM_SCALE = 0.25
+const MAX_ZOOM_SCALE = 3
+const MAX_EXPORT_PIXEL_COUNT = 16_000_000
+const MAX_PDF_EDGE_PX = 4_096
 const aiApiBaseUrl = (import.meta.env.VITE_AI_API_BASE_URL || '').replace(/\/$/, '')
 const aiCommandEndpoint = `${aiApiBaseUrl}/api/ai/command`
 const STICKY_COLOR_OPTIONS = ['#fde68a', '#fdba74', '#fca5a5', '#86efac', '#93c5fd', '#c4b5fd']
 const SHAPE_COLOR_OPTIONS = ['#93c5fd', '#67e8f9', '#86efac', '#fcd34d', '#fca5a5', '#c4b5fd']
 const FRAME_COLOR_OPTIONS = ['#e2e8f0', '#dbeafe', '#dcfce7', '#fee2e2', '#fef3c7']
 const CONNECTOR_COLOR_OPTIONS = ['#0f172a', '#1d4ed8', '#dc2626', '#0f766e', '#6d28d9']
-const SHAPE_OPTIONS: Array<{ kind: ShapeKind; label: string }> = [
-  { kind: 'rectangle', label: 'Rect' },
-  { kind: 'circle', label: 'Circle' },
-  { kind: 'diamond', label: 'Diamond' },
-  { kind: 'triangle', label: 'Triangle' },
-]
 const DEFAULT_SHAPE_SIZES: Record<ShapeKind, { width: number; height: number }> = {
   rectangle: { width: 180, height: 110 },
   circle: { width: 130, height: 130 },
@@ -206,6 +211,9 @@ const formatTimerLabel = (ms: number) => {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
 }
 const wait = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms))
+const notifyExportComplete = (detail: { format: 'png' | 'pdf'; scope: 'full' | 'selection'; fileBase: string }) => {
+  window.dispatchEvent(new CustomEvent('board-export-complete', { detail }))
+}
 
 export const BoardPage = () => {
   const { boardId: boardIdParam } = useParams()
@@ -227,15 +235,18 @@ export const BoardPage = () => {
   >({})
   const [activityEvents, setActivityEvents] = useState<BoardActivityEvent[]>([])
   const [commentDraft, setCommentDraft] = useState('')
+  const [activeSidePanel, setActiveSidePanel] = useState<'comments' | 'timeline'>('comments')
   const [isVotingMode, setIsVotingMode] = useState(false)
   const [timerState, setTimerState] = useState<TimerState>({
     running: false,
     endsAt: null,
     remainingMs: TIMER_DEFAULT_MS,
   })
+  const [inlineEditor, setInlineEditor] = useState<InlineEditorDraft | null>(null)
   const [nowMsValue, setNowMsValue] = useState(Date.now())
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [isTimelineReplaying, setIsTimelineReplaying] = useState(false)
+  const [yjsPilotMetrics, setYjsPilotMetrics] = useState({ objects: 0, bytes: 0 })
 
   const [cursors, setCursors] = useState<Record<string, CursorPresence>>({})
 
@@ -249,12 +260,17 @@ export const BoardPage = () => {
   const presenceRef = useRef<ReturnType<typeof ref> | null>(null)
   const lastCursorPublishAtRef = useRef(0)
   const timerRef = useRef<ReturnType<typeof ref> | null>(null)
+  const yjsPilotMirrorRef = useRef<YjsPilotMirror | null>(
+    syncBackend === 'yjs-pilot' ? new YjsPilotMirror() : null,
+  )
 
   const dragPublishersRef = useRef<Record<string, (point: Point) => void>>({})
   const connectorPublishersRef = useRef<Record<string, (patch: ConnectorPatch) => void>>({})
   const historyPastRef = useRef<HistoryEntry[]>([])
   const historyFutureRef = useRef<HistoryEntry[]>([])
   const isApplyingHistoryRef = useRef(false)
+  const inlineTextAreaRef = useRef<HTMLTextAreaElement | null>(null)
+  const inlineInputRef = useRef<HTMLInputElement | null>(null)
   const frameDragSnapshotRef = useRef<
     Record<
       string,
@@ -296,6 +312,13 @@ export const BoardPage = () => {
 
       nextObjects.sort((left, right) => left.zIndex - right.zIndex)
       objectsRef.current = nextObjects
+      if (yjsPilotMirrorRef.current) {
+        yjsPilotMirrorRef.current.replaceSnapshot(nextObjects)
+        setYjsPilotMetrics({
+          objects: nextObjects.length,
+          bytes: yjsPilotMirrorRef.current.getEncodedByteLength(),
+        })
+      }
 
       // Don't update objects state if we're currently dragging one of them
       setObjects((prevObjects) => {
@@ -562,8 +585,6 @@ export const BoardPage = () => {
   const effectiveTimerMs = timerState.running && timerState.endsAt
     ? Math.max(0, timerState.endsAt - nowMsValue)
     : timerState.remainingMs
-  const selectedShapeType =
-    selectedObject?.type === 'shape' ? normalizeShapeKind(selectedObject.shapeType) : null
   const selectedColorOptions = useMemo(() => {
     if (!selectedObject) {
       return [] as string[]
@@ -584,10 +605,55 @@ export const BoardPage = () => {
     return CONNECTOR_COLOR_OPTIONS
   }, [selectedObject])
   const selectedComments = selectedObject?.comments || []
-  const selectedVoteCount =
-    selectedObject?.type === 'stickyNote'
-      ? Object.keys(selectedObject.votesByUser || {}).length
-      : 0
+  const inlineEditorTarget = useMemo(() => {
+    if (!inlineEditor) {
+      return null
+    }
+
+    return objects.find((boardObject) => boardObject.id === inlineEditor.objectId) || null
+  }, [inlineEditor, objects])
+  const inlineEditorLayout = useMemo(() => {
+    if (!inlineEditor || !inlineEditorTarget || inlineEditorTarget.type === 'connector') {
+      return null
+    }
+
+    const objectPosition =
+      localObjectPositions[inlineEditorTarget.id]?.point || inlineEditorTarget.position
+    const objectLeft = viewport.x + objectPosition.x * viewport.scale
+    const objectTop = viewport.y + objectPosition.y * viewport.scale
+
+    if (inlineEditor.field === 'text' && inlineEditorTarget.type === 'stickyNote') {
+      const inset = 8 * viewport.scale
+      return {
+        left: objectLeft + inset,
+        top: objectTop + inset,
+        width: Math.max(120, inlineEditorTarget.size.width * viewport.scale - inset * 2),
+        height: Math.max(48, inlineEditorTarget.size.height * viewport.scale - inset * 2),
+        fontSize: Math.max(12, 16 * viewport.scale),
+        multiline: true,
+      }
+    }
+
+    if (inlineEditor.field === 'title' && inlineEditorTarget.type === 'frame') {
+      return {
+        left: objectLeft + 10 * viewport.scale,
+        top: objectTop + 6 * viewport.scale,
+        width: Math.max(160, inlineEditorTarget.size.width * viewport.scale - 20 * viewport.scale),
+        height: Math.max(24, 24 * viewport.scale),
+        fontSize: Math.max(12, 14 * viewport.scale),
+        multiline: false,
+      }
+    }
+
+    return null
+  }, [
+    inlineEditor,
+    inlineEditorTarget,
+    localObjectPositions,
+    viewport.scale,
+    viewport.x,
+    viewport.y,
+  ])
   const minimapModel = useMemo(() => {
     const miniWidth = 220
     const miniHeight = 140
@@ -641,6 +707,29 @@ export const BoardPage = () => {
       })),
     }
   }, [objects, stageSize.height, stageSize.width, viewport.scale, viewport.x, viewport.y])
+  const startInlineEdit = useCallback((boardObject: BoardObject, field: InlineEditorDraft['field']) => {
+    if (field === 'text' && boardObject.type !== 'stickyNote') {
+      return
+    }
+    if (field === 'title' && boardObject.type !== 'frame') {
+      return
+    }
+
+    setSelectedId(boardObject.id)
+    setInlineEditor({
+      objectId: boardObject.id,
+      field,
+      value:
+        field === 'text' && boardObject.type === 'stickyNote'
+          ? boardObject.text
+          : boardObject.type === 'frame'
+            ? boardObject.title || 'Frame'
+            : '',
+    })
+  }, [])
+  const cancelInlineEdit = useCallback(() => {
+    setInlineEditor(null)
+  }, [])
 
   const createObject = useCallback(
     async (
@@ -811,6 +900,65 @@ export const BoardPage = () => {
     },
     [boardId, logActivity, pushHistory, user],
   )
+  const commitInlineEdit = useCallback(async () => {
+    if (!inlineEditor) {
+      return
+    }
+
+    const boardObject = objectsRef.current.find((candidate) => candidate.id === inlineEditor.objectId)
+    if (!boardObject) {
+      setInlineEditor(null)
+      return
+    }
+
+    if (inlineEditor.field === 'text' && boardObject.type === 'stickyNote') {
+      const nextText = inlineEditor.value
+      if (nextText !== boardObject.text) {
+        await patchObject(boardObject.id, { text: nextText || ' ' })
+      }
+    }
+
+    if (inlineEditor.field === 'title' && boardObject.type === 'frame') {
+      const nextTitle = inlineEditor.value.trim() || 'Frame'
+      if (nextTitle !== boardObject.title) {
+        await patchObject(boardObject.id, { title: nextTitle })
+      }
+    }
+
+    setInlineEditor(null)
+  }, [inlineEditor, patchObject])
+
+  useEffect(() => {
+    if (!inlineEditor) {
+      return
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      const editor = inlineEditor.field === 'text' ? inlineTextAreaRef.current : inlineInputRef.current
+      if (!editor) {
+        return
+      }
+
+      editor.focus()
+      editor.setSelectionRange(editor.value.length, editor.value.length)
+    })
+
+    return () => window.cancelAnimationFrame(frame)
+  }, [inlineEditor])
+
+  useEffect(() => {
+    if (!inlineEditor || !inlineEditorTarget) {
+      return
+    }
+
+    if (
+      (inlineEditor.field === 'text' && inlineEditorTarget.type !== 'stickyNote') ||
+      (inlineEditor.field === 'title' && inlineEditorTarget.type !== 'frame')
+    ) {
+      setInlineEditor(null)
+      return
+    }
+  }, [inlineEditor, inlineEditorTarget])
 
   const deleteSelected = useCallback(async () => {
     if (!db || !selectedObject || !user) {
@@ -983,6 +1131,65 @@ export const BoardPage = () => {
     await applyHistoryEntry(entry, 'redo')
   }, [applyHistoryEntry])
 
+  const applyViewportScaleFromCenter = useCallback(
+    (nextScale: number) => {
+      const clampedScale = clamp(nextScale, MIN_ZOOM_SCALE, MAX_ZOOM_SCALE)
+      const center = {
+        x: stageSize.width / 2,
+        y: stageSize.height / 2,
+      }
+      const worldX = (center.x - viewport.x) / viewport.scale
+      const worldY = (center.y - viewport.y) / viewport.scale
+
+      setViewport({
+        scale: clampedScale,
+        x: center.x - worldX * clampedScale,
+        y: center.y - worldY * clampedScale,
+      })
+    },
+    [stageSize.height, stageSize.width, viewport.scale, viewport.x, viewport.y],
+  )
+
+  const zoomIn = useCallback(() => {
+    applyViewportScaleFromCenter(viewport.scale * 1.25)
+  }, [applyViewportScaleFromCenter, viewport.scale])
+
+  const zoomOut = useCallback(() => {
+    applyViewportScaleFromCenter(viewport.scale / 1.25)
+  }, [applyViewportScaleFromCenter, viewport.scale])
+
+  const zoomReset = useCallback(() => {
+    applyViewportScaleFromCenter(1)
+  }, [applyViewportScaleFromCenter])
+
+  const zoomToFit = useCallback(() => {
+    if (objects.length === 0) {
+      zoomReset()
+      return
+    }
+
+    const padding = 48
+    const bounds = objects.map((boardObject) => getObjectBounds(boardObject))
+    const minX = Math.min(...bounds.map((item) => item.x)) - padding
+    const minY = Math.min(...bounds.map((item) => item.y)) - padding
+    const maxX = Math.max(...bounds.map((item) => item.x + item.width)) + padding
+    const maxY = Math.max(...bounds.map((item) => item.y + item.height)) + padding
+    const width = Math.max(1, maxX - minX)
+    const height = Math.max(1, maxY - minY)
+
+    const fitScale = clamp(
+      Math.min(stageSize.width / width, stageSize.height / height),
+      MIN_ZOOM_SCALE,
+      MAX_ZOOM_SCALE,
+    )
+
+    setViewport({
+      scale: fitScale,
+      x: stageSize.width / 2 - (minX + width / 2) * fitScale,
+      y: stageSize.height / 2 - (minY + height / 2) * fitScale,
+    })
+  }, [objects, stageSize.height, stageSize.width, zoomReset])
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (isEditableTarget(event.target)) {
@@ -1031,6 +1238,33 @@ export const BoardPage = () => {
         return
       }
 
+      const keyLower = event.key.toLowerCase()
+      const plusPressed = event.key === '+' || event.key === '='
+      const minusPressed = event.key === '-' || event.key === '_'
+      if (isMetaCombo && plusPressed) {
+        event.preventDefault()
+        zoomIn()
+        return
+      }
+
+      if (isMetaCombo && minusPressed) {
+        event.preventDefault()
+        zoomOut()
+        return
+      }
+
+      if (isMetaCombo && keyLower === '0') {
+        event.preventDefault()
+        zoomReset()
+        return
+      }
+
+      if (isMetaCombo && event.shiftKey && keyLower === 'f') {
+        event.preventDefault()
+        zoomToFit()
+        return
+      }
+
       if (event.key === '?') {
         event.preventDefault()
         setShowShortcuts((prev) => !prev)
@@ -1039,7 +1273,7 @@ export const BoardPage = () => {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [clipboardObject, deleteSelected, duplicateObject, redo, selectedObject, undo])
+  }, [clipboardObject, deleteSelected, duplicateObject, redo, selectedObject, undo, zoomIn, zoomOut, zoomReset, zoomToFit])
 
   const getDragPublisher = useCallback(
     (objectId: string) => {
@@ -1329,9 +1563,16 @@ export const BoardPage = () => {
         return
       }
 
-      let bounds = null as { x: number; y: number; width: number; height: number } | null
-      if (scope === 'selection' && selectedObject) {
-        bounds = getObjectBounds(selectedObject)
+      const viewportBounds = {
+        x: -viewport.x / viewport.scale,
+        y: -viewport.y / viewport.scale,
+        width: stageSize.width / viewport.scale,
+        height: stageSize.height / viewport.scale,
+      }
+
+      let bounds: { x: number; y: number; width: number; height: number } | null = null
+      if (scope === 'selection') {
+        bounds = viewportBounds
       } else if (objects.length > 0) {
         const resolvedBounds = objects.map((boardObject) => getObjectBounds(boardObject))
         const minX = Math.min(...resolvedBounds.map((item) => item.x))
@@ -1344,6 +1585,8 @@ export const BoardPage = () => {
           width: Math.max(64, maxX - minX + 48),
           height: Math.max(64, maxY - minY + 48),
         }
+      } else {
+        bounds = viewportBounds
       }
 
       const crop = bounds
@@ -1359,9 +1602,11 @@ export const BoardPage = () => {
             width: stageSize.width,
             height: stageSize.height,
           }
+      const cropArea = Math.max(1, crop.width * crop.height)
+      const cappedPixelRatio = Math.min(2, Math.sqrt(MAX_EXPORT_PIXEL_COUNT / cropArea))
 
       const dataUrl = stage.toDataURL({
-        pixelRatio: 2,
+        pixelRatio: cappedPixelRatio,
         ...crop,
       })
       const fileBase = scope === 'selection' ? 'board-selection' : 'board-full'
@@ -1371,19 +1616,29 @@ export const BoardPage = () => {
         anchor.href = dataUrl
         anchor.download = `${fileBase}.png`
         anchor.click()
+        notifyExportComplete({ format: 'png', scope, fileBase })
         return
       }
 
-      const { jsPDF } = await import('jspdf')
-      const pdf = new jsPDF({
-        orientation: crop.width >= crop.height ? 'landscape' : 'portrait',
-        unit: 'px',
-        format: [crop.width, crop.height],
-      })
-      pdf.addImage(dataUrl, 'PNG', 0, 0, crop.width, crop.height)
-      pdf.save(`${fileBase}.pdf`)
+      const pdfScale = Math.min(1, MAX_PDF_EDGE_PX / Math.max(crop.width, crop.height))
+      const pdfWidth = Math.max(2, Math.round(crop.width * pdfScale))
+      const pdfHeight = Math.max(2, Math.round(crop.height * pdfScale))
+
+      try {
+        const { jsPDF } = await import('jspdf')
+        const pdf = new jsPDF({
+          orientation: pdfWidth >= pdfHeight ? 'landscape' : 'portrait',
+          unit: 'px',
+          format: [pdfWidth, pdfHeight],
+        })
+        pdf.addImage(dataUrl, 'PNG', 0, 0, pdfWidth, pdfHeight)
+        pdf.save(`${fileBase}.pdf`)
+        notifyExportComplete({ format: 'pdf', scope, fileBase })
+      } catch (error) {
+        console.error('PDF export failed', error)
+      }
     },
-    [objects, selectedObject, stageSize.height, stageSize.width, viewport.scale, viewport.x, viewport.y],
+    [objects, stageSize.height, stageSize.width, viewport.scale, viewport.x, viewport.y],
   )
 
   const handleStickySelection = useCallback(
@@ -1491,116 +1746,189 @@ export const BoardPage = () => {
   return (
     <main className="board-shell">
       <header className="board-header">
-        <div>
-          <h1>CollabBoard MVP-1</h1>
-          <p>
-            Board URL: <code>{`${window.location.origin}/b/${boardId}`}</code>
-          </p>
+        <div className="board-header-left">
+          <h1>CollabBoard</h1>
+          <span
+            className={`sync-mode-pill ${syncBackend === 'yjs-pilot' ? 'sync-mode-pill-pilot' : ''}`}
+            title={
+              syncBackend === 'yjs-pilot'
+                ? `Yjs pilot mirror active (${yjsPilotMetrics.objects} objects, ${yjsPilotMetrics.bytes} bytes)`
+                : 'Firebase LWW sync mode'
+            }
+            data-testid="sync-mode-pill"
+          >
+            {syncBackend === 'yjs-pilot' ? 'Yjs Pilot' : 'Firebase LWW'}
+          </span>
+          <div className="timer-widget">
+            <span className="timer-icon">⏱</span>
+            <span>{formatTimerLabel(effectiveTimerMs)}</span>
+            {timerState.running ? (
+              <button type="button" className="button-icon" onClick={() => void pauseTimer()} title="Pause timer">
+                ⏸
+              </button>
+            ) : (
+              <button type="button" className="button-icon" onClick={() => void startTimer()} title="Start timer">
+                ▶
+              </button>
+            )}
+            <button type="button" className="button-icon" onClick={() => void resetTimer()} title="Reset timer">
+              ↺
+            </button>
+          </div>
         </div>
         <div className="header-actions">
-          <button type="button" className="secondary-button" onClick={() => void createObject('stickyNote')}>
-            Add Sticky
-          </button>
-          <button type="button" className="secondary-button" onClick={() => void createObject('frame')}>
-            Add Frame
+          <button
+            type="button"
+            className="button-icon"
+            onClick={() => setShowShortcuts((prev) => !prev)}
+            title="Keyboard shortcuts (?)"
+          >
+            ?
           </button>
           <button
             type="button"
-            className="secondary-button"
+            className="button-icon"
+            onClick={() => void signOutUser()}
+            title="Sign out"
+          >
+            →
+          </button>
+        </div>
+      </header>
+
+      {/* Floating Toolbar */}
+      <div className="floating-toolbar">
+        <div className="tool-group">
+          <button
+            type="button"
+            className="button-icon button-primary"
+            onClick={() => void createObject('stickyNote')}
+            title="Add sticky note (S)"
+          >
+            ◻
+          </button>
+          <button
+            type="button"
+            className="button-icon"
+            onClick={() => void createObject('frame')}
+            title="Add frame (F)"
+          >
+            ⛶
+          </button>
+          <button
+            type="button"
+            className="button-icon"
+            onClick={() => void createObject('connector')}
+            title="Add connector (C)"
+          >
+            ↝
+          </button>
+        </div>
+
+        <div className="toolbar-divider" />
+
+        <div className="tool-group">
+          <button
+            type="button"
+            className="button-icon"
             onClick={() => void createObject('shape', { shapeType: 'rectangle' })}
+            title="Add rectangle (R)"
           >
-            Add Rectangle
+            ▭
           </button>
           <button
             type="button"
-            className="secondary-button"
+            className="button-icon"
             onClick={() => void createObject('shape', { shapeType: 'circle' })}
+            title="Add circle (O)"
           >
-            Add Circle
+            ○
           </button>
           <button
             type="button"
-            className="secondary-button"
+            className="button-icon"
             onClick={() => void createObject('shape', { shapeType: 'diamond' })}
+            title="Add diamond (D)"
           >
-            Add Diamond
+            ◇
+          </button>
+        </div>
+
+        <div className="toolbar-divider" />
+
+        <div className="tool-group">
+          <button
+            type="button"
+            className="button-icon"
+            onClick={() => void undo()}
+            title="Undo (Cmd+Z)"
+          >
+            ↶
           </button>
           <button
             type="button"
-            className="secondary-button"
-            onClick={() => void createObject('shape', { shapeType: 'triangle' })}
+            className="button-icon"
+            onClick={() => void redo()}
+            title="Redo (Cmd+Shift+Z)"
           >
-            Add Triangle
+            ↷
           </button>
-          <button type="button" className="secondary-button" onClick={() => void createObject('connector')}>
-            Add Connector
-          </button>
-          <button type="button" className="secondary-button" onClick={() => void undo()}>
-            Undo
-          </button>
-          <button type="button" className="secondary-button" onClick={() => void redo()}>
-            Redo
-          </button>
+        </div>
+
+        <div className="toolbar-divider" />
+
+        <div className="tool-group">
           <button
             type="button"
-            className={`secondary-button ${isVotingMode ? 'mode-active-button' : ''}`}
+            className={`button-icon ${isVotingMode ? 'button-primary' : ''}`}
             onClick={() => setIsVotingMode((prev) => !prev)}
+            title="Toggle voting mode (V)"
+            aria-label="Toggle voting mode"
           >
-            {isVotingMode ? 'Voting On' : 'Voting Off'}
-          </button>
-          <button type="button" className="secondary-button" onClick={() => void exportBoard('png', 'full')}>
-            Export PNG
-          </button>
-          <button type="button" className="secondary-button" onClick={() => void exportBoard('pdf', 'full')}>
-            Export PDF
+            {isVotingMode ? '●' : '○'}
           </button>
           <button
             type="button"
-            className="secondary-button"
+            className="button-icon"
+            data-testid="export-viewport-png"
             onClick={() => void exportBoard('png', 'selection')}
-            disabled={!selectedObject}
+            title="Export current viewport as PNG"
+            aria-label="Export current viewport as PNG"
           >
-            Export Selection
-          </button>
-          <button type="button" className="secondary-button" onClick={() => setShowShortcuts((prev) => !prev)}>
-            Shortcuts
+            ⬇
           </button>
           <button
             type="button"
-            className="secondary-button"
+            className="button-icon button-icon-text"
+            data-testid="export-viewport-pdf"
+            onClick={() => void exportBoard('pdf', 'selection')}
+            title="Export current viewport as PDF"
+            aria-label="Export current viewport as PDF"
+          >
+            PDF
+          </button>
+          <button
+            type="button"
+            className="button-icon"
             onClick={() => {
               if (selectedObject) {
                 void deleteSelected()
               }
             }}
             disabled={!selectedObject}
+            title="Delete selected (Del/Backspace)"
+            aria-label="Delete selected object"
           >
-            Delete Selected
-          </button>
-          <div className="timer-widget">
-            <span>{formatTimerLabel(effectiveTimerMs)}</span>
-            {timerState.running ? (
-              <button type="button" className="secondary-button" onClick={() => void pauseTimer()}>
-                Pause
-              </button>
-            ) : (
-              <button type="button" className="secondary-button" onClick={() => void startTimer()}>
-                Start
-              </button>
-            )}
-            <button type="button" className="secondary-button" onClick={() => void resetTimer()}>
-              Reset
-            </button>
-          </div>
-          <button type="button" className="secondary-button" onClick={() => void signOutUser()}>
-            Sign out
+            ✕
           </button>
         </div>
+
+        {/* Selected object color options */}
         {selectedObject && (
-          <div className="header-style-tools">
+          <>
+            <div className="toolbar-divider" />
             <div className="tool-group">
-              <span className="tool-label">Color</span>
-              {selectedColorOptions.map((color) => (
+              {selectedColorOptions.slice(0, 6).map((color) => (
                 <button
                   key={`${selectedObject.id}-${color}`}
                   type="button"
@@ -1611,48 +1939,9 @@ export const BoardPage = () => {
                 />
               ))}
             </div>
-            {selectedObject.type === 'shape' && (
-              <div className="tool-group">
-                <span className="tool-label">Shape</span>
-                {SHAPE_OPTIONS.map((option) => (
-                  <button
-                    key={option.kind}
-                    type="button"
-                    className={`shape-option ${selectedShapeType === option.kind ? 'active' : ''}`}
-                    onClick={() => void patchObject(selectedObject.id, { shapeType: option.kind })}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-            )}
-            {selectedObject.type === 'frame' && (
-              <div className="tool-group">
-                <span className="tool-label">Frame</span>
-                <button
-                  type="button"
-                  className="shape-option"
-                  onClick={() => {
-                    const currentTitle = selectedObject.title || 'Frame'
-                    const nextTitle = window.prompt('Frame title', currentTitle)
-                    if (nextTitle !== null && nextTitle !== currentTitle) {
-                      void patchObject(selectedObject.id, { title: nextTitle })
-                    }
-                  }}
-                >
-                  Rename
-                </button>
-              </div>
-            )}
-            {selectedObject.type === 'stickyNote' && (
-              <div className="tool-group">
-                <span className="tool-label">Votes</span>
-                <span className="value-badge">{selectedVoteCount}</span>
-              </div>
-            )}
-          </div>
+          </>
         )}
-      </header>
+      </div>
 
       <section className="board-content">
         <section className="canvas-column">
@@ -1708,8 +1997,8 @@ export const BoardPage = () => {
               const oldScale = viewport.scale
               const nextScale = clamp(
                 event.evt.deltaY > 0 ? oldScale / scaleBy : oldScale * scaleBy,
-                0.25,
-                3,
+                MIN_ZOOM_SCALE,
+                MAX_ZOOM_SCALE,
               )
 
               const worldX = (pointer.x - viewport.x) / oldScale
@@ -1762,10 +2051,7 @@ export const BoardPage = () => {
                       onClick={() => handleStickySelection(boardObject)}
                       onTap={() => handleStickySelection(boardObject)}
                       onDblClick={() => {
-                        const nextText = window.prompt('Edit sticky note text', boardObject.text)
-                        if (nextText !== null && nextText !== boardObject.text) {
-                          void patchObject(boardObject.id, { text: nextText })
-                        }
+                        startInlineEdit(boardObject, 'text')
                       }}
                       onDragStart={() => {
                         setDraggingObjectId(boardObject.id)
@@ -2032,11 +2318,7 @@ export const BoardPage = () => {
                       onClick={() => setSelectedId(boardObject.id)}
                       onTap={() => setSelectedId(boardObject.id)}
                       onDblClick={() => {
-                        const currentTitle = boardObject.title || 'Frame'
-                        const nextTitle = window.prompt('Frame title', currentTitle)
-                        if (nextTitle !== null && nextTitle !== currentTitle) {
-                          void patchObject(boardObject.id, { title: nextTitle })
-                        }
+                        startInlineEdit(boardObject, 'title')
                       }}
                       onDragStart={() => {
                         setDraggingObjectId(boardObject.id)
@@ -2287,6 +2569,116 @@ export const BoardPage = () => {
                 ))}
             </Layer>
           </Stage>
+          {inlineEditor && inlineEditorLayout ? (
+            <div className="inline-editor-layer">
+              {inlineEditorLayout.multiline ? (
+                <textarea
+                  ref={inlineTextAreaRef}
+                  className="inline-editor inline-editor-textarea"
+                  style={{
+                    left: inlineEditorLayout.left,
+                    top: inlineEditorLayout.top,
+                    width: inlineEditorLayout.width,
+                    height: inlineEditorLayout.height,
+                    fontSize: inlineEditorLayout.fontSize,
+                  }}
+                  value={inlineEditor.value}
+                  onChange={(event) =>
+                    setInlineEditor((prev) =>
+                      prev ? { ...prev, value: event.target.value } : prev,
+                    )
+                  }
+                  onBlur={() => {
+                    void commitInlineEdit()
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Escape') {
+                      event.preventDefault()
+                      cancelInlineEdit()
+                      return
+                    }
+                    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                      event.preventDefault()
+                      void commitInlineEdit()
+                    }
+                  }}
+                />
+              ) : (
+                <input
+                  ref={inlineInputRef}
+                  className="inline-editor inline-editor-input"
+                  style={{
+                    left: inlineEditorLayout.left,
+                    top: inlineEditorLayout.top,
+                    width: inlineEditorLayout.width,
+                    height: inlineEditorLayout.height,
+                    fontSize: inlineEditorLayout.fontSize,
+                  }}
+                  value={inlineEditor.value}
+                  onChange={(event) =>
+                    setInlineEditor((prev) =>
+                      prev ? { ...prev, value: event.target.value } : prev,
+                    )
+                  }
+                  onBlur={() => {
+                    void commitInlineEdit()
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Escape') {
+                      event.preventDefault()
+                      cancelInlineEdit()
+                      return
+                    }
+                    if (event.key === 'Enter') {
+                      event.preventDefault()
+                      void commitInlineEdit()
+                    }
+                  }}
+                />
+              )}
+            </div>
+          ) : null}
+          <div className="zoom-controls">
+            <button
+              type="button"
+              className="zoom-button"
+              onClick={zoomIn}
+              disabled={viewport.scale >= MAX_ZOOM_SCALE}
+              title="Zoom in (Cmd/Ctrl +)"
+              aria-label="Zoom in"
+            >
+              +
+            </button>
+            <button
+              type="button"
+              className="zoom-fit-button"
+              onClick={zoomToFit}
+              title="Fit all objects (Cmd/Ctrl + Shift + F)"
+              aria-label="Fit all objects"
+            >
+              Fit
+            </button>
+            <button
+              type="button"
+              className="zoom-percentage"
+              onClick={zoomReset}
+              title="Reset zoom to 100% (Cmd/Ctrl + 0)"
+              aria-label="Reset zoom to 100%"
+              data-testid="zoom-percentage"
+            >
+              {Math.round(viewport.scale * 100)}%
+            </button>
+            <button
+              type="button"
+              className="zoom-button"
+              onClick={zoomOut}
+              disabled={viewport.scale <= MIN_ZOOM_SCALE}
+              title="Zoom out (Cmd/Ctrl -)"
+              aria-label="Zoom out"
+            >
+              -
+            </button>
+          </div>
           <div className="minimap" onClick={handleMinimapNavigate}>
             <div className="minimap-title">Mini-map</div>
             <div
@@ -2342,74 +2734,97 @@ export const BoardPage = () => {
             onSubmit={handleAiCommandSubmit}
             onIngestTextLines={ingestTextLinesAsStickies}
           />
-          <section className="side-panel comments-panel">
-            <div className="side-panel-header">
-              <h3>Comments</h3>
-              {selectedObject ? <span className="value-badge">{selectedComments.length}</span> : null}
-            </div>
-            {selectedObject ? (
-              <>
-                <p className="panel-note">Online users: {onlineDisplayNames.join(', ') || 'none'}</p>
-                <div className="comments-list">
-                  {selectedComments.length === 0 ? (
-                    <p className="panel-note">No comments yet.</p>
-                  ) : (
-                    selectedComments
-                      .slice()
-                      .sort((left, right) => left.createdAt - right.createdAt)
-                      .map((comment) => (
-                        <article key={comment.id} className="comment-item">
-                          <strong>{comment.createdByName}</strong>
-                          <p>{comment.text}</p>
-                        </article>
-                      ))
-                  )}
+          <div className="side-tabs">
+            <button
+              type="button"
+              className={`side-tab-button ${activeSidePanel === 'comments' ? 'active' : ''}`}
+              onClick={() => setActiveSidePanel('comments')}
+              title="Show comments panel"
+            >
+              Comments
+            </button>
+            <button
+              type="button"
+              className={`side-tab-button ${activeSidePanel === 'timeline' ? 'active' : ''}`}
+              onClick={() => setActiveSidePanel('timeline')}
+              title="Show activity timeline"
+            >
+              Timeline
+            </button>
+          </div>
+          {activeSidePanel === 'comments' ? (
+            <section className="side-panel comments-panel">
+              <div className="side-panel-header">
+                <h3>Comments</h3>
+                {selectedObject ? <span className="value-badge">{selectedComments.length}</span> : null}
+              </div>
+              {selectedObject ? (
+                <div className="side-panel-content">
+                  <p className="panel-note">Online users: {onlineDisplayNames.join(', ') || 'none'}</p>
+                  <div className="comments-list">
+                    {selectedComments.length === 0 ? (
+                      <p className="panel-note">No comments yet.</p>
+                    ) : (
+                      selectedComments
+                        .slice()
+                        .sort((left, right) => left.createdAt - right.createdAt)
+                        .map((comment) => (
+                          <article key={comment.id} className="comment-item">
+                            <strong>{comment.createdByName}</strong>
+                            <p>{comment.text}</p>
+                          </article>
+                        ))
+                    )}
+                  </div>
+                  <textarea
+                    className="ai-input comment-input"
+                    placeholder="Add comment, mention teammates with @name"
+                    value={commentDraft}
+                    onChange={(event) => setCommentDraft(event.target.value)}
+                  />
+                  <button type="button" className="primary-button" onClick={() => void addComment()}>
+                    Add Comment
+                  </button>
                 </div>
-                <textarea
-                  className="ai-input"
-                  placeholder="Add comment, mention teammates with @name"
-                  value={commentDraft}
-                  onChange={(event) => setCommentDraft(event.target.value)}
-                />
-                <button type="button" className="primary-button" onClick={() => void addComment()}>
-                  Add Comment
-                </button>
-              </>
-            ) : (
-              <p className="panel-note">Select an object to view and add comments.</p>
-            )}
-          </section>
-          <section className="side-panel timeline-panel">
-            <div className="side-panel-header">
-              <h3>Activity Timeline</h3>
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() => void replayTimeline()}
-                disabled={isTimelineReplaying}
-              >
-                {isTimelineReplaying ? 'Replaying…' : 'Replay'}
-              </button>
-            </div>
-            <div className="timeline-list">
-              {activityEvents.slice(0, 20).map((event) => (
+              ) : (
+                <p className="panel-note">Select an object to view and add comments.</p>
+              )}
+            </section>
+          ) : (
+            <section className="side-panel timeline-panel">
+              <div className="side-panel-header">
+                <h3>Activity Timeline</h3>
                 <button
-                  key={event.id}
                   type="button"
-                  className="timeline-item"
-                  onClick={() => {
-                    if (event.targetId) {
-                      setSelectedId(event.targetId)
-                    }
-                  }}
+                  className="secondary-button"
+                  onClick={() => void replayTimeline()}
+                  disabled={isTimelineReplaying}
                 >
-                  <span>{event.actorName}</span>
-                  <span>{event.action}</span>
+                  {isTimelineReplaying ? 'Replaying…' : 'Replay'}
                 </button>
-              ))}
-              {activityEvents.length === 0 ? <p className="panel-note">No activity yet.</p> : null}
-            </div>
-          </section>
+              </div>
+              <div className="side-panel-content">
+                <div className="timeline-list">
+                  {activityEvents.slice(0, 20).map((event) => (
+                    <button
+                      key={event.id}
+                      type="button"
+                      className="timeline-item"
+                      onClick={() => {
+                        if (event.targetId) {
+                          setSelectedId(event.targetId)
+                        }
+                      }}
+                    >
+                      <span>{event.actorName}</span>
+                      <span>{event.action}</span>
+                    </button>
+                  ))}
+                  {activityEvents.length === 0 ? <p className="panel-note">No activity yet.</p> : null}
+                </div>
+              </div>
+            </section>
+          )}
         </aside>
       </section>
       {showShortcuts ? (

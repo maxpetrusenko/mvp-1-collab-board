@@ -1,12 +1,12 @@
 import { test, expect } from '@playwright/test'
 
-const APP_URL = 'https://mvp-1-collab-board.web.app'
+const APP_URL = process.env.PLAYWRIGHT_BASE_URL || 'https://mvp-1-collab-board.web.app'
 
 test.describe('CollabBoard Demo Recording', () => {
   test('Demo recording - requires auth', async ({ page }) => {
     // Scene 1: Landing
     await page.goto(APP_URL)
-    await expect(page.locator('text=Sign in with Google')).toBeVisible()
+    await expect(page.getByTestId('google-signin-button')).toBeVisible()
     await page.waitForTimeout(3000)
 
     // Note: In real demo, user would sign in

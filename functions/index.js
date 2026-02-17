@@ -607,6 +607,8 @@ const runCommandPlan = async (ctx, command) => {
   if (
     lower.includes('organize this board') ||
     (lower.includes('organize') && lower.includes('column')) ||
+    (lower.includes('organize') && lower.includes('group')) ||
+    (lower.includes('group') && lower.includes('board')) ||
     (lower.includes('layout') && lower.includes('board'))
   ) {
     await organizeBoardByType(ctx)
@@ -651,7 +653,7 @@ const runCommandPlan = async (ctx, command) => {
   }
 
   throw new Error(
-    'Unsupported command. Try: "add hello world sticker", "add rectangle", "add connector", "organize this board", "summarize all stickies into themes", "arrange in grid", "create SWOT template", "retrospective", or "user journey map with 5 stages".',
+    'Unsupported command. Try: "add hello world sticker", "add rectangle", "add connector", "organize this board into groups", "summarize all stickies into themes", "arrange in grid", "create SWOT template", "retrospective", or "user journey map with 5 stages".',
   )
 }
 
