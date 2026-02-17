@@ -263,7 +263,7 @@ export const BoardPage = () => {
   >({})
   const [activityEvents, setActivityEvents] = useState<BoardActivityEvent[]>([])
   const [commentDraft, setCommentDraft] = useState('')
-  const [showCommentsPanel, setShowCommentsPanel] = useState(true)
+  const [showCommentsPanel, setShowCommentsPanel] = useState(false)
   const [showTimelinePanel, setShowTimelinePanel] = useState(false)
   const [isVotingMode, setIsVotingMode] = useState(false)
   const [timerState, setTimerState] = useState<TimerState>({
@@ -293,7 +293,7 @@ export const BoardPage = () => {
     syncBackend === 'yjs-pilot' ? new YjsPilotMirror() : null,
   )
 
-  const dragPublishersRef = useRef<Record<string, (point: Point) => void>>({})
+  const liveDragPositionsRef = useRef<Record<string, Point>>({})
   const connectorPublishersRef = useRef<Record<string, (patch: ConnectorPatch) => void>>({})
   const historyPastRef = useRef<HistoryEntry[]>([])
   const historyFutureRef = useRef<HistoryEntry[]>([])
@@ -807,13 +807,13 @@ export const BoardPage = () => {
       }
       const connectorBounds = toConnectorBounds(connectorStart, connectorEnd)
       const size =
-        objectType === 'shape'
+        objectType === 'shape' || objectType === 'stickyNote'
           ? DEFAULT_SHAPE_SIZES[shapeType]
           : objectType === 'frame'
             ? DEFAULT_FRAME_SIZE
           : objectType === 'connector'
             ? connectorBounds.size
-            : { width: 180, height: 110 }
+            : DEFAULT_SHAPE_SIZES.rectangle
       const position = objectType === 'connector' ? connectorBounds.position : centerPosition
 
       const base = {
@@ -834,6 +834,7 @@ export const BoardPage = () => {
           ? {
               ...base,
               type: 'stickyNote',
+              shapeType,
               color: STICKY_COLOR_OPTIONS[0],
               text: 'New sticky note',
             }
@@ -1326,26 +1327,6 @@ export const BoardPage = () => {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [clipboardObject, deleteSelected, duplicateObject, redo, selectedObject, undo, zoomIn, zoomOut, zoomReset, zoomToFit])
 
-  const getDragPublisher = useCallback(
-    (objectId: string) => {
-      if (!dragPublishersRef.current[objectId]) {
-        let lastDragPublishAt = 0
-        dragPublishersRef.current[objectId] = (point: Point) => {
-          const now = Date.now()
-          if (now - lastDragPublishAt < 100) {
-            return
-          }
-
-          lastDragPublishAt = now
-          void patchObject(objectId, { position: point }, { recordHistory: false, logEvent: false })
-        }
-      }
-
-      return dragPublishersRef.current[objectId]
-    },
-    [patchObject],
-  )
-
   const getConnectorPublisher = useCallback(
     (objectId: string) => {
       if (!connectorPublishersRef.current[objectId]) {
@@ -1542,6 +1523,7 @@ export const BoardPage = () => {
           id,
           boardId,
           type: 'stickyNote',
+          shapeType: 'rectangle',
           position: {
             x: base.x + (index % 4) * 210,
             y: base.y + Math.floor(index / 4) * 130,
@@ -1905,38 +1887,6 @@ export const BoardPage = () => {
           <button
             type="button"
             className="button-icon with-tooltip"
-            onClick={() => void createObject('shape', { shapeType: 'rectangle' })}
-            title="Add rectangle (R)"
-            data-tooltip="Add rectangle (R)"
-          >
-            ▭
-          </button>
-          <button
-            type="button"
-            className="button-icon with-tooltip"
-            onClick={() => void createObject('shape', { shapeType: 'circle' })}
-            title="Add circle (O)"
-            data-tooltip="Add circle (O)"
-          >
-            ○
-          </button>
-          <button
-            type="button"
-            className="button-icon with-tooltip"
-            onClick={() => void createObject('shape', { shapeType: 'diamond' })}
-            title="Add diamond (D)"
-            data-tooltip="Add diamond (D)"
-          >
-            ◇
-          </button>
-        </div>
-
-        <div className="toolbar-divider" />
-
-        <div className="tool-group">
-          <button
-            type="button"
-            className="button-icon with-tooltip"
             onClick={() => void undo()}
             title="Undo (Cmd+Z)"
             data-tooltip="Undo"
@@ -2009,7 +1959,7 @@ export const BoardPage = () => {
         {/* Selected object color options */}
         {selectedObject && (
           <>
-            {selectedObject.type === 'shape' ? (
+            {selectedObject.type === 'shape' || selectedObject.type === 'stickyNote' ? (
               <>
                 <div className="toolbar-divider" />
                 <div className="tool-group" data-testid="shape-type-picker">
@@ -2020,13 +1970,22 @@ export const BoardPage = () => {
                       className={`shape-option with-tooltip ${
                         normalizeShapeKind(selectedObject.shapeType) === shapeOption.kind ? 'active' : ''
                       }`}
-                      onClick={() =>
+                      onClick={() => {
+                        const shapePatch =
+                          selectedObject.type === 'stickyNote'
+                            ? {
+                                shapeType: shapeOption.kind,
+                                size: { ...DEFAULT_SHAPE_SIZES[shapeOption.kind] },
+                              }
+                            : {
+                                shapeType: shapeOption.kind,
+                              }
                         void patchObject(
                           selectedObject.id,
-                          { shapeType: shapeOption.kind },
-                          { actionLabel: `changed shape to ${shapeOption.kind}` },
+                          shapePatch,
+                          { actionLabel: `changed ${selectedObject.type} shape to ${shapeOption.kind}` },
                         )
-                      }
+                      }}
                       title={`Set shape to ${shapeOption.label}`}
                       data-tooltip={`Set shape to ${shapeOption.label}`}
                       aria-label={`Set selected shape to ${shapeOption.label}`}
@@ -2156,11 +2115,15 @@ export const BoardPage = () => {
             <Layer>
               {objects.map((boardObject) => {
                 const selected = boardObject.id === selectedId
-                // Use local position during drag, server position otherwise
+                // Prefer in-flight drag ref to avoid controlled drag jitter on re-render.
                 const position =
+                  liveDragPositionsRef.current[boardObject.id] ||
                   localObjectPositions[boardObject.id]?.point || boardObject.position
 
                 if (boardObject.type === 'stickyNote') {
+                  const shapeType = normalizeShapeKind(boardObject.shapeType)
+                  const strokeColor = selected ? '#1d4ed8' : '#0f172a'
+                  const strokeWidth = selected ? 2 : 1
                   const voteCount = Object.keys(boardObject.votesByUser || {}).length
                   const commentCount = boardObject.comments?.length || 0
                   return (
@@ -2175,22 +2138,16 @@ export const BoardPage = () => {
                         startInlineEdit(boardObject, 'text')
                       }}
                       onDragStart={() => {
+                        liveDragPositionsRef.current[boardObject.id] = position
                         setDraggingObjectId(boardObject.id)
                       }}
                       onDragMove={(event) => {
                         const newPos = { x: event.target.x(), y: event.target.y() }
-                        setLocalObjectPositions((prev) => ({
-                          ...prev,
-                          [boardObject.id]: {
-                            point: newPos,
-                            mode: 'dragging',
-                            updatedAt: Date.now(),
-                          },
-                        }))
-                        getDragPublisher(boardObject.id)(newPos)
+                        liveDragPositionsRef.current[boardObject.id] = newPos
                       }}
                       onDragEnd={(event) => {
                         const finalPos = { x: event.target.x(), y: event.target.y() }
+                        delete liveDragPositionsRef.current[boardObject.id]
                         setLocalObjectPositions((prev) => ({
                           ...prev,
                           [boardObject.id]: {
@@ -2203,24 +2160,81 @@ export const BoardPage = () => {
                         void patchObject(boardObject.id, { position: finalPos }, { actionLabel: 'moved sticky' })
                       }}
                     >
-                      <Rect
-                        width={boardObject.size.width}
-                        height={boardObject.size.height}
-                        fill={boardObject.color}
-                        cornerRadius={8}
-                        stroke={selected ? '#1d4ed8' : '#0f172a'}
-                        strokeWidth={selected ? 2 : 1}
-                        shadowBlur={6}
-                        shadowOpacity={0.2}
-                      />
+                      {shapeType === 'circle' ? (
+                        <Circle
+                          x={boardObject.size.width / 2}
+                          y={boardObject.size.height / 2}
+                          radius={Math.min(boardObject.size.width, boardObject.size.height) / 2}
+                          fill={boardObject.color}
+                          stroke={strokeColor}
+                          strokeWidth={strokeWidth}
+                          shadowBlur={6}
+                          shadowOpacity={0.2}
+                        />
+                      ) : null}
+                      {shapeType === 'diamond' ? (
+                        <Line
+                          points={[
+                            boardObject.size.width / 2,
+                            0,
+                            boardObject.size.width,
+                            boardObject.size.height / 2,
+                            boardObject.size.width / 2,
+                            boardObject.size.height,
+                            0,
+                            boardObject.size.height / 2,
+                          ]}
+                          closed
+                          fill={boardObject.color}
+                          stroke={strokeColor}
+                          strokeWidth={strokeWidth}
+                          lineJoin="round"
+                          shadowBlur={6}
+                          shadowOpacity={0.2}
+                        />
+                      ) : null}
+                      {shapeType === 'triangle' ? (
+                        <Line
+                          points={[
+                            boardObject.size.width / 2,
+                            0,
+                            boardObject.size.width,
+                            boardObject.size.height,
+                            0,
+                            boardObject.size.height,
+                          ]}
+                          closed
+                          fill={boardObject.color}
+                          stroke={strokeColor}
+                          strokeWidth={strokeWidth}
+                          lineJoin="round"
+                          shadowBlur={6}
+                          shadowOpacity={0.2}
+                        />
+                      ) : null}
+                      {shapeType === 'rectangle' ? (
+                        <Rect
+                          width={boardObject.size.width}
+                          height={boardObject.size.height}
+                          fill={boardObject.color}
+                          cornerRadius={8}
+                          stroke={strokeColor}
+                          strokeWidth={strokeWidth}
+                          shadowBlur={6}
+                          shadowOpacity={0.2}
+                        />
+                      ) : null}
                       <Text
                         text={boardObject.text}
-                        width={boardObject.size.width - 16}
-                        x={8}
-                        y={8}
-                        fontSize={16}
+                        x={shapeType === 'rectangle' ? 8 : 12}
+                        y={shapeType === 'rectangle' ? 8 : 10}
+                        width={Math.max(40, boardObject.size.width - (shapeType === 'rectangle' ? 16 : 24))}
+                        height={Math.max(24, boardObject.size.height - (shapeType === 'rectangle' ? 16 : 20))}
+                        fontSize={shapeType === 'rectangle' ? 16 : 14}
                         fill="#0f172a"
                         wrap="word"
+                        align={shapeType === 'rectangle' ? 'left' : 'center'}
+                        verticalAlign={shapeType === 'rectangle' ? 'top' : 'middle'}
                       />
                       {voteCount > 0 ? (
                         <>
@@ -2442,6 +2456,7 @@ export const BoardPage = () => {
                         startInlineEdit(boardObject, 'title')
                       }}
                       onDragStart={() => {
+                        liveDragPositionsRef.current[boardObject.id] = position
                         setDraggingObjectId(boardObject.id)
                         const bounds = {
                           left: position.x,
@@ -2473,35 +2488,23 @@ export const BoardPage = () => {
                       }}
                       onDragMove={(event) => {
                         const nextFramePos = { x: event.target.x(), y: event.target.y() }
+                        liveDragPositionsRef.current[boardObject.id] = nextFramePos
                         const snapshot = frameDragSnapshotRef.current[boardObject.id]
-                        const nextLocal: Record<string, LocalPositionOverride> = {
-                          [boardObject.id]: {
-                            point: nextFramePos,
-                            mode: 'dragging',
-                            updatedAt: Date.now(),
-                          },
-                        }
                         if (snapshot) {
                           const dx = nextFramePos.x - snapshot.frameStart.x
                           const dy = nextFramePos.y - snapshot.frameStart.y
                           snapshot.members.forEach((member) => {
-                            nextLocal[member.id] = {
-                              point: { x: member.start.x + dx, y: member.start.y + dy },
-                              mode: 'dragging',
-                              updatedAt: Date.now(),
+                            liveDragPositionsRef.current[member.id] = {
+                              x: member.start.x + dx,
+                              y: member.start.y + dy,
                             }
                           })
                         }
-
-                        setLocalObjectPositions((prev) => ({
-                          ...prev,
-                          ...nextLocal,
-                        }))
-                        getDragPublisher(boardObject.id)(nextFramePos)
                       }}
                       onDragEnd={(event) => {
                         const finalFramePos = { x: event.target.x(), y: event.target.y() }
                         const snapshot = frameDragSnapshotRef.current[boardObject.id]
+                        delete liveDragPositionsRef.current[boardObject.id]
                         const nextLocal: Record<string, LocalPositionOverride> = {
                           [boardObject.id]: {
                             point: finalFramePos,
@@ -2517,6 +2520,7 @@ export const BoardPage = () => {
                               x: member.start.x + dx,
                               y: member.start.y + dy,
                             }
+                            delete liveDragPositionsRef.current[member.id]
                             nextLocal[member.id] = {
                               point: memberFinal,
                               mode: 'pending',
@@ -2584,22 +2588,16 @@ export const BoardPage = () => {
                       startInlineEdit(boardObject, 'text')
                     }}
                     onDragStart={() => {
+                      liveDragPositionsRef.current[boardObject.id] = position
                       setDraggingObjectId(boardObject.id)
                     }}
                     onDragMove={(event) => {
                       const newPos = { x: event.target.x(), y: event.target.y() }
-                      setLocalObjectPositions((prev) => ({
-                        ...prev,
-                        [boardObject.id]: {
-                          point: newPos,
-                          mode: 'dragging',
-                          updatedAt: Date.now(),
-                        },
-                      }))
-                      getDragPublisher(boardObject.id)(newPos)
+                      liveDragPositionsRef.current[boardObject.id] = newPos
                     }}
                     onDragEnd={(event) => {
                       const finalPos = { x: event.target.x(), y: event.target.y() }
+                      delete liveDragPositionsRef.current[boardObject.id]
                       setLocalObjectPositions((prev) => ({
                         ...prev,
                         [boardObject.id]: {
