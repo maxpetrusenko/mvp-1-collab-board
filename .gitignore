@@ -11,9 +11,22 @@ coverage/
 **/.env
 **/.env.*
 !**/.env.example
+.envrc
+**/.envrc
+**/.runtimeconfig.json
 
 # local tool state
 .firebase/
 firebase-debug.log
 .firebaserc
 .playwright-mcp/
+
+# credential files (never commit)
+*.pem
+*.p12
+*.pfx
+*.key
+*.crt
+*.cer
+*service*account*.json
+*credentials*.json

@@ -16,6 +16,16 @@ test-results/
 .env
 .env.*
 !.env.example
+.envrc
+.runtimeconfig.json
+*.pem
+*.p12
+*.pfx
+*.key
+*.crt
+*.cer
+*service*account*.json
+*credentials*.json
 
 # Editor directories and files
 .vscode/*

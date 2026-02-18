@@ -240,6 +240,15 @@ Purpose: log system decisions, alternatives, rationale, and change history.
 - Consequences: Slightly denser controls on short displays and more responsive CSS states to maintain.
 - Revisit Trigger: If usability tests show compact mode hurts discoverability or accessibility.
 
+### D-026
+- Date: 2026-02-17
+- Status: Accepted
+- Decision: Remove standalone toolbar shape-creation buttons and standardize visual shape customization on sticky notes (`shapeType`) for both manual and AI-driven create flows, while defaulting the right sidebar to the AI tab.
+- Alternatives Considered: Keep separate shape objects as primary manual creation path; keep comments tab as default-open right panel.
+- Rationale: User testing flagged shape drag interactions as laggy and asked for a simpler creation flow where notes can be shaped/styled directly; default AI visibility improves feature discoverability without adding new UI surfaces.
+- Consequences: Manual create flow now centers on sticky notes + frame + connector; existing shape objects remain supported for compatibility but are no longer first-class toolbar creation actions.
+- Revisit Trigger: If advanced non-sticky shape use cases become core and require dedicated creation/authoring controls again.
+
 ## Change Log
 - 2026-02-16: Initial decision set created.
 - 2026-02-16: Added auth provider, deployment URL strategy, and error recovery UX decisions.
@@ -252,3 +261,4 @@ Purpose: log system decisions, alternatives, rationale, and change history.
 - 2026-02-17: Added automated QA auth decision to remove skipped authenticated e2e tests.
 - 2026-02-17: Added staged Yjs pilot mirror decision behind feature flag.
 - 2026-02-17: Added compact laptop layout decision (responsive toolbar/panel/minimap fit without page scroll).
+- 2026-02-17: Added sticky-shape-first creation decision and AI-right-panel default behavior decision.

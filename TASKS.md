@@ -1,7 +1,7 @@
 # TASKS.md
 
 Date initialized: 2026-02-16
-Last updated: 2026-02-17 (E2E coverage extended for deletion/color/AI errors/voice input)
+Last updated: 2026-02-17 (added drag ordering unit tests for multi-user/out-of-order writes)
 Cadence: 1-hour deliverables with hard deadlines
 Source: `mvp-1-collab-board/G4 Week 1 - CollabBoard-requirements.pdf`
 
@@ -67,11 +67,20 @@ Source: `mvp-1-collab-board/G4 Week 1 - CollabBoard-requirements.pdf`
 | T-049 | 2026-02-17 23:45 | Add AI error-path E2E coverage (unsupported/malformed/recovery) | A | Max | Done |
 | T-050 | 2026-02-17 23:55 | Add voice-input UI E2E coverage (unsupported browser + runtime fallback) | A | Max | Done |
 | T-051 | 2026-02-18 00:05 | Extract shared Firestore E2E helper and expand AI UI color-command coverage | A | Max | Done |
+| T-052 | 2026-02-18 00:20 | Remove standalone shape-create toolbar actions; allow sticky note shape + color customization with AI tab defaulting on right sidebar | E | Max | Done |
+| T-053 | 2026-02-18 00:35 | Route AI "add shape" commands to shaped sticky notes to match UI shape-removal decision | B | Max | Done |
+| T-054 | 2026-02-18 00:55 | Add E2E sticky drag persistence test to guarantee sticky remains at released position after drag end | A | Max | Done |
+| T-055 | 2026-02-18 01:10 | Add non-Playwright unit test suite for drag write ordering (single-user late packets + multi-user concurrent drags) | A | Max | Done |
 
 ## Current Evidence Snapshot
 - Deployed app: `https://mvp-1-collab-board.web.app`
 - Playwright run: `32 passed, 0 skipped` (`npx playwright test --list`, 2026-02-17)
 - Targeted regression run: `14 passed` (`npx playwright test e2e/object-deletion.spec.ts e2e/color-changes.spec.ts e2e/ai-errors.spec.ts e2e/voice-input.spec.ts e2e/ai-command-ui.spec.ts`, 2026-02-17)
+- Local validation run (post T-052): `5 passed` (`PLAYWRIGHT_BASE_URL=http://127.0.0.1:4173 npx playwright test e2e/color-changes.spec.ts e2e/shape-editing.spec.ts e2e/mvp-regression.spec.ts`, 2026-02-17)
+- Functions validation run (post T-053): `10 passed` (`cd functions && npm test`, 2026-02-17)
+- Sticky drag persistence validation (post T-054): `1 passed` (`npx playwright test e2e/sticky-drag-persistence.spec.ts`, 2026-02-17)
+- Sticky drag persistence stress run (post T-054): `8 passed` (`npx playwright test e2e/sticky-drag-persistence.spec.ts --repeat-each=8`, 2026-02-17)
+- Drag ordering unit validation (post T-055): `3 passed` (`cd app && npm run test:unit`, 2026-02-17)
 - Auth strategy for automation: QA email/password flow via `/login?qaAuth=1`
 - MVP regression spec: `1 passed` (`npx playwright test e2e/mvp-regression.spec.ts`, 2026-02-17)
 - Critical backend checks: `scripts/run-critical-checks.sh`

@@ -6,7 +6,7 @@ Realtime collaborative whiteboard MVP using React + TypeScript + Firebase.
 - Google auth (Firebase Auth)
 - Board route sharing (`/b/:boardId`)
 - Infinite board with pan + zoom
-- Sticky notes + rectangle shapes
+- Sticky notes with selectable shapes (rectangle/circle/diamond/triangle)
 - Create, move, edit objects with Firestore sync
 - Multiplayer cursors and presence with Realtime Database
 - Keyboard object ops:
