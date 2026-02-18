@@ -8,6 +8,16 @@ if (!admin.apps.length) {
 
 const db = admin.firestore()
 
+// GLM-5 LLM client imports
+let glmClient = null
+let toolRegistry = null
+try {
+  glmClient = require('./src/glm-client')
+  toolRegistry = require('./src/tool-registry')
+} catch (importError) {
+  console.warn('GLM client modules not available:', importError.message)
+}
+
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
@@ -23,6 +33,21 @@ const COLOR_MAP = {
   orange: '#fdba74',
   purple: '#c4b5fd',
   gray: '#e2e8f0',
+}
+const STICKY_SHAPE_SIZES = {
+  rectangle: { width: 180, height: 110 },
+  circle: { width: 130, height: 130 },
+  diamond: { width: 170, height: 120 },
+  triangle: { width: 170, height: 120 },
+}
+
+const normalizeShapeType = (rawShapeType, fallback = 'rectangle') => {
+  const normalized = String(rawShapeType || '').toLowerCase().trim()
+  if (normalized === 'circle') return 'circle'
+  if (normalized === 'diamond' || normalized === 'rhombus' || normalized === 'romb') return 'diamond'
+  if (normalized === 'triangle') return 'triangle'
+  if (normalized === 'rectangle' || normalized === 'box' || normalized === 'shape') return 'rectangle'
+  return fallback
 }
 
 const toColor = (rawColor, fallback) => {
@@ -178,12 +203,18 @@ const createStickyNote = async (ctx, args) => {
   const id = crypto.randomUUID()
   const now = nowMs()
   const zIndex = getNextZIndex(ctx.state)
+  const shapeType = normalizeShapeType(args.shapeType || args.type)
+  const defaultSize = STICKY_SHAPE_SIZES[shapeType]
   const sticky = {
     id,
     boardId: ctx.boardId,
     type: 'stickyNote',
+    shapeType,
     position: { x: parseNumber(args.x, 80), y: parseNumber(args.y, 80) },
-    size: { width: 180, height: 110 },
+    size: {
+      width: parseNumber(args.width, defaultSize.width),
+      height: parseNumber(args.height, defaultSize.height),
+    },
     zIndex,
     text: sanitizeText(args.text || 'New sticky note'),
     color: toColor(args.color, '#fde68a'),
@@ -612,21 +643,12 @@ const runCommandPlan = async (ctx, command) => {
   )
   if (shapeMatch) {
     const [, colorCandidate, rawShapeType, xRaw, yRaw] = shapeMatch
-    const normalizedShapeType = String(rawShapeType || '').toLowerCase()
-    const shapeType =
-      normalizedShapeType === 'circle'
-        ? 'circle'
-        : normalizedShapeType === 'diamond' || normalizedShapeType === 'rhombus' || normalizedShapeType === 'romb'
-          ? 'diamond'
-          : normalizedShapeType === 'triangle'
-            ? 'triangle'
-            : 'rectangle'
-    await createShape(ctx, {
-      type: shapeType,
+    const shapeType = normalizeShapeType(rawShapeType)
+    await createStickyNote(ctx, {
+      shapeType,
       x: parseNumber(xRaw, 200),
       y: parseNumber(yRaw, 200),
-      width: 220,
-      height: 140,
+      text: 'New sticky note',
       color: toColor(colorCandidate, '#93c5fd'),
     })
     return
@@ -735,9 +757,146 @@ const runCommandPlan = async (ctx, command) => {
     return
   }
 
+  // LLM FALLBACK: Route unrecognized commands to GLM-5
+  if (glmClient) {
+    try {
+      return await executeViaLLM(ctx, normalizedCommand)
+    } catch (llmError) {
+      console.error('LLM execution failed:', llmError)
+      // Fall through to original error message below
+    }
+  }
+
   throw new Error(
     'Unsupported command. Try: "add hello world sticker", "add rectangle", "add circle", "add diamond", "add frame", "add connector", "organize by color", "organize this board into groups", "summarize all stickies into themes", "arrange in grid", "create SWOT template", "retrospective", or "user journey map with 5 stages".',
   )
+}
+
+/**
+ * Execute a command via GLM-5 LLM with tool calling
+ * @param {object} ctx - Execution context { state, boardId, userId, executedTools }
+ * @param {string} command - Normalized user command
+ * @returns {Promise<void>}
+ */
+const executeViaLLM = async (ctx, command) => {
+  console.log('Executing command via LLM:', command)
+
+  const glmResponse = await glmClient.callGLM(command, {
+    state: ctx.state,
+    boardId: ctx.boardId
+  })
+
+  const toolCalls = glmClient.parseToolCalls(glmResponse)
+
+  if (toolCalls.length === 0) {
+    // Check if there's a text response instead
+    const textResponse = glmClient.getTextResponse(glmResponse)
+    if (textResponse) {
+      throw new Error(`LLM did not return any tool calls. Response: "${textResponse}"`)
+    }
+    throw new Error('LLM did not return any tool calls')
+  }
+
+  // Execute each tool call sequentially
+  for (const toolCall of toolCalls) {
+    if (toolCall.parseError) {
+      throw new Error(`Failed to parse tool call arguments for ${toolCall.name}`)
+    }
+
+    console.log('LLM tool call:', toolCall.name, toolCall.arguments)
+
+    // Route to existing handler functions
+    switch (toolCall.name) {
+      case 'createStickyNote':
+        await createStickyNote(ctx, {
+          text: toolCall.arguments.text || 'New sticky note',
+          shapeType: toolCall.arguments.shapeType || 'rectangle',
+          color: toColor(toolCall.arguments.color, '#fde68a'),
+          x: parseNumber(toolCall.arguments.x, 120),
+          y: parseNumber(toolCall.arguments.y, 120),
+          width: toolCall.arguments.width,
+          height: toolCall.arguments.height
+        })
+        break
+
+      case 'createShape':
+        await createStickyNote(ctx, {
+          text: toolCall.arguments.text || 'New sticky note',
+          shapeType: toolCall.arguments.type || 'rectangle',
+          width: toolCall.arguments.width,
+          height: toolCall.arguments.height,
+          color: toColor(toolCall.arguments.color, '#93c5fd'),
+          x: parseNumber(toolCall.arguments.x, 200),
+          y: parseNumber(toolCall.arguments.y, 200)
+        })
+        break
+
+      case 'createFrame':
+        await createFrame(ctx, {
+          title: sanitizeText(toolCall.arguments.title || 'New Frame'),
+          width: parseNumber(toolCall.arguments.width, 480),
+          height: parseNumber(toolCall.arguments.height, 300),
+          x: parseNumber(toolCall.arguments.x, 120),
+          y: parseNumber(toolCall.arguments.y, 120)
+        })
+        break
+
+      case 'createConnector':
+        await createConnector(ctx, {
+          fromId: toolCall.arguments.fromId,
+          toId: toolCall.arguments.toId,
+          color: toColor(toolCall.arguments.color, '#0f172a')
+        })
+        break
+
+      case 'moveObject':
+        await moveObject(ctx, {
+          objectId: toolCall.arguments.objectId,
+          x: parseNumber(toolCall.arguments.x, 0),
+          y: parseNumber(toolCall.arguments.y, 0)
+        })
+        break
+
+      case 'changeColor':
+        await changeColor(ctx, {
+          objectId: toolCall.arguments.objectId,
+          color: toolCall.arguments.color
+        })
+        break
+
+      case 'organizeBoardByColor':
+        await organizeBoardByColor(ctx)
+        break
+
+      case 'organizeBoardByType':
+        await organizeBoardByType(ctx)
+        break
+
+      case 'arrangeGrid':
+        const stickyNotes = ctx.state.filter(item => item.type === 'stickyNote')
+        await arrangeGrid(ctx, stickyNotes)
+        break
+
+      case 'createSwotTemplate':
+        await createSwotTemplate(ctx)
+        break
+
+      case 'createRetrospectiveTemplate':
+        await createRetrospectiveTemplate(ctx)
+        break
+
+      default:
+        throw new Error(`Unknown tool requested by LLM: ${toolCall.name}`)
+    }
+
+    ctx.executedTools.push({
+      tool: toolCall.name,
+      llmGenerated: true,
+      args: toolCall.arguments
+    })
+  }
+
+  console.log('LLM execution completed, tools executed:', toolCalls.length)
 }
 
 const reserveQueueSequence = async (boardId) => {
@@ -1004,3 +1163,4 @@ exports.__test = {
   normalizeCommandForPlan,
   isOrganizeByColorCommand,
 }
+// Tue Feb 17 18:22:00 EST 2026
