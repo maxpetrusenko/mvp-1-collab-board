@@ -41,6 +41,7 @@ export type StickyNoteObject = BoardObjectBase & {
   type: 'stickyNote'
   text: string
   color: string
+  shapeType?: ShapeKind
 }
 
 export type ShapeObject = BoardObjectBase & {
