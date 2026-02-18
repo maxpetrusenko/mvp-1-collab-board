@@ -3,6 +3,7 @@
 Realtime collaborative whiteboard MVP built for the Gauntlet Cohort challenge.
 
 Live deployment: https://mvp-1-collab-board.web.app/b/mvp-demo-board
+Loom demo: https://www.loom.com/share/b2016cdf9d4a4b4e96fec12253fec0d9
 
 ## What This Project Includes
 
