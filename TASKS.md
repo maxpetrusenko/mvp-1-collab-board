@@ -1,7 +1,7 @@
 # TASKS.md
 
 Date initialized: 2026-02-16
-Last updated: 2026-02-17 (added drag ordering unit tests for multi-user/out-of-order writes)
+Last updated: 2026-02-18 (requirements parity review + missing-requirement tests added)
 Cadence: 1-hour deliverables with hard deadlines
 Source: `mvp-1-collab-board/G4 Week 1 - CollabBoard-requirements.pdf`
 
@@ -96,6 +96,109 @@ Source: `mvp-1-collab-board/G4 Week 1 - CollabBoard-requirements.pdf`
   - `submission/SUBMISSION_FREEZE_2026-02-17.md`
 - Architecture spike notes: `docs/YJS_SPIKE.md`
 - Yjs pilot scaffold: `app/src/collab/yjs/*` + sync mode pill (`[data-testid=\"sync-mode-pill\"]`)
+
+## Tomorrow Review Backlog (Ordered)
+Current implementation rating snapshot (review-only, no test execution in this pass):
+- **PRD (41 FRs)**: `PASS 20 / PARTIAL 17 / FAIL 4` = 20/41 fully passing (49%)
+- **G4 PDF (22 core reqs)**: `PASS 16 / PARTIAL 1 / FAIL 5` = 16/22 fully passing (73%)
+- **Overall readiness**: `~75 / 100` when combining PRD + G4 PDF gaps; target is `95+`.
+- **Critical missing**: multi-select UI (FR-7), visual resize handles, board management UI, command history, sticky color count (6 vs 5 required).
+
+### 1) Requirements
+
+#### PRD FR Gaps (41 Functional Requirements)
+- [ ] `RQ-001` Close FR-7 gap: implement true multi-select behavior (not single `selectedId` replacement only). Includes: shift+click to extend selection, drag box select, bulk move/delete/duplicate.
+- [ ] `RQ-002` Close FR-17 gap: expose required AI tools in registry (`resizeObject`, `updateText`, `getBoardState`). Tool registry at `functions/src/tool-registry.js` missing these 3 tools.
+- [ ] `RQ-003` Close FR-32 gap: make `updatedAt` server-authoritative (remove client `Date.now()` ownership for LWW arbitration). Currently set by client at `BoardPage.tsx:926`.
+- [ ] `RQ-004` Close FR-41 gap: add reconnect/syncing UX states that are visible during offline/online transitions. Header only shows sync backend mode.
+- [ ] `RQ-005` Close FR-24 gap: add visible duplicate UI action in addition to keyboard shortcut (Cmd/Ctrl+D). Toolbar has delete but no duplicate button.
+- [ ] `RQ-006` Close FR-25 gap: verify/guarantee copy-paste contract (style preserved + deterministic offset). Test exists but needs verification.
+- [ ] `RQ-007` Close AC-2 collaboration gap: explicit two-browser simultaneous object edit coverage.
+- [ ] `RQ-008` Close AC-2 refresh gap: explicit refresh-mid-edit consistency coverage.
+- [ ] `RQ-009` Close FR-19 gap: explicit two-user proof that AI output is visible to collaborators.
+- [ ] `RQ-010` Close FR-18 gap: ensure all declared AI tools are executable in `executeViaLLM` switch routing. `resizeObject`, `updateText`, `getBoardState` missing from switch at `functions/index.js:809`.
+
+#### G4 PDF Additional Gaps
+- [ ] `RQ-011` Close G4 Board Management gap: implement board create/delete UI with name/description. Currently boards are implicit (created on first access via URL).
+- [ ] `RQ-012` Close G4 Board List gap: implement board list page/component for switching between boards.
+- [ ] `RQ-013` Close G4 Color Picker gap: reduce sticky colors from 6 to 5 (G4 PDF specifies exactly 5). Currently: yellow, orange, red, green, blue, purple (6 colors) at `BoardPage.tsx:102`.
+- [ ] `RQ-014` Close G4 Command History gap: implement command history storage and UI in AI panel. Listed as Post-MVP in TASKS.md:48 (T-030).
+
+#### Multi-Select UX Specifics (FR-7 breakdown)
+- [ ] `RQ-015` Implement shift+click to add/remove objects from selection (toggle individual items).
+- [ ] `RQ-016` Implement drag-box selection (marquee select) for multiple objects.
+- [ ] `RQ-017` Show visual selection indicator for all selected objects (not just primary selection).
+- [ ] `RQ-018` Implement bulk move: dragging selected group moves all objects together.
+- [ ] `RQ-019` Implement bulk delete: delete removes all selected objects.
+- [ ] `RQ-020` Implement bulk duplicate: duplicate creates copies of all selected objects.
+- [ ] `RQ-021` Implement bulk color change: color picker applies to all selected objects.
+- [ ] `RQ-022` Change state model from `selectedId` (singular) to `selectedIds` (array/Set).
+
+#### Resize/Edit Interaction Gaps
+- [ ] `RQ-023` Close Visual Resize gap: no resize handles on objects. Size changes only via AI command or property panel (if exists).
+- [ ] `RQ-024` Close Inline Text Edit gap: double-click works but single-click to edit text on sticky notes would be better UX.
+
+### 2) Refactoring
+- [ ] `RF-001` Centralize object patch write path so metadata (`updatedAt`, `updatedBy`, `version`) cannot drift across create/patch/delete.
+- [ ] `RF-002` Introduce explicit selection model (`selectedIds`) to support multi-select/bulk ops cleanly.
+- [ ] `RF-003` Separate realtime transport concerns (presence, object sync, reconnect state) from rendering concerns in `BoardPage`.
+- [ ] `RF-004` Align AI tool registry and executor handlers so declared tools and executable handlers stay 1:1.
+
+### 3) Tests
+
+#### Existing Requirement Tests
+- [ ] `TS-001` Keep `app/e2e/requirements-collab-parity.spec.ts` as FR-9 sync contract (create + move cross-browser).
+- [ ] `TS-002` Keep `app/e2e/requirements-collab-parity.spec.ts` as FR-14 refresh consistency contract.
+- [ ] `TS-003` Keep `app/e2e/requirements-collab-parity.spec.ts` as FR-19 collaborator AI visibility contract.
+- [ ] `TS-004` Keep `app/e2e/requirements-object-ops-gap.spec.ts` as FR-24 visible duplicate action contract.
+- [ ] `TS-005` Keep `app/e2e/requirements-object-ops-gap.spec.ts` as FR-25 copy/paste style+offset contract.
+- [ ] `TS-006` Keep `app/e2e/requirements-object-ops-gap.spec.ts` as FR-7 multi-select bulk-delete contract.
+- [ ] `TS-007` Keep `app/e2e/requirements-reconnect-ux.spec.ts` as FR-41 reconnect/sync UX contract.
+- [ ] `TS-008` Keep `functions/test/requirements-tool-schema.test.js` as FR-17 tool-schema completeness contract.
+- [ ] `TS-009` Keep `app/test/requirements-conflict-model.test.mjs` as FR-32 timestamp authority guardrail.
+- [ ] `TS-010` Keep `functions/test/requirements-tool-execution-parity.test.js` as FR-18 tool execution parity contract.
+
+#### Additional G4 PDF Gap Tests
+- [ ] `TS-011` Add test for G4 board create UI (RQ-011) - board with name/description.
+- [ ] `TS-012` Add test for G4 board list display (RQ-012) - switcher shows boards.
+- [ ] `TS-013` Add test for G4 sticky color count (RQ-013) - exactly 5 colors, not 6.
+- [ ] `TS-014` Add test for G4 command history (RQ-014) - panel shows past commands.
+
+#### Multi-Select Interaction Tests (FR-7)
+- [ ] `TS-015` Add test for shift+click multi-select (RQ-015) - toggle selection.
+- [ ] `TS-016` Add test for drag-box selection (RQ-016) - marquee select multiple.
+- [ ] `TS-017` Add test for visual selection indicators (RQ-017) - all selected show outline.
+- [ ] `TS-018` Add test for bulk move (RQ-018) - drag selected group moves all.
+- [ ] `TS-019` Add test for bulk duplicate (RQ-020) - duplicate copies all selected.
+- [ ] `TS-020` Add test for bulk color change (RQ-021) - color applies to all selected.
+
+#### Resize/Edit UX Tests
+- [ ] `TS-021` Add test for visual resize handles (RQ-023) - drag corner to resize object.
+- [ ] `TS-022` Add test for single-click text edit (RQ-024) - click sticky to edit text.
+
+### 4) Lean Code
+- [ ] `LN-001` Remove dead paths and duplicate command parsing branches once FR gaps are closed.
+- [ ] `LN-002` Keep test helpers composable and minimal; avoid per-spec custom utilities when shared helpers exist.
+
+### 5) No Overengineering
+- [ ] `NG-001` Prefer smallest viable fixes for FR-7/FR-24/FR-41 before any architecture expansion.
+- [ ] `NG-002` Do not introduce CRDT/full transport rewrite until current PRD gaps are green.
+
+### 6) High Rating
+- [ ] `HR-001` Require every PRD FR to be mapped to either a passing test or an explicit deferred decision in `DECISIONS.md`.
+- [ ] `HR-002` Raise performance thresholds/tests to match PRD numbers where currently looser.
+
+### 7) Beautiful Code
+- [ ] `BC-001` Keep naming consistent (`sticky`, `shape`, `frame`, `connector`) across UI, types, and AI tool layers.
+- [ ] `BC-002` Keep side-effect boundaries explicit: render code should not own transport mutation logic.
+
+### 8) 1 Test for 1 Feature
+- [ ] `OT-001` Maintain single-feature assertion scope per new requirement test (no bundled multi-requirement tests).
+- [ ] `OT-002` Ensure each requirement test title includes FR/AC identifier for auditability.
+
+### 9) No Redundancies
+- [ ] `NR-001` Deduplicate overlapping E2E assertions between legacy regression specs and new requirement-gap specs.
+- [ ] `NR-002` Consolidate repeated auth/bootstrap logic via helper usage instead of per-file duplication.
 
 ## Dependency Map
 - T-004 blocked T-005, T-006, T-007.
