@@ -5,10 +5,10 @@ import { fetchBoardObjects, newestObjectByType, type BoardObject } from './helpe
 
 const APP_URL = process.env.PLAYWRIGHT_BASE_URL || 'https://mvp-1-collab-board.web.app'
 
-test.describe('Shape editing', () => {
+test.describe('Sticky shape editing', () => {
   test.setTimeout(180_000)
 
-  test('edits shape text inline and changes shape type', async ({ page }) => {
+  test('edits sticky text inline and changes sticky shape type', async ({ page }) => {
     const user = await createTempUser()
     const boardId = `pw-shape-edit-${Date.now()}`
 
@@ -17,19 +17,19 @@ test.describe('Shape editing', () => {
       await page.goto(`${APP_URL}/b/${boardId}`)
       await expect(page.locator('.board-stage')).toBeVisible()
 
-      await page.locator('button[title="Add rectangle (R)"]').click()
+      await page.locator('button[title="Add sticky note (S)"]').click()
 
-      let newestShape: BoardObject | null = null
+      let newestSticky: BoardObject | null = null
       await expect
         .poll(async () => {
           const objects = await fetchBoardObjects(boardId, user.idToken)
-          newestShape = newestObjectByType(objects, 'shape')
-          return Boolean(newestShape)
+          newestSticky = newestObjectByType(objects, 'stickyNote')
+          return Boolean(newestSticky)
         })
         .toBe(true)
 
-      if (!newestShape || !newestShape.position || !newestShape.size) {
-        throw new Error('Shape object not found after create')
+      if (!newestSticky || !newestSticky.position || !newestSticky.size) {
+        throw new Error('Sticky note object not found after create')
       }
 
       const canvasBox = await page.locator('.board-stage canvas').first().boundingBox()
@@ -37,22 +37,22 @@ test.describe('Shape editing', () => {
         throw new Error('Canvas bounds unavailable')
       }
 
-      const targetX = canvasBox.x + (newestShape.position.x ?? 0) + ((newestShape.size.width ?? 180) / 2)
-      const targetY = canvasBox.y + (newestShape.position.y ?? 0) + ((newestShape.size.height ?? 110) / 2)
+      const targetX = canvasBox.x + (newestSticky.position.x ?? 0) + ((newestSticky.size.width ?? 180) / 2)
+      const targetY = canvasBox.y + (newestSticky.position.y ?? 0) + ((newestSticky.size.height ?? 110) / 2)
 
       await page.mouse.dblclick(targetX, targetY)
       await expect(page.locator('.inline-editor-textarea')).toBeVisible()
 
-      const shapeText = `Shape text ${Date.now()}`
-      await page.locator('.inline-editor-textarea').fill(shapeText)
+      const stickyText = `Sticky text ${Date.now()}`
+      await page.locator('.inline-editor-textarea').fill(stickyText)
       await page.mouse.click(canvasBox.x + 20, canvasBox.y + 20)
 
       await expect
         .poll(async () => {
           const objects = await fetchBoardObjects(boardId, user.idToken)
-          return objects.find((object) => object.id === newestShape?.id)?.text ?? ''
+          return objects.find((object) => object.id === newestSticky?.id)?.text ?? ''
         })
-        .toBe(shapeText)
+        .toBe(stickyText)
 
       await page.mouse.click(targetX, targetY)
       await expect(page.getByTestId('shape-type-picker')).toBeVisible()
@@ -61,7 +61,7 @@ test.describe('Shape editing', () => {
       await expect
         .poll(async () => {
           const objects = await fetchBoardObjects(boardId, user.idToken)
-          return objects.find((object) => object.id === newestShape?.id)?.shapeType ?? ''
+          return objects.find((object) => object.id === newestSticky?.id)?.shapeType ?? ''
         })
         .toBe('circle')
 
@@ -69,7 +69,7 @@ test.describe('Shape editing', () => {
       await expect
         .poll(async () => {
           const objects = await fetchBoardObjects(boardId, user.idToken)
-          return objects.find((object) => object.id === newestShape?.id)?.shapeType ?? ''
+          return objects.find((object) => object.id === newestSticky?.id)?.shapeType ?? ''
         })
         .toBe('diamond')
     } finally {

@@ -58,7 +58,7 @@ test.describe('AI command UI', () => {
     await expect
       .poll(async () => {
         const objects = await fetchBoardObjects(boardId, user.idToken)
-        return objects.some((object) => object.type === 'shape' && object.shapeType === 'circle')
+        return objects.some((object) => object.type === 'stickyNote' && object.shapeType === 'circle')
       })
       .toBe(true)
   })

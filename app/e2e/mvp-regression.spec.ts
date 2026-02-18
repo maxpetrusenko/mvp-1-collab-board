@@ -21,7 +21,6 @@ test.describe('MVP regression', () => {
 
       const initialObjects = await fetchBoardObjects(boardId, user.idToken)
       const initialStickyCount = countByType(initialObjects, 'stickyNote')
-      const initialShapeCount = countByType(initialObjects, 'shape')
 
       await page.locator('button[title="Add sticky note (S)"]').click()
 
@@ -63,32 +62,34 @@ test.describe('MVP regression', () => {
         })
         .not.toBe(initialStickyPosition)
 
-      await page.locator('button[title="Add rectangle (R)"]').click()
+      await page.mouse.click(dragStartX + 160, dragStartY + 100)
+      await expect(page.getByTestId('shape-type-picker')).toBeVisible()
+      await page.locator('button[title="Set shape to Circle"]').click()
 
       await expect
         .poll(async () => {
           const objects = await fetchBoardObjects(boardId, user.idToken)
-          return countByType(objects, 'shape')
+          return objects.find((object) => object.id === newestSticky.id)?.shapeType ?? ''
         })
-        .toBe(initialShapeCount + 1)
+        .toBe('circle')
 
       await page.locator('button[title="Undo (Cmd+Z)"]').click()
 
       await expect
         .poll(async () => {
           const objects = await fetchBoardObjects(boardId, user.idToken)
-          return countByType(objects, 'shape')
+          return objects.find((object) => object.id === newestSticky.id)?.shapeType ?? 'rectangle'
         })
-        .toBe(initialShapeCount)
+        .toBe('rectangle')
 
       await page.locator('button[title="Redo (Cmd+Shift+Z)"]').click()
 
       await expect
         .poll(async () => {
           const objects = await fetchBoardObjects(boardId, user.idToken)
-          return countByType(objects, 'shape')
+          return objects.find((object) => object.id === newestSticky.id)?.shapeType ?? ''
         })
-        .toBe(initialShapeCount + 1)
+        .toBe('circle')
     } finally {
       await deleteTempUser(user.idToken)
     }

@@ -69,7 +69,6 @@ test.describe('CollabBoard Authenticated', () => {
   test('create buttons exist', async ({ page }) => {
     await expect(page.locator('button[title="Add sticky note (S)"]')).toBeVisible()
     await expect(page.locator('button[title="Add frame (F)"]')).toBeVisible()
-    await expect(page.locator('button[title="Add rectangle (R)"]')).toBeVisible()
     await expect(page.locator('button[title="Add connector (C)"]')).toBeVisible()
     await expect(page.locator('button[title="Undo (Cmd+Z)"]')).toBeVisible()
     await expect(page.locator('[data-testid="export-viewport-png"]')).toBeVisible()

@@ -63,39 +63,41 @@ test.describe('Color changes', () => {
       .toBe('#93c5fd')
   })
 
-  test('changes shape color from swatch palette', async ({ page }) => {
+  test('changes sticky shape and color from swatch palette', async ({ page }) => {
     if (!user) {
       throw new Error('Shared test user unavailable')
     }
-    const boardId = `pw-color-shape-${Date.now()}`
+    const boardId = `pw-color-sticky-shape-${Date.now()}`
 
     await loginWithEmail(page, APP_URL, user.email, user.password)
     await page.goto(`${APP_URL}/b/${boardId}`)
     await expect(page.locator('.board-stage')).toBeVisible()
-    await page.locator('button[title="Add rectangle (R)"]').click()
+    await page.locator('button[title="Add sticky note (S)"]').click()
 
-    let shape: BoardObject | null = null
+    let sticky: BoardObject | null = null
     await expect
       .poll(async () => {
         const objects = await fetchBoardObjects(boardId, user.idToken)
-        shape = newestObjectByType(objects, 'shape')
-        return shape?.id || ''
+        sticky = newestObjectByType(objects, 'stickyNote')
+        return sticky?.id || ''
       })
       .not.toBe('')
 
-    if (!shape) {
-      throw new Error('Shape not created')
+    if (!sticky) {
+      throw new Error('Sticky note not created')
     }
 
-    await clickObjectCenter(page, shape)
-    await page.getByLabel('Set shape color to #67e8f9').click()
+    await clickObjectCenter(page, sticky)
+    await page.locator('button[title="Set shape to Circle"]').click()
+    await page.getByLabel('Set stickyNote color to #93c5fd').click()
 
     await expect
       .poll(async () => {
         const objects = await fetchBoardObjects(boardId, user.idToken)
-        return objects.find((object) => object.id === shape?.id)?.color || ''
+        const latestSticky = objects.find((object) => object.id === sticky?.id)
+        return `${latestSticky?.shapeType || ''}:${latestSticky?.color || ''}`
       })
-      .toBe('#67e8f9')
+      .toBe('circle:#93c5fd')
   })
 
   test('shows all six sticky color options when sticky is selected', async ({ page }) => {
