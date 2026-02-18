@@ -2137,8 +2137,9 @@ export const BoardPage = () => {
                       onDblClick={() => {
                         startInlineEdit(boardObject, 'text')
                       }}
-                      onDragStart={() => {
-                        liveDragPositionsRef.current[boardObject.id] = position
+                      onDragStart={(event) => {
+                        // Store actual Konva position to avoid jumps if ref has stale data
+                        liveDragPositionsRef.current[boardObject.id] = { x: event.target.x(), y: event.target.y() }
                         setDraggingObjectId(boardObject.id)
                       }}
                       onDragMove={(event) => {
@@ -2455,14 +2456,15 @@ export const BoardPage = () => {
                       onDblClick={() => {
                         startInlineEdit(boardObject, 'title')
                       }}
-                      onDragStart={() => {
-                        liveDragPositionsRef.current[boardObject.id] = position
+                      onDragStart={(event) => {
+                        // Store actual Konva position to avoid jumps if ref has stale data
+                        liveDragPositionsRef.current[boardObject.id] = { x: event.target.x(), y: event.target.y() }
                         setDraggingObjectId(boardObject.id)
                         const bounds = {
-                          left: position.x,
-                          top: position.y,
-                          right: position.x + boardObject.size.width,
-                          bottom: position.y + boardObject.size.height,
+                          left: event.target.x(),
+                          top: event.target.y(),
+                          right: event.target.x() + boardObject.size.width,
+                          bottom: event.target.y() + boardObject.size.height,
                         }
                         const members = objectsRef.current
                           .filter((candidate) => candidate.id !== boardObject.id && candidate.type !== 'connector')
@@ -2587,8 +2589,9 @@ export const BoardPage = () => {
                     onDblClick={() => {
                       startInlineEdit(boardObject, 'text')
                     }}
-                    onDragStart={() => {
-                      liveDragPositionsRef.current[boardObject.id] = position
+                    onDragStart={(event) => {
+                      // Store actual Konva position to avoid jumps if ref has stale data
+                      liveDragPositionsRef.current[boardObject.id] = { x: event.target.x(), y: event.target.y() }
                       setDraggingObjectId(boardObject.id)
                     }}
                     onDragMove={(event) => {
