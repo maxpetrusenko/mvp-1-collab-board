@@ -12,6 +12,7 @@ CollabBoard AI is a real-time collaborative whiteboard where authenticated users
 - Deliver stable multiplayer collaboration (2+ users, target 5+ concurrent users).
 - Deliver AI board agent with 6+ command types and shared result visibility.
 - Ship publicly accessible deployment by final deadline.
+- Produce defensible accessibility baseline evidence (keyboard, focus, contrast) that also helps with regulated/public-sector evaluations.
 
 ## 3) Non-Goals (for this sprint)
 - Enterprise RBAC and admin console.
@@ -43,7 +44,7 @@ CollabBoard AI is a real-time collaborative whiteboard where authenticated users
 - FR-5: At least one shape type in MVP; full pass targets rectangle/circle/line.
 - FR-6: Users can create, move, edit, delete, duplicate, and copy/paste objects.
 - FR-7: Support single-select and multi-select.
-- FR-8: Support frames/connectors/text elements in post-MVP phase.
+- FR-8: Support frames/connectors/text elements.
 
 ### 6.3 Realtime Collaboration
 - FR-9: Object changes sync instantly across users.
@@ -63,7 +64,7 @@ CollabBoard AI is a real-time collaborative whiteboard where authenticated users
 ### 6.5 Board Access and Sharing
 - FR-20: Each board has canonical share URL pattern `/b/{boardId}`.
 - FR-21: Opening share URL requires authentication; unauthenticated users are redirected to sign in.
-- FR-22: Share URL resolves board route, while edit rights are still permission-checked.
+- FR-22: Share URL resolves board route with role-aware collaboration (`edit` or `read-only`), and only owner/editor access can mutate objects or run AI commands.
 
 ### 6.6 Object Operation UX Contracts
 - FR-23: Delete selected objects via `Delete`/`Backspace` and visible UI action.

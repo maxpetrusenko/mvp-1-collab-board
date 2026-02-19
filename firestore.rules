@@ -5,11 +5,83 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    match /boards/{boardId} {
-      allow read, write: if isSignedIn();
+    function boardPath(boardId) {
+      return /databases/$(database)/documents/boards/$(boardId);
+    }
 
-      match /{document=**} {
-        allow read, write: if isSignedIn();
+    function boardExists(boardId) {
+      return exists(boardPath(boardId));
+    }
+
+    function boardOwnerId(boardId) {
+      let data = get(boardPath(boardId)).data;
+      return data.ownerId is string ? data.ownerId : data.createdBy;
+    }
+
+    function boardSharedWith(boardId) {
+      let data = get(boardPath(boardId)).data;
+      return data.sharedWith is list ? data.sharedWith : [];
+    }
+
+    function boardSharedRoles(boardId) {
+      let data = get(boardPath(boardId)).data;
+      return data.sharedRoles is map ? data.sharedRoles : {};
+    }
+
+    function boardSharedRole(boardId, userId) {
+      let roles = boardSharedRoles(boardId);
+      return roles[userId] is string ? roles[userId] : "";
+    }
+
+    function hasBoardAccess(boardId) {
+      return isSignedIn() &&
+        boardExists(boardId) &&
+        (boardOwnerId(boardId) == request.auth.uid || request.auth.uid in boardSharedWith(boardId));
+    }
+
+    function hasBoardEditAccess(boardId) {
+      return isSignedIn() &&
+        boardExists(boardId) &&
+        (boardOwnerId(boardId) == request.auth.uid ||
+          (request.auth.uid in boardSharedWith(boardId) && boardSharedRole(boardId, request.auth.uid) != "view"));
+    }
+
+    function isBoardOwner(boardId) {
+      return isSignedIn() && boardExists(boardId) && boardOwnerId(boardId) == request.auth.uid;
+    }
+
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    match /boards/{boardId} {
+      allow read: if hasBoardAccess(boardId);
+      allow create: if isSignedIn() &&
+        request.resource.data.id == boardId &&
+        request.resource.data.createdBy == request.auth.uid &&
+        request.resource.data.ownerId == request.auth.uid &&
+        request.resource.data.sharedWith is list &&
+        request.resource.data.sharedRoles is map;
+      allow update, delete: if isBoardOwner(boardId);
+
+      match /objects/{objectId} {
+        allow read: if hasBoardAccess(boardId);
+        allow write: if hasBoardEditAccess(boardId);
+      }
+
+      match /events/{eventId} {
+        allow read: if hasBoardAccess(boardId);
+        allow write: if hasBoardEditAccess(boardId);
+      }
+
+      match /aiCommands/{commandId} {
+        allow read: if hasBoardAccess(boardId);
+        allow write: if hasBoardEditAccess(boardId);
+      }
+
+      match /system/{documentId} {
+        allow read, write: if isBoardOwner(boardId);
       }
     }
   }

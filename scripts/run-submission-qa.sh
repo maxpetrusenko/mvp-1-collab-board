@@ -18,6 +18,8 @@ required_markdown=(
   "docs/SUBMISSION_PACKAGE.md"
   "docs/AI_DEVELOPMENT_LOG.md"
   "docs/AI_COST_ANALYSIS.md"
+  "docs/ACCESSIBILITY_AUDIT.md"
+  "docs/VPAT_DRAFT.md"
 )
 
 required_pdfs=(
@@ -29,6 +31,8 @@ required_pdfs=(
   "submission/SUBMISSION_PACKAGE.pdf"
   "submission/AI_DEVELOPMENT_LOG.pdf"
   "submission/AI_COST_ANALYSIS.pdf"
+  "submission/ACCESSIBILITY_AUDIT.pdf"
+  "submission/VPAT_DRAFT.pdf"
 )
 
 required_artifacts=(

@@ -39,6 +39,7 @@ const STICKY_SHAPE_SIZES = {
   circle: { width: 130, height: 130 },
   diamond: { width: 170, height: 120 },
   triangle: { width: 170, height: 120 },
+  line: { width: 220, height: 24 },
 }
 
 const normalizeShapeType = (rawShapeType, fallback = 'rectangle') => {
@@ -46,9 +47,11 @@ const normalizeShapeType = (rawShapeType, fallback = 'rectangle') => {
   if (normalized === 'circle') return 'circle'
   if (normalized === 'diamond' || normalized === 'rhombus' || normalized === 'romb') return 'diamond'
   if (normalized === 'triangle') return 'triangle'
+  if (normalized === 'line' || normalized === 'arrow') return 'line'
   if (normalized === 'rectangle' || normalized === 'box' || normalized === 'shape') return 'rectangle'
   return fallback
 }
+const normalizeConnectorStyle = (rawStyle) => (String(rawStyle || '').toLowerCase().trim() === 'line' ? 'line' : 'arrow')
 
 const toColor = (rawColor, fallback) => {
   if (!rawColor) return fallback
@@ -82,6 +85,18 @@ const isOrganizeByColorCommand = (lowerCommand) =>
   (lowerCommand.includes('group') && lowerCommand.includes('color')) ||
   (lowerCommand.includes('sort') && lowerCommand.includes('color'))
 const isKnownColor = (value) => Boolean(value && COLOR_MAP[String(value).toLowerCase().trim()])
+const NUMBER_WORD_MAP = {
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+}
 
 const stripWrappingQuotes = (value) => {
   const trimmed = String(value || '').trim()
@@ -111,13 +126,56 @@ const extractColorAndText = (raw) => {
   }
 }
 
+const inferStickyShapeType = (command) => {
+  const lower = normalizeCommand(command).toLowerCase()
+  if (/\bcircle\b/.test(lower)) return 'circle'
+  if (/\b(?:diamond|rhombus|romb)\b/.test(lower)) return 'diamond'
+  if (/\btriangle\b/.test(lower)) return 'triangle'
+  return 'rectangle'
+}
+
+const parseRequestedStickyCount = (command) => {
+  const lower = normalizeCommand(command).toLowerCase()
+  const countMatch = lower.match(
+    /\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:sticky(?:\s*note)?|sticker|note)s?\b/,
+  )
+  if (!countMatch) {
+    return 1
+  }
+
+  const token = countMatch[1]
+  const numericValue = /^\d+$/.test(token) ? Number(token) : NUMBER_WORD_MAP[token] || 1
+  return Math.min(10, Math.max(1, numericValue))
+}
+
+const parseExplicitStickyTexts = (command) => {
+  const normalized = normalizeCommand(command)
+  const quoted = [...normalized.matchAll(/["']([^"']{1,120})["']/g)]
+    .map((match) => sanitizeText(match[1]))
+    .filter(Boolean)
+  if (quoted.length >= 2) {
+    return quoted.slice(0, 10)
+  }
+
+  const pairMatch = normalized.match(
+    /\bone\b[^]*?\bsay(?:s)?\b\s+(.+?)\s+\banother\b[^]*?\bsay(?:s)?\b\s+(.+)$/i,
+  )
+  if (pairMatch) {
+    const first = sanitizeText(stripWrappingQuotes(pairMatch[1]))
+    const second = sanitizeText(stripWrappingQuotes(pairMatch[2]))
+    return [first, second].filter(Boolean)
+  }
+
+  return []
+}
+
 const parseStickyCommand = (command) => {
   const normalized = normalizeCommand(command)
   if (!/^(?:add|create)\b/i.test(normalized)) {
     return null
   }
 
-  const stickyMarker = normalized.match(/\b(?:sticky(?:\s*note)?|sticker)s?\b/i)
+  const stickyMarker = normalized.match(/\b(?:sticky(?:\s*note)?|sticker|note)s?\b/i)
   if (!stickyMarker) {
     return null
   }
@@ -153,16 +211,224 @@ const parseStickyCommand = (command) => {
     colorCandidate = parsed.color
   }
 
-  if (!parsed.text) {
-    return { color: undefined, text: 'New sticky note' }
+  const explicitTexts = parseExplicitStickyTexts(normalized)
+  const requestedCount = parseRequestedStickyCount(normalized)
+  const count = explicitTexts.length > 0 ? explicitTexts.length : requestedCount
+  const shapeType = inferStickyShapeType(normalized)
+
+  if (!parsed.text && explicitTexts.length === 0) {
+    return {
+      color: undefined,
+      shapeType,
+      count,
+      texts: Array.from({ length: count }, (_, index) =>
+        count > 1 ? `Note ${index + 1}` : 'New sticky note',
+      ),
+    }
   }
 
-  return { color: colorCandidate, text: sanitizeText(parsed.text) || 'New sticky note' }
+  if (explicitTexts.length > 0) {
+    return {
+      color: colorCandidate,
+      shapeType,
+      count,
+      texts: explicitTexts,
+    }
+  }
+
+  const fallbackText = sanitizeText(parsed.text) || 'New sticky note'
+  return {
+    color: colorCandidate,
+    shapeType,
+    count,
+    texts:
+      count === 1
+        ? [fallbackText]
+        : Array.from({ length: count }, (_, index) =>
+            fallbackText === 'New sticky note' ? `Note ${index + 1}` : `${fallbackText} ${index + 1}`,
+          ),
+  }
 }
 
 const getObjectsRef = (boardId) => db.collection('boards').doc(boardId).collection('objects')
 const getCommandsRef = (boardId) => db.collection('boards').doc(boardId).collection('aiCommands')
 const getSystemRef = (boardId) => db.collection('boards').doc(boardId).collection('system').doc('ai-lock')
+const getBoardRef = (boardId) => db.collection('boards').doc(boardId)
+
+const normalizeSharedWith = (candidate, ownerId) =>
+  Array.isArray(candidate)
+    ? candidate
+        .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+        .filter((entry) => entry.length > 0 && entry !== ownerId)
+    : []
+
+const normalizeSharedRoles = (candidate, sharedWith) => {
+  const normalized = {}
+  if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+    Object.entries(candidate).forEach(([userId, roleValue]) => {
+      if (!sharedWith.includes(userId)) {
+        return
+      }
+      normalized[userId] = roleValue === 'view' ? 'view' : 'edit'
+    })
+  }
+  sharedWith.forEach((userId) => {
+    if (normalized[userId] !== 'view' && normalized[userId] !== 'edit') {
+      normalized[userId] = 'edit'
+    }
+  })
+  return normalized
+}
+
+const normalizeBoardMeta = (boardId, data) => {
+  const ownerIdCandidate =
+    typeof data?.ownerId === 'string' && data.ownerId.trim()
+      ? data.ownerId.trim()
+      : ''
+  const createdByCandidate =
+    typeof data?.createdBy === 'string' && data.createdBy.trim() ? data.createdBy.trim() : ''
+  const ownerId = ownerIdCandidate || createdByCandidate
+  const createdBy = createdByCandidate || ownerId
+  const sharedWith = normalizeSharedWith(data?.sharedWith, ownerId)
+  const sharedRoles = normalizeSharedRoles(data?.sharedRoles, sharedWith)
+
+  return {
+    id: String(data?.id || boardId),
+    name: typeof data?.name === 'string' && data.name.trim() ? data.name.trim() : `Board ${boardId.slice(0, 8)}`,
+    description: typeof data?.description === 'string' ? data.description : '',
+    createdBy,
+    ownerId,
+    sharedWith,
+    sharedRoles,
+  }
+}
+
+const canUserAccessBoard = (boardMeta, userId) =>
+  Boolean(boardMeta?.ownerId === userId || boardMeta?.sharedWith?.includes(userId))
+
+const canUserEditBoard = (boardMeta, userId) => {
+  if (boardMeta?.ownerId === userId) {
+    return true
+  }
+  if (!boardMeta?.sharedWith?.includes(userId)) {
+    return false
+  }
+  return boardMeta?.sharedRoles?.[userId] !== 'view'
+}
+
+const ensureBoardAccess = async ({ boardId, userId, createIfMissing = false }) => {
+  const boardRef = getBoardRef(boardId)
+  const boardSnap = await boardRef.get()
+
+  if (!boardSnap.exists) {
+    if (!createIfMissing) {
+      return { ok: false, reason: 'Board not found', status: 404 }
+    }
+
+    await boardRef.set({
+      id: boardId,
+      name: `Board ${boardId.slice(0, 8)}`,
+      description: 'Untitled board',
+      ownerId: userId,
+      sharedWith: [],
+      sharedRoles: {},
+      createdBy: userId,
+      updatedBy: userId,
+      createdAt: nowMs(),
+      updatedAt: nowMs(),
+    })
+
+    return {
+      ok: true,
+      boardMeta: {
+        id: boardId,
+        name: `Board ${boardId.slice(0, 8)}`,
+        description: 'Untitled board',
+        createdBy: userId,
+        ownerId: userId,
+        sharedWith: [],
+        sharedRoles: {},
+      },
+    }
+  }
+
+  const boardMeta = normalizeBoardMeta(boardId, boardSnap.data())
+  if (!boardMeta.ownerId || !canUserAccessBoard(boardMeta, userId)) {
+    return { ok: false, reason: 'Access denied for this board', status: 403 }
+  }
+
+  return { ok: true, boardMeta, boardRef }
+}
+
+const resolveSingleCollaboratorFromSnapshot = (snapshot, lookupType) => {
+  if (!snapshot || snapshot.empty) {
+    return null
+  }
+  if (snapshot.docs.length > 1) {
+    throw new Error(`Multiple users match that ${lookupType}. Use a full email address`)
+  }
+  return snapshot.docs[0].id
+}
+
+const resolveCollaboratorId = async ({ email, userId }) => {
+  const trimmedUserId = typeof userId === 'string' ? userId.trim() : ''
+  if (trimmedUserId) {
+    return trimmedUserId
+  }
+
+  const normalizedInput = typeof email === 'string' ? email.trim().toLowerCase() : ''
+  if (!normalizedInput) {
+    throw new Error('Provide collaborator email or userId')
+  }
+
+  if (normalizedInput.includes('@')) {
+    try {
+      const collaborator = await admin.auth().getUserByEmail(normalizedInput)
+      return collaborator.uid
+    } catch (error) {
+      const exactSnapshot = await db
+        .collection('users')
+        .where('emailLower', '==', normalizedInput)
+        .limit(2)
+        .get()
+      const exactId = resolveSingleCollaboratorFromSnapshot(exactSnapshot, 'email')
+      if (exactId) {
+        return exactId
+      }
+      throw new Error('Collaborator email not found')
+    }
+  }
+
+  const exactUserDoc = await db.collection('users').doc(normalizedInput).get()
+  if (exactUserDoc.exists) {
+    return exactUserDoc.id
+  }
+
+  const displaySnapshot = await db
+    .collection('users')
+    .where('displayNameLower', '==', normalizedInput)
+    .limit(2)
+    .get()
+  const displayId = resolveSingleCollaboratorFromSnapshot(displaySnapshot, 'handle')
+  if (displayId) {
+    return displayId
+  }
+
+  const emailPrefixStart = `${normalizedInput}@`
+  const emailPrefixEnd = `${normalizedInput}@\uf8ff`
+  const prefixSnapshot = await db
+    .collection('users')
+    .where('emailLower', '>=', emailPrefixStart)
+    .where('emailLower', '<=', emailPrefixEnd)
+    .limit(2)
+    .get()
+  const prefixId = resolveSingleCollaboratorFromSnapshot(prefixSnapshot, 'handle')
+  if (prefixId) {
+    return prefixId
+  }
+
+  throw new Error('Collaborator not found. Use full email or exact handle')
+}
 
 const getBoardState = async (boardId) => {
   const snapshot = await getObjectsRef(boardId).limit(500).get()
@@ -189,6 +455,27 @@ const getObjectCenter = (object) => ({
   x: parseNumber(object?.position?.x, 0) + parseNumber(object?.size?.width, 0) / 2,
   y: parseNumber(object?.position?.y, 0) + parseNumber(object?.size?.height, 0) / 2,
 })
+const getObjectBounds = (object) => {
+  if (object?.type === 'connector') {
+    const startX = parseNumber(object?.start?.x, 0)
+    const startY = parseNumber(object?.start?.y, 0)
+    const endX = parseNumber(object?.end?.x, startX)
+    const endY = parseNumber(object?.end?.y, startY)
+    return {
+      x: Math.min(startX, endX),
+      y: Math.min(startY, endY),
+      width: Math.max(1, Math.abs(endX - startX)),
+      height: Math.max(1, Math.abs(endY - startY)),
+    }
+  }
+
+  return {
+    x: parseNumber(object?.position?.x, 0),
+    y: parseNumber(object?.position?.y, 0),
+    width: Math.max(1, parseNumber(object?.size?.width, 1)),
+    height: Math.max(1, parseNumber(object?.size?.height, 1)),
+  }
+}
 
 const writeObject = async ({ boardId, objectId, payload, merge = false }) => {
   const ref = getObjectsRef(boardId).doc(objectId)
@@ -235,15 +522,17 @@ const createShape = async (ctx, args) => {
   const id = crypto.randomUUID()
   const now = nowMs()
   const zIndex = getNextZIndex(ctx.state)
+  const shapeType = normalizeShapeType(args.type || args.shapeType, 'rectangle')
+  const defaultSize = STICKY_SHAPE_SIZES[shapeType] || { width: 220, height: 140 }
   const shape = {
     id,
     boardId: ctx.boardId,
     type: 'shape',
-    shapeType: args.type || 'rectangle',
+    shapeType,
     position: { x: parseNumber(args.x, 200), y: parseNumber(args.y, 200) },
     size: {
-      width: parseNumber(args.width, 220),
-      height: parseNumber(args.height, 140),
+      width: parseNumber(args.width, defaultSize.width),
+      height: parseNumber(args.height, defaultSize.height),
     },
     zIndex,
     color: toColor(args.color, '#93c5fd'),
@@ -296,6 +585,7 @@ const createConnector = async (ctx, args) => {
   const id = crypto.randomUUID()
   const now = nowMs()
   const zIndex = getNextZIndex(ctx.state)
+  const style = normalizeConnectorStyle(args.style)
   const fromObject = ctx.state.find((candidate) => candidate.id === args.fromId)
   const toObject = ctx.state.find((candidate) => candidate.id === args.toId)
   const start = fromObject
@@ -317,6 +607,7 @@ const createConnector = async (ctx, args) => {
     boardId: ctx.boardId,
     type: 'connector',
     color: toColor(args.color, '#0f172a'),
+    style,
     start,
     end,
     fromObjectId: fromObject?.id || null,
@@ -334,7 +625,13 @@ const createConnector = async (ctx, args) => {
 
   await writeObject({ boardId: ctx.boardId, objectId: id, payload: connector })
   ctx.state.push(connector)
-  ctx.executedTools.push({ tool: 'createConnector', id, fromId: args.fromId || null, toId: args.toId || null })
+  ctx.executedTools.push({
+    tool: 'createConnector',
+    id,
+    fromId: args.fromId || null,
+    toId: args.toId || null,
+    style,
+  })
   return connector
 }
 
@@ -380,7 +677,11 @@ const resizeObject = async (ctx, args) => {
 }
 
 const updateText = async (ctx, args) => {
-  const object = ctx.state.find((candidate) => candidate.id === args.objectId && candidate.type === 'stickyNote')
+  const object = ctx.state.find(
+    (candidate) =>
+      candidate.id === args.objectId &&
+      (candidate.type === 'stickyNote' || candidate.type === 'shape' || candidate.type === 'text'),
+  )
   if (!object) return null
 
   const nextVersion = (object.version || 0) + 1
@@ -453,6 +754,90 @@ const createRetrospectiveTemplate = async (ctx) => {
   }
 
   ctx.executedTools.push({ tool: 'createRetrospectiveTemplate' })
+}
+
+// Normalize rotation to 0-360 range
+const normalizeRotationDegrees = (degrees) => {
+  const normalized = degrees % 360
+  return normalized < 0 ? normalized + 360 : normalized
+}
+
+const rotateObject = async (ctx, args) => {
+  const object = ctx.state.find((candidate) => candidate.id === args.objectId)
+  if (!object) return null
+
+  const nextRotation = normalizeRotationDegrees(parseNumber(args.angle, 0))
+  const nextVersion = (object.version || 0) + 1
+  const updatedAt = nowMs()
+  const patch = {
+    rotation: nextRotation,
+    updatedAt,
+    updatedBy: ctx.userId,
+    version: nextVersion,
+  }
+
+  await writeObject({ boardId: ctx.boardId, objectId: object.id, payload: patch, merge: true })
+  Object.assign(object, patch)
+  ctx.executedTools.push({ tool: 'rotateObject', id: object.id, angle: nextRotation })
+  return object
+}
+
+const deleteObject = async (ctx, args) => {
+  const object = ctx.state.find((candidate) => candidate.id === args.objectId)
+  if (!object) return null
+
+  const updatedAt = nowMs()
+  const patch = {
+    deleted: true,
+    deletedAt: updatedAt,
+    deletedBy: ctx.userId,
+    updatedAt,
+    updatedBy: ctx.userId,
+  }
+
+  await writeObject({ boardId: ctx.boardId, objectId: object.id, payload: patch, merge: true })
+  Object.assign(object, patch)
+  // Remove from state array
+  const index = ctx.state.findIndex((o) => o.id === args.objectId)
+  if (index !== -1) {
+    ctx.state.splice(index, 1)
+  }
+  ctx.executedTools.push({ tool: 'deleteObject', id: object.id })
+  return { id: object.id, deleted: true }
+}
+
+const duplicateObject = async (ctx, args) => {
+  const source = ctx.state.find((candidate) => candidate.id === args.objectId)
+  if (!source) return null
+
+  const id = crypto.randomUUID()
+  const now = nowMs()
+  const zIndex = getNextZIndex(ctx.state)
+  const offsetX = parseNumber(args.offsetX, 30)
+  const offsetY = parseNumber(args.offsetY, 30)
+
+  const duplicate = {
+    ...source,
+    id,
+    boardId: ctx.boardId,
+    position: {
+      x: parseNumber(source.position?.x, 0) + offsetX,
+      y: parseNumber(source.position?.y, 0) + offsetY,
+    },
+    zIndex,
+    createdBy: ctx.userId,
+    createdAt: now,
+    updatedBy: ctx.userId,
+    updatedAt: now,
+    version: 1,
+    // Clear connection-specific fields for connectors
+    ...(source.type === 'connector' ? { fromObjectId: null, toObjectId: null } : {}),
+  }
+
+  await writeObject({ boardId: ctx.boardId, objectId: id, payload: duplicate })
+  ctx.state.push(duplicate)
+  ctx.executedTools.push({ tool: 'duplicateObject', id, sourceId: source.id })
+  return duplicate
 }
 
 const arrangeGrid = async (ctx, objects) => {
@@ -575,6 +960,68 @@ const organizeBoardByColor = async (ctx) => {
   ctx.executedTools.push({ tool: 'organizeBoardByColor', count: movable.length, groups: orderedGroups.length })
 }
 
+const spaceElementsEvenly = async (ctx, objects) => {
+  const movable = (objects || ctx.state).filter((item) => item.type !== 'connector')
+  if (movable.length < 3) {
+    ctx.executedTools.push({ tool: 'spaceElementsEvenly', count: movable.length })
+    return
+  }
+
+  const ordered = [...movable].sort((left, right) => left.position.x - right.position.x)
+  const firstX = ordered[0].position.x
+  const lastX = ordered[ordered.length - 1].position.x
+  const step = (lastX - firstX) / (ordered.length - 1 || 1)
+
+  for (let index = 0; index < ordered.length; index += 1) {
+    const object = ordered[index]
+    await moveObject(ctx, {
+      objectId: object.id,
+      x: Math.round(firstX + step * index),
+      y: object.position.y,
+    })
+  }
+
+  ctx.executedTools.push({ tool: 'spaceElementsEvenly', count: ordered.length })
+}
+
+const resizeFrameToFitContents = async (ctx, args = {}) => {
+  const frame = ctx.state.find((item) => item.type === 'frame' && (!args.frameId || item.id === args.frameId))
+  if (!frame) {
+    ctx.executedTools.push({ tool: 'resizeFrameToFitContents', count: 0 })
+    return null
+  }
+
+  const members = ctx.state.filter(
+    (item) => item.id !== frame.id && item.type !== 'connector' && item.type !== 'frame' && item.frameId === frame.id,
+  )
+  if (members.length === 0) {
+    ctx.executedTools.push({ tool: 'resizeFrameToFitContents', count: 0 })
+    return frame
+  }
+
+  const padding = 24
+  const bounds = members.map((member) => getObjectBounds(member))
+  const minX = Math.min(...bounds.map((item) => item.x))
+  const minY = Math.min(...bounds.map((item) => item.y))
+  const maxX = Math.max(...bounds.map((item) => item.x + item.width))
+  const maxY = Math.max(...bounds.map((item) => item.y + item.height))
+  const patch = {
+    position: { x: minX - padding, y: minY - padding },
+    size: {
+      width: Math.max(160, maxX - minX + padding * 2),
+      height: Math.max(120, maxY - minY + padding * 2),
+    },
+    updatedAt: nowMs(),
+    updatedBy: ctx.userId,
+    version: (frame.version || 0) + 1,
+  }
+
+  await writeObject({ boardId: ctx.boardId, objectId: frame.id, payload: patch, merge: true })
+  Object.assign(frame, patch)
+  ctx.executedTools.push({ tool: 'resizeFrameToFitContents', id: frame.id, count: members.length })
+  return frame
+}
+
 const synthesizeStickyThemes = async (ctx) => {
   const stickyNotes = ctx.state.filter((item) => item.type === 'stickyNote')
   if (stickyNotes.length === 0) {
@@ -629,17 +1076,29 @@ const runCommandPlan = async (ctx, command) => {
 
   const stickyCommand = parseStickyCommand(normalizedCommand)
   if (stickyCommand) {
-    await createStickyNote(ctx, {
-      text: stickyCommand.text,
-      color: toColor(stickyCommand.color, '#fde68a'),
-      x: 120,
-      y: 120,
-    })
+    const stickyCount = Math.min(10, Math.max(1, stickyCommand.count || stickyCommand.texts.length || 1))
+    for (let index = 0; index < stickyCount; index += 1) {
+      const stickyArgs = {
+        text: stickyCommand.texts[index] || `Note ${index + 1}`,
+        color: toColor(stickyCommand.color, '#fde68a'),
+        shapeType: stickyCommand.shapeType || 'rectangle',
+      }
+
+      if (stickyCount > 1) {
+        await createStickyNote(ctx, {
+          ...stickyArgs,
+          x: 120 + (index % 4) * 220,
+          y: 120 + Math.floor(index / 4) * 150,
+        })
+      } else {
+        await createStickyNote(ctx, stickyArgs)
+      }
+    }
     return
   }
 
   const shapeMatch = normalizedCommand.match(
-    /^(?:add|create)\s+(?:a|an)?\s*(?:(\w+)\s+)?(rectangle|box|shape|circle|diamond|rhombus|romb|triangle)(?:\s+at(?:\s+position)?\s*(-?\d+)\s*,\s*(-?\d+))?[.!?]?\s*$/i,
+    /^(?:add|create)\s+(?:a|an)?\s*(?:(\w+)\s+)?(rectangle|box|shape|circle|diamond|rhombus|romb|triangle|line)(?:\s+at(?:\s+position)?\s*(-?\d+)\s*,\s*(-?\d+))?[.!?]?\s*$/i,
   )
   if (shapeMatch) {
     const [, colorCandidate, rawShapeType, xRaw, yRaw] = shapeMatch
@@ -674,10 +1133,12 @@ const runCommandPlan = async (ctx, command) => {
   )
   if (connectorMatch) {
     const [, colorCandidate, fromId, toId] = connectorMatch
+    const styleCandidate = /\bline\b/i.test(normalizedCommand) ? 'line' : 'arrow'
     await createConnector(ctx, {
       color: colorCandidate,
       fromId: fromId || undefined,
       toId: toId || undefined,
+      style: styleCandidate,
     })
     return
   }
@@ -701,6 +1162,21 @@ const runCommandPlan = async (ctx, command) => {
   if (lower.includes('arrange') && lower.includes('grid')) {
     const stickyNotes = ctx.state.filter((item) => item.type === 'stickyNote')
     await arrangeGrid(ctx, stickyNotes)
+    return
+  }
+
+  if ((lower.includes('space') && lower.includes('even')) || lower.includes('evenly')) {
+    const movable = ctx.state.filter((item) => item.type !== 'connector')
+    await spaceElementsEvenly(ctx, movable)
+    return
+  }
+
+  if (
+    (lower.includes('resize') || lower.includes('fit')) &&
+    lower.includes('frame') &&
+    (lower.includes('content') || lower.includes('contents'))
+  ) {
+    await resizeFrameToFitContents(ctx)
     return
   }
 
@@ -768,7 +1244,7 @@ const runCommandPlan = async (ctx, command) => {
   }
 
   throw new Error(
-    'Unsupported command. Try: "add hello world sticker", "add rectangle", "add circle", "add diamond", "add frame", "add connector", "organize by color", "organize this board into groups", "summarize all stickies into themes", "arrange in grid", "create SWOT template", "retrospective", or "user journey map with 5 stages".',
+    'Unsupported command. Try: "add hello world sticker", "add rectangle", "add circle", "add diamond", "add line", "add frame", "add connector", "organize by color", "organize this board into groups", "space these elements evenly", "resize the frame to fit its contents", "summarize all stickies into themes", "arrange in grid", "create SWOT template", "retrospective", or "user journey map with 5 stages".',
   )
 }
 
@@ -820,9 +1296,8 @@ const executeViaLLM = async (ctx, command) => {
         break
 
       case 'createShape':
-        await createStickyNote(ctx, {
-          text: toolCall.arguments.text || 'New sticky note',
-          shapeType: toolCall.arguments.type || 'rectangle',
+        await createShape(ctx, {
+          type: toolCall.arguments.type || 'rectangle',
           width: toolCall.arguments.width,
           height: toolCall.arguments.height,
           color: toColor(toolCall.arguments.color, '#93c5fd'),
@@ -845,7 +1320,8 @@ const executeViaLLM = async (ctx, command) => {
         await createConnector(ctx, {
           fromId: toolCall.arguments.fromId,
           toId: toolCall.arguments.toId,
-          color: toColor(toolCall.arguments.color, '#0f172a')
+          color: toColor(toolCall.arguments.color, '#0f172a'),
+          style: toolCall.arguments.style,
         })
         break
 
@@ -857,11 +1333,30 @@ const executeViaLLM = async (ctx, command) => {
         })
         break
 
+      case 'resizeObject':
+        await resizeObject(ctx, {
+          objectId: toolCall.arguments.objectId,
+          width: toolCall.arguments.width,
+          height: toolCall.arguments.height
+        })
+        break
+
+      case 'updateText':
+        await updateText(ctx, {
+          objectId: toolCall.arguments.objectId,
+          newText: toolCall.arguments.newText || toolCall.arguments.text || ''
+        })
+        break
+
       case 'changeColor':
         await changeColor(ctx, {
           objectId: toolCall.arguments.objectId,
           color: toolCall.arguments.color
         })
+        break
+
+      case 'getBoardState':
+        ctx.state = await getBoardState(ctx.boardId)
         break
 
       case 'organizeBoardByColor':
@@ -883,6 +1378,18 @@ const executeViaLLM = async (ctx, command) => {
 
       case 'createRetrospectiveTemplate':
         await createRetrospectiveTemplate(ctx)
+        break
+
+      case 'rotateObject':
+        await rotateObject(ctx, toolCall.arguments)
+        break
+
+      case 'deleteObject':
+        await deleteObject(ctx, toolCall.arguments)
+        break
+
+      case 'duplicateObject':
+        await duplicateObject(ctx, toolCall.arguments)
         break
 
       default:
@@ -1007,7 +1514,9 @@ exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) =>
     return
   }
 
-  if (!req.path.endsWith('/ai/command')) {
+  const isAiCommandRoute = req.path.endsWith('/ai/command')
+  const isBoardShareRoute = req.path.endsWith('/boards/share')
+  if (!isAiCommandRoute && !isBoardShareRoute) {
     res.status(404).json({ error: 'Not found' })
     return
   }
@@ -1036,6 +1545,84 @@ exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) =>
 
     const boardId = String(req.body?.boardId || '').trim()
     const userId = decodedToken.uid
+
+    if (!boardId) {
+      res.status(400).json({ error: 'boardId is required' })
+      return
+    }
+
+    if (isBoardShareRoute) {
+      const action = String(req.body?.action || 'share').trim().toLowerCase()
+      const roleInput = String(req.body?.role || 'edit').trim().toLowerCase()
+      const requestedRole = roleInput === 'view' ? 'view' : roleInput === 'edit' ? 'edit' : null
+      const accessResult = await ensureBoardAccess({ boardId, userId, createIfMissing: false })
+      if (!accessResult.ok) {
+        res.status(accessResult.status || 403).json({ error: accessResult.reason || 'Access denied' })
+        return
+      }
+
+      const boardMeta = accessResult.boardMeta
+      if (!boardMeta || boardMeta.ownerId !== userId) {
+        res.status(403).json({ error: 'Only board owner can manage sharing' })
+        return
+      }
+
+      let collaboratorId = ''
+      try {
+        collaboratorId = await resolveCollaboratorId({
+          email: req.body?.email,
+          userId: req.body?.userId,
+        })
+      } catch (resolveError) {
+        const message = resolveError instanceof Error ? resolveError.message : 'Invalid collaborator'
+        res.status(400).json({ error: message })
+        return
+      }
+      if (!collaboratorId || collaboratorId === boardMeta.ownerId) {
+        res.status(400).json({ error: 'Invalid collaborator' })
+        return
+      }
+      if ((action === 'share' || action === 'add') && !requestedRole) {
+        res.status(400).json({ error: 'Invalid role. Use "edit" or "view".' })
+        return
+      }
+
+      const sharedWithSet = new Set(boardMeta.sharedWith)
+      const nextSharedRoles = { ...(boardMeta.sharedRoles || {}) }
+      if (action === 'revoke' || action === 'remove') {
+        sharedWithSet.delete(collaboratorId)
+        delete nextSharedRoles[collaboratorId]
+      } else {
+        sharedWithSet.add(collaboratorId)
+        nextSharedRoles[collaboratorId] = requestedRole || 'edit'
+      }
+
+      const nextSharedWith = [...sharedWithSet]
+      const normalizedSharedRoles = normalizeSharedRoles(nextSharedRoles, nextSharedWith)
+      await (accessResult.boardRef || getBoardRef(boardId)).set(
+        {
+          ownerId: boardMeta.ownerId,
+          sharedWith: nextSharedWith,
+          sharedRoles: normalizedSharedRoles,
+          updatedBy: userId,
+          updatedAt: nowMs(),
+        },
+        { merge: true },
+      )
+
+      res.status(200).json({
+        status: 'success',
+        boardId,
+        sharedWith: nextSharedWith,
+        sharedRoles: normalizedSharedRoles,
+        message:
+          action === 'revoke' || action === 'remove'
+            ? 'Collaborator removed from board'
+            : `Board shared successfully (${requestedRole || 'edit'} access). No invitation email is sent yet.`,
+      })
+      return
+    }
+
     const userDisplayName = String(req.body?.userDisplayName || decodedToken.name || '').trim()
     const command = sanitizeText(req.body?.command)
     commandForError = command
@@ -1043,8 +1630,18 @@ exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) =>
     boardIdForError = boardId
     clientCommandIdForError = clientCommandId
 
-    if (!boardId || !command) {
+    if (!command) {
       res.status(400).json({ error: 'boardId and command are required' })
+      return
+    }
+
+    const accessResult = await ensureBoardAccess({ boardId, userId, createIfMissing: true })
+    if (!accessResult.ok) {
+      res.status(accessResult.status || 403).json({ error: accessResult.reason || 'Access denied' })
+      return
+    }
+    if (!canUserEditBoard(accessResult.boardMeta, userId)) {
+      res.status(403).json({ error: 'You have view-only access to this board.' })
       return
     }
 
@@ -1162,5 +1759,10 @@ exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) =>
 exports.__test = {
   normalizeCommandForPlan,
   isOrganizeByColorCommand,
+  parseStickyCommand,
+  normalizeBoardMeta,
+  canUserAccessBoard,
+  canUserEditBoard,
+  normalizeSharedRoles,
 }
 // Tue Feb 17 18:22:00 EST 2026

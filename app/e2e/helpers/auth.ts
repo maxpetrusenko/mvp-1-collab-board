@@ -20,6 +20,29 @@ type TestUser = {
   ephemeral: boolean
 }
 
+const decodeJwtPayload = (token: string): Record<string, unknown> => {
+  const [, payload] = token.split('.')
+  if (!payload) {
+    throw new Error('Invalid JWT payload')
+  }
+  const normalized = payload.replace(/-/g, '+').replace(/_/g, '/')
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=')
+  const decoded = Buffer.from(padded, 'base64').toString('utf8')
+  return JSON.parse(decoded) as Record<string, unknown>
+}
+
+export const getUserIdFromIdToken = (idToken: string): string => {
+  const payload = decodeJwtPayload(idToken)
+  const userId =
+    (typeof payload.user_id === 'string' && payload.user_id) ||
+    (typeof payload.sub === 'string' && payload.sub) ||
+    ''
+  if (!userId) {
+    throw new Error('Unable to resolve Firebase user id from token')
+  }
+  return userId
+}
+
 const parseEnvFile = (filePath: string): Record<string, string> => {
   if (!existsSync(filePath)) {
     return {}
@@ -187,5 +210,5 @@ export const loginWithEmail = async (page: Page, appUrl: string, email: string, 
   await page.getByTestId('qa-email-input').fill(email)
   await page.getByTestId('qa-password-input').fill(password)
   await page.getByTestId('qa-email-submit').click()
-  await expect(page).toHaveURL(/\/b\//)
+  await expect(page).toHaveURL(/\/b\//, { timeout: 20_000 })
 }

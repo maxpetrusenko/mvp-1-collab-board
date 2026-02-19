@@ -22,6 +22,15 @@
 - **Scalability**: Does code scale? Perform well?
 - **Components**: React 17+ with types
 - **Reuse**: Pre-built solutions over scratch builds
+is this convention?
+is this best practice?
+find me a short 1-2 minute overview youtube video for it
+is this secure? 1-10
+is this easy to use? 1-10
+is this performant? 1-10
+is this have good ui\ux? 1-10
+can this be build cheap? 1-10
+what do i need to know about this stack?
 
 ### Tools & Agents
 - **Review**: Thinking Claude, Speed Cursor, Clarity Codex
@@ -43,15 +52,13 @@
 ```
 /docs/
 ├── PRESEARCH.md           # Phase 1-3 checklist
-├── PRD.md                 # Product requirements
+├── Requirements.md        # Product requirements
 ├── MVP.md                 # Minimum viable features
 ├── DECISIONS.md           # Defendable choices
 ├── DEMO_SCRIPT.md         # 3-5 min demo
 ├── AI_DEVELOPMENT_LOG.md  # 1-page dev log
 ├── AI_COST_ANALYSIS.md    # Dev spend + projections
 ├── SUBMISSION_PACKAGE.md  # Deliverables checklist
-├── TEST_EVIDENCE.md       # Test results
-├── YJS_SPIKE.md           # CRDT research
 └── DOCUMENTATION.md       # Architecture
 ```
 
@@ -141,7 +148,7 @@ Track: LLM costs, tokens in/out, API calls, other costs
 3. IP selection if hiring partner
 4. Cursor rules + skills setup
 5. OpenAI integration
-6. Aqua/Whisper for voice AI
+6. Submission artifact QA sweep
 
 ---
 

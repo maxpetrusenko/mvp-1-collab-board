@@ -1,5 +1,5 @@
 {
-  "timestamp": 1771354339,
+  "timestamp": 1771496477,
   "pass": true,
   "missingCount": 0,
   "failedUrls": 0,
@@ -45,6 +45,16 @@
       "exists": true
     },
     {
+      "kind": "markdown",
+      "path": "docs/ACCESSIBILITY_AUDIT.md",
+      "exists": true
+    },
+    {
+      "kind": "markdown",
+      "path": "docs/VPAT_DRAFT.md",
+      "exists": true
+    },
+    {
       "kind": "pdf",
       "path": "submission/PRESEARCH.pdf",
       "exists": true
@@ -82,6 +92,16 @@
     {
       "kind": "pdf",
       "path": "submission/AI_COST_ANALYSIS.pdf",
+      "exists": true
+    },
+    {
+      "kind": "pdf",
+      "path": "submission/ACCESSIBILITY_AUDIT.pdf",
+      "exists": true
+    },
+    {
+      "kind": "pdf",
+      "path": "submission/VPAT_DRAFT.pdf",
       "exists": true
     },
     {

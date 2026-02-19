@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
 
-import { defaultBoardId } from '../config/env'
 import { useAuth } from '../state/AuthContext'
 
 export const LoginPage = () => {
@@ -11,11 +10,15 @@ export const LoginPage = () => {
   const [password, setPassword] = useState('')
   const [emailError, setEmailError] = useState<string | null>(null)
   const [emailLoading, setEmailLoading] = useState(false)
+  const devAuthBypassEnabled = import.meta.env.DEV
 
-  const qaAuthEnabled = useMemo(() => new URLSearchParams(location.search).get('qaAuth') === '1', [location.search])
+  const qaAuthEnabled = useMemo(() => {
+    const qaAuthQueryEnabled = new URLSearchParams(location.search).get('qaAuth') === '1'
+    return import.meta.env.DEV || qaAuthQueryEnabled
+  }, [location.search])
 
   if (user) {
-    return <Navigate to={`/b/${defaultBoardId}`} replace />
+    return <Navigate to="/" replace />
   }
 
   return (
@@ -52,15 +55,11 @@ export const LoginPage = () => {
                 })
             }}
           >
-            <div className="qa-form-header">
-              <h2>QA Sign-In</h2>
-              <span className="qa-badge">Testing Only</span>
-            </div>
-            <label htmlFor="qa-email">Email address</label>
+            <label htmlFor="qa-email">{devAuthBypassEnabled ? 'Email or username' : 'Email address'}</label>
             <input
               id="qa-email"
               data-testid="qa-email-input"
-              type="email"
+              type={devAuthBypassEnabled ? 'text' : 'email'}
               placeholder="you@example.com"
               value={email}
               onChange={(event) => setEmail(event.target.value)}
@@ -82,7 +81,7 @@ export const LoginPage = () => {
               type="submit"
               className="button button-secondary"
               data-testid="qa-email-submit"
-              disabled={loading || emailLoading || !configured}
+              disabled={loading || emailLoading || (!configured && !devAuthBypassEnabled)}
             >
               {emailLoading ? 'Signing in…' : 'Sign In'}
             </button>

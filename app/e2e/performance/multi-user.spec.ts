@@ -7,7 +7,7 @@ import {
   writeCursorPresence,
 } from '../helpers/performance'
 
-const CURSOR_SYNC_SLA = { target: 200, warning: 400, critical: 1_000 }
+const CURSOR_SYNC_SLA = { target: 50, warning: 75, critical: 100 }
 
 const annotateSla = (
   testInfo: TestInfo,
@@ -49,7 +49,7 @@ const waitForPresenceMatch = async (args: {
 test.describe('Performance: Multi-user cursor sync', () => {
   test.setTimeout(180_000)
 
-  test('cursor sync latency remains within average and max critical bounds', async ({}, testInfo) => {
+  test('NFR-3: cursor sync latency remains within PRD target and max bounds', async (_context, testInfo) => {
     const boardId = `pw-perf-cursor-${Date.now()}`
     const firstUser = await createOrReuseTestUser()
     const secondUser = await createTempUser()
@@ -111,7 +111,7 @@ test.describe('Performance: Multi-user cursor sync', () => {
       annotateSla(testInfo, 'cursor-sync-average', averageMs, CURSOR_SYNC_SLA)
       annotateSla(testInfo, 'cursor-sync-max', maxMs, CURSOR_SYNC_SLA)
 
-      expect(averageMs).toBeLessThanOrEqual(400)
+      expect(averageMs).toBeLessThanOrEqual(CURSOR_SYNC_SLA.target)
       expect(maxMs).toBeLessThanOrEqual(CURSOR_SYNC_SLA.critical)
     } finally {
       await Promise.all([

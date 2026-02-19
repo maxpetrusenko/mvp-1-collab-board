@@ -1,6 +1,6 @@
 # CollabBoard Week 1 Submission Package
 
-Date: 2026-02-17
+Date: 2026-02-18
 Project: Gauntlet Cohort G4 - CollabBoard
 Repository: https://github.com/maxpetrusenko/mvp-1-collab-board
 
@@ -162,6 +162,15 @@ Note: No LLM token costs — AI uses pattern matching and direct Firestore write
 - This eliminates token costs and reduces latency to <500ms
 - Future LLM integration would add ~$0.01/command at current rates
 
+## 6.1) Accessibility Evidence PDFs
+Status: Complete
+- Accessibility audit source: `docs/ACCESSIBILITY_AUDIT.md`
+- VPAT draft source: `docs/VPAT_DRAFT.md`
+- Accessibility audit PDF: `submission/ACCESSIBILITY_AUDIT.pdf`
+- VPAT draft PDF: `submission/VPAT_DRAFT.pdf`
+- Accessibility audit URL: https://mvp-1-collab-board.web.app/submission/ACCESSIBILITY_AUDIT.pdf
+- VPAT draft URL: https://mvp-1-collab-board.web.app/submission/VPAT_DRAFT.pdf
+
 ## 7) Documentation Submission Format
 - This package is provided in Markdown and PDF.
 - PDF file: `SUBMISSION_PACKAGE.pdf`
@@ -176,6 +185,8 @@ Note: No LLM token costs — AI uses pattern matching and direct Firestore write
   - `SUBMISSION_PACKAGE.pdf`
   - `AI_DEVELOPMENT_LOG.pdf`
   - `AI_COST_ANALYSIS.pdf`
+  - `ACCESSIBILITY_AUDIT.pdf`
+  - `VPAT_DRAFT.pdf`
 
 ## 8) GitHub PAT Token Note
 - If repository automation cannot use existing auth, use a PAT with least privilege for repo read/write.

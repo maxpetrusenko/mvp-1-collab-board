@@ -65,7 +65,9 @@ Projected monthly costs:
 ### 2.5 Compliance and Regulatory
 - No healthcare scope in MVP.
 - Baseline privacy: least-privilege rules and no secrets in client runtime.
-- If later targeting enterprise/government contexts: SOC 2 controls and audit logging roadmap.
+- Accessibility baseline (sprint scope): keyboard operability, visible focus, and contrast evidence.
+- Note: this accessibility evidence is also relevant for regulated/public-sector evaluations.
+- If later targeting enterprise/government deployment: SOC 2 controls, ATO workflows, and formal audit packages.
 
 ### 2.6 Team and Skills
 - Execution baseline: TypeScript-first.
@@ -221,6 +223,10 @@ Mitigation:
   - Mitigation: strict tool schema validation and no arbitrary code execution.
 - Risk: leaked API keys.
   - Mitigation: server-only keys in environment secrets.
+
+### Accessibility Artifacts
+- `docs/ACCESSIBILITY_AUDIT.md`: checklist and evidence log for keyboard/focus/contrast/ARIA.
+- `docs/VPAT_DRAFT.md`: optional VPAT-style conformance report scaffold.
 
 ### Project Structure
 - `apps/web/` React whiteboard app

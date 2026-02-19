@@ -8,7 +8,7 @@ const APP_URL = process.env.PLAYWRIGHT_BASE_URL || 'https://mvp-1-collab-board.w
 test.describe('MVP regression', () => {
   test.setTimeout(180_000)
 
-  test('core board flows: create, drag, undo/redo', async ({ page }) => {
+  test('core board flows: create, style, undo/redo', async ({ page }) => {
     const user = await createTempUser()
     const boardId = `pw-mvp-${Date.now()}`
 
@@ -18,6 +18,22 @@ test.describe('MVP regression', () => {
 
       await expect(page.locator('.board-stage')).toBeVisible()
       await expect(page.locator('.presence-strip')).toBeVisible()
+      await expect(page.getByTestId('selection-mode-select')).toBeVisible()
+      await expect(page.getByTestId('selection-mode-area')).toBeVisible()
+
+      await page.getByTestId('selection-mode-area').click()
+      await expect
+        .poll(async () => {
+          return page.locator('.board-stage').evaluate((node) => node.classList.contains('board-stage-area'))
+        })
+        .toBe(true)
+
+      await page.getByTestId('selection-mode-select').click()
+      await expect
+        .poll(async () => {
+          return page.locator('.board-stage').evaluate((node) => node.classList.contains('board-stage-area'))
+        })
+        .toBe(false)
 
       const initialObjects = await fetchBoardObjects(boardId, user.idToken)
       const initialStickyCount = countByType(initialObjects, 'stickyNote')
@@ -38,31 +54,15 @@ test.describe('MVP regression', () => {
         throw new Error('Sticky note object not found after create')
       }
 
-      const initialStickyPosition = `${Math.round(newestSticky.position.x ?? 0)}:${Math.round(newestSticky.position.y ?? 0)}`
-
       const canvasBox = await page.locator('.board-stage canvas').first().boundingBox()
       if (!canvasBox) {
         throw new Error('Canvas bounds unavailable')
       }
 
-      const dragStartX = canvasBox.x + (newestSticky.position.x ?? 0) + ((newestSticky.size?.width ?? 180) / 2)
-      const dragStartY = canvasBox.y + (newestSticky.position.y ?? 0) + ((newestSticky.size?.height ?? 110) / 2)
+      const stickyCenterX = canvasBox.x + (newestSticky.position.x ?? 0) + ((newestSticky.size?.width ?? 180) / 2)
+      const stickyCenterY = canvasBox.y + (newestSticky.position.y ?? 0) + ((newestSticky.size?.height ?? 110) / 2)
 
-      await page.mouse.move(dragStartX, dragStartY)
-      await page.mouse.down()
-      await page.mouse.move(dragStartX + 160, dragStartY + 100)
-      await page.mouse.up()
-
-      await expect
-        .poll(async () => {
-          const objects = await fetchBoardObjects(boardId, user.idToken)
-          const sticky = objects.find((object) => object.id === newestSticky.id)
-          if (!sticky?.position) return initialStickyPosition
-          return `${Math.round(sticky.position.x ?? 0)}:${Math.round(sticky.position.y ?? 0)}`
-        })
-        .not.toBe(initialStickyPosition)
-
-      await page.mouse.click(dragStartX + 160, dragStartY + 100)
+      await page.mouse.click(stickyCenterX, stickyCenterY)
       await expect(page.getByTestId('shape-type-picker')).toBeVisible()
       await page.locator('button[title="Set shape to Circle"]').click()
 

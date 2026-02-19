@@ -8,7 +8,9 @@
   },
   "scripts": {
     "deploy": "firebase deploy --only functions",
-    "test": "node --test"
+    "test": "node --test",
+    "migrate:board-ownership:dry": "node scripts/migrate-board-ownership.js",
+    "migrate:board-ownership:apply": "node scripts/migrate-board-ownership.js --apply"
   },
   "dependencies": {
     "firebase-admin": "^13.5.0",

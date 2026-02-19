@@ -100,7 +100,7 @@ test.describe('Color changes', () => {
       .toBe('circle:#93c5fd')
   })
 
-  test('shows all six sticky color options when sticky is selected', async ({ page }) => {
+  test('shows all five sticky color options when sticky is selected', async ({ page }) => {
     if (!user) {
       throw new Error('Shared test user unavailable')
     }
@@ -125,9 +125,9 @@ test.describe('Color changes', () => {
     }
 
     await clickObjectCenter(page, sticky)
-    await expect(page.locator('.swatch-button')).toHaveCount(6)
+    await expect(page.locator('.swatch-button')).toHaveCount(5)
 
-    const stickyPalette = ['#fde68a', '#fdba74', '#fca5a5', '#86efac', '#93c5fd', '#c4b5fd']
+    const stickyPalette = ['#fde68a', '#fdba74', '#fca5a5', '#86efac', '#93c5fd']
     for (const color of stickyPalette) {
       await expect(page.getByLabel(`Set stickyNote color to ${color}`)).toBeVisible()
     }

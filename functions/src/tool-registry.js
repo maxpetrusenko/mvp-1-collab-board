@@ -3,7 +3,7 @@
 // Maps LLM tools to existing handler functions in index.js
 
 const COLOR_OPTIONS = ['yellow', 'blue', 'green', 'pink', 'red', 'orange', 'purple', 'gray']
-const SHAPE_TYPES = ['rectangle', 'circle', 'diamond', 'triangle']
+const SHAPE_TYPES = ['rectangle', 'circle', 'diamond', 'triangle', 'line']
 
 const TOOL_DEFINITIONS = [
   {
@@ -141,6 +141,11 @@ const TOOL_DEFINITIONS = [
             type: 'string',
             enum: COLOR_OPTIONS,
             description: 'Color of the connector line (optional, defaults to dark)'
+          },
+          style: {
+            type: 'string',
+            enum: ['arrow', 'line'],
+            description: 'Connector style (optional, defaults to arrow)'
           }
         },
         required: ['fromId', 'toId']
@@ -175,6 +180,52 @@ const TOOL_DEFINITIONS = [
   {
     type: 'function',
     function: {
+      name: 'resizeObject',
+      description: 'Resize an existing object on the whiteboard',
+      parameters: {
+        type: 'object',
+        properties: {
+          objectId: {
+            type: 'string',
+            description: 'ID of the object to resize'
+          },
+          width: {
+            type: 'number',
+            description: 'Updated width in pixels'
+          },
+          height: {
+            type: 'number',
+            description: 'Updated height in pixels'
+          }
+        },
+        required: ['objectId', 'width', 'height']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'updateText',
+      description: 'Update text content of an existing sticky note',
+      parameters: {
+        type: 'object',
+        properties: {
+          objectId: {
+            type: 'string',
+            description: 'ID of the sticky note to edit'
+          },
+          newText: {
+            type: 'string',
+            description: 'Updated text content'
+          }
+        },
+        required: ['objectId', 'newText']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'changeColor',
       description: 'Change the color of an existing object on the whiteboard',
       parameters: {
@@ -191,6 +242,18 @@ const TOOL_DEFINITIONS = [
           }
         },
         required: ['objectId', 'color']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'getBoardState',
+      description: 'Fetch the current board object state snapshot',
+      parameters: {
+        type: 'object',
+        properties: {},
+        required: []
       }
     }
   },
@@ -251,6 +314,69 @@ const TOOL_DEFINITIONS = [
         type: 'object',
         properties: {},
         required: []
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'rotateObject',
+      description: 'Rotate an object to a specific angle in degrees',
+      parameters: {
+        type: 'object',
+        properties: {
+          objectId: {
+            type: 'string',
+            description: 'ID of the object to rotate'
+          },
+          angle: {
+            type: 'number',
+            description: 'Rotation angle in degrees (0-360, will be normalized)'
+          }
+        },
+        required: ['objectId', 'angle']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'deleteObject',
+      description: 'Delete an object from the board',
+      parameters: {
+        type: 'object',
+        properties: {
+          objectId: {
+            type: 'string',
+            description: 'ID of the object to delete'
+          }
+        },
+        required: ['objectId']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'duplicateObject',
+      description: 'Create a duplicate of an existing object on the board',
+      parameters: {
+        type: 'object',
+        properties: {
+          objectId: {
+            type: 'string',
+            description: 'ID of the object to duplicate'
+          },
+          offsetX: {
+            type: 'number',
+            description: 'X offset in pixels for the duplicate (optional, defaults to 30)'
+          },
+          offsetY: {
+            type: 'number',
+            description: 'Y offset in pixels for the duplicate (optional, defaults to 30)'
+          }
+        },
+        required: ['objectId']
       }
     }
   }

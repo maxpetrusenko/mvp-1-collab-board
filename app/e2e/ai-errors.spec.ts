@@ -4,14 +4,7 @@ import { cleanupTestUser, createOrReuseTestUser, loginWithEmail } from './helper
 import { countByType, fetchBoardObjects } from './helpers/firestore'
 
 const APP_URL = process.env.PLAYWRIGHT_BASE_URL || 'https://mvp-1-collab-board.web.app'
-const AI_PANEL = '.ai-chat-widget .ai-panel'
-
-const openAiWidgetIfNeeded = async (page: Page) => {
-  const launcher = page.getByTestId('ai-chat-widget-launcher')
-  if (await launcher.count()) {
-    await launcher.click()
-  }
-}
+const AI_PANEL = '.ai-panel-sidebar .ai-panel'
 
 const submitAiCommand = async (page: Page, command: string) => {
   const aiInput = page.locator(`${AI_PANEL} .ai-input`).first()
@@ -41,10 +34,9 @@ test.describe('AI errors', () => {
     await loginWithEmail(page, APP_URL, user.email, user.password)
     await page.goto(`${APP_URL}/b/${boardId}`)
     await expect(page.locator('.board-stage')).toBeVisible()
-    await openAiWidgetIfNeeded(page)
 
     await submitAiCommand(page, 'turn this board into a quantum spreadsheet')
-    const errorMessage = page.locator('.ai-chat-widget .ai-message.error')
+    const errorMessage = page.locator(`${AI_PANEL} .ai-message.error`)
     await expect(errorMessage).toBeVisible()
     await expect(errorMessage).toContainText('Unsupported command')
 
@@ -65,10 +57,9 @@ test.describe('AI errors', () => {
     await loginWithEmail(page, APP_URL, user.email, user.password)
     await page.goto(`${APP_URL}/b/${boardId}`)
     await expect(page.locator('.board-stage')).toBeVisible()
-    await openAiWidgetIfNeeded(page)
 
     await submitAiCommand(page, 'create a blue octagon at position 40,40')
-    const errorMessage = page.locator('.ai-chat-widget .ai-message.error')
+    const errorMessage = page.locator(`${AI_PANEL} .ai-message.error`)
     await expect(errorMessage).toBeVisible()
     await expect(errorMessage).toContainText('Unsupported command')
 
@@ -89,14 +80,13 @@ test.describe('AI errors', () => {
     await loginWithEmail(page, APP_URL, user.email, user.password)
     await page.goto(`${APP_URL}/b/${boardId}`)
     await expect(page.locator('.board-stage')).toBeVisible()
-    await openAiWidgetIfNeeded(page)
 
     await submitAiCommand(page, 'make all my ideas perfect instantly')
-    await expect(page.locator('.ai-chat-widget .ai-message.error')).toBeVisible()
+    await expect(page.locator(`${AI_PANEL} .ai-message.error`)).toBeVisible()
 
     const recoveryToken = `ai-recovery-${Date.now()}`
     await submitAiCommand(page, `add green sticky note saying ${recoveryToken}`)
-    await expect(page.locator('.ai-chat-widget .ai-message.success')).toBeVisible()
+    await expect(page.locator(`${AI_PANEL} .ai-message.success`)).toBeVisible()
 
     await expect
       .poll(async () => {

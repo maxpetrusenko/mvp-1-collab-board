@@ -37,6 +37,13 @@ Conflict model for MVP:
 
 All items above are required to pass MVP.
 
+## Accessibility Baseline (Post-Hard-Gate)
+- [ ] Keyboard-only walkthrough documented for core flows.
+- [ ] Focus visibility pass completed for interactive controls.
+- [ ] Contrast checks captured for critical UI surfaces.
+- [ ] Demo script updated to briefly mention accessibility + auditability.
+- [ ] Optional: VPAT-style draft published in `docs/VPAT_DRAFT.md` if needed for external review.
+
 ## Definition of Done (MVP)
 - All hard-gate checklist items complete.
 - Tested in at least 2 browsers with separate authenticated users.
