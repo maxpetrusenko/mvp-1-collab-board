@@ -28,6 +28,7 @@ import type {
   CursorPresence,
   Point,
   ShapeKind,
+  Size,
 } from '../types/board'
 import { AICommandPanel } from '../components/AICommandPanel'
 
@@ -40,6 +41,12 @@ type Viewport = {
 type LocalPositionOverride = {
   point: Point
   mode: 'dragging' | 'pending'
+  updatedAt: number
+}
+
+type LocalSizeOverride = {
+  size: Size
+  mode: 'resizing' | 'pending'
   updatedAt: number
 }
 
@@ -128,6 +135,7 @@ const DEFAULT_SHAPE_SIZES: Record<ShapeKind, { width: number; height: number }> 
   circle: { width: 130, height: 130 },
   diamond: { width: 170, height: 120 },
   triangle: { width: 170, height: 120 },
+  line: { width: 100, height: 0 },
 }
 const DEFAULT_FRAME_SIZE = { width: 520, height: 320 }
 const SHAPE_TYPE_OPTIONS: Array<{ kind: ShapeKind; label: string; icon: string }> = [
@@ -257,6 +265,9 @@ export const BoardPage = () => {
   const [draggingConnectorId, setDraggingConnectorId] = useState<string | null>(null)
   const [localObjectPositions, setLocalObjectPositions] = useState<
     Record<string, LocalPositionOverride>
+  >({})
+  const [localObjectSizes, _setLocalObjectSizes] = useState<
+    Record<string, LocalSizeOverride>
   >({})
   const [localConnectorGeometry, setLocalConnectorGeometry] = useState<
     Record<string, LocalConnectorOverride>
@@ -1347,6 +1358,16 @@ export const BoardPage = () => {
     [patchObject],
   )
 
+  // Resolve object position, applying local drag/transform overrides
+  const resolveObjectPosition = useCallback((obj: BoardObject): Point => {
+    return localObjectPositions[obj.id]?.point || obj.position
+  }, [localObjectPositions])
+
+  // Resolve object size, applying local drag/transform overrides
+  const resolveObjectSize = useCallback((obj: BoardObject): Size => {
+    return localObjectSizes[obj.id]?.size || obj.size
+  }, [localObjectSizes])
+
   const resolveSnappedEndpoint = useCallback((point: Point) => {
     const thresholdSquared = CONNECTOR_SNAP_THRESHOLD_PX * CONNECTOR_SNAP_THRESHOLD_PX
     let nearest:
@@ -1358,7 +1379,25 @@ export const BoardPage = () => {
         }
       | null = null
 
+    // Optimize: only check objects that are reasonably close (simple bounding box check first)
+    const snapThreshold = CONNECTOR_SNAP_THRESHOLD_PX
+
     for (const candidate of objectsRef.current) {
+      // Quick bounding box rejection to avoid expensive anchor calculations
+      const candidatePos = resolveObjectPosition(candidate)
+      const candidateSize = resolveObjectSize(candidate)
+      const expandedBox = {
+        left: candidatePos.x - snapThreshold,
+        right: candidatePos.x + candidateSize.width + snapThreshold,
+        top: candidatePos.y - snapThreshold,
+        bottom: candidatePos.y + candidateSize.height + snapThreshold,
+      }
+
+      if (point.x < expandedBox.left || point.x > expandedBox.right ||
+          point.y < expandedBox.top || point.y > expandedBox.bottom) {
+        continue
+      }
+
       const anchors = getObjectAnchors(candidate)
       for (const anchorCandidate of anchors) {
         const dx = point.x - anchorCandidate.point.x
@@ -1394,7 +1433,7 @@ export const BoardPage = () => {
       objectId: nearestAnchor.objectId,
       anchor: nearestAnchor.anchor,
     }
-  }, [])
+  }, [resolveObjectPosition, resolveObjectSize])
 
   const updateBoardTimer = useCallback(
     async (nextTimer: TimerState) => {
@@ -2572,6 +2611,11 @@ export const BoardPage = () => {
                       />
                     </Group>
                   )
+                }
+
+                // Type guard: only shape objects remain after filtering stickyNote/connector/text/frame
+                if (boardObject.type !== 'shape') {
+                  return null
                 }
 
                 const shapeType = normalizeShapeKind(boardObject.shapeType)
