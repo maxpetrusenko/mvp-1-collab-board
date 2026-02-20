@@ -91,6 +91,35 @@ test.describe('Requirements: object operation gaps', () => {
       await clickObjectCenter(page, sticky)
 
       await expect(page.getByTestId('duplicate-selected-button')).toBeVisible()
+      const sourceSnapshot = (await fetchBoardObjects(boardId, user.idToken)).find(
+        (object) => object.id === sticky.id,
+      )
+      if (!sourceSnapshot?.position) {
+        throw new Error('Source sticky missing before duplicate action')
+      }
+
+      await page.getByTestId('duplicate-selected-button').click()
+
+      await expect
+        .poll(async () => {
+          const objects = await fetchBoardObjects(boardId, user.idToken)
+          return objects.filter((object) => object.type === 'stickyNote').length
+        })
+        .toBeGreaterThan(1)
+
+      const allStickies = (await fetchBoardObjects(boardId, user.idToken)).filter(
+        (object) => object.type === 'stickyNote',
+      )
+      const duplicate = allStickies.find((object) => object.id !== sticky.id)
+      if (!duplicate?.position) {
+        throw new Error('Duplicated sticky not found')
+      }
+
+      expect(duplicate.text).toBe(sourceSnapshot.text)
+      expect(duplicate.shapeType).toBe(sourceSnapshot.shapeType)
+      expect(duplicate.color).toBe(sourceSnapshot.color)
+      expect(duplicate.position.x - sourceSnapshot.position.x).toBe(20)
+      expect(duplicate.position.y - sourceSnapshot.position.y).toBe(20)
     } finally {
       await deleteTempUser(user.idToken)
     }
@@ -146,8 +175,50 @@ test.describe('Requirements: object operation gaps', () => {
 
       expect(duplicate.shapeType).toBe(sourceSnapshot.shapeType)
       expect(duplicate.color).toBe(sourceSnapshot.color)
-      expect(duplicate.position.x - sourceSnapshot.position.x).toBe(24)
-      expect(duplicate.position.y - sourceSnapshot.position.y).toBe(24)
+      expect(duplicate.position.x - sourceSnapshot.position.x).toBe(20)
+      expect(duplicate.position.y - sourceSnapshot.position.y).toBe(20)
+    } finally {
+      await deleteTempUser(user.idToken)
+    }
+  })
+
+  test('FR-24/FR-25 regression: duplicate button and copy/paste both work from current live selection', async ({ page }) => {
+    const user = await createTempUser()
+    const boardId = `pw-req-dup-copy-regression-${Date.now()}`
+
+    try {
+      await loginWithEmail(page, APP_URL, user.email, user.password)
+      await page.goto(`${APP_URL}/b/${boardId}`)
+      await expect(page.locator('.board-stage')).toBeVisible()
+
+      const sticky = await createStickyAndResolve(page, boardId, user.idToken)
+
+      await clickObjectCenter(page, sticky)
+      await page.getByTestId('duplicate-selected-button').click()
+
+      await expect
+        .poll(async () => {
+          const objects = await fetchBoardObjects(boardId, user.idToken)
+          return objects.filter((object) => object.type === 'stickyNote').length
+        })
+        .toBeGreaterThan(1)
+
+      const latestObjects = await fetchBoardObjects(boardId, user.idToken)
+      const sourceAfterDuplicate = latestObjects.find((object) => object.id === sticky.id)
+      if (!sourceAfterDuplicate) {
+        throw new Error('Source sticky missing before copy/paste regression step')
+      }
+
+      await clickObjectCenter(page, sourceAfterDuplicate)
+      await page.keyboard.press(copyShortcut)
+      await page.keyboard.press(pasteShortcut)
+
+      await expect
+        .poll(async () => {
+          const objects = await fetchBoardObjects(boardId, user.idToken)
+          return objects.filter((object) => object.type === 'stickyNote').length
+        })
+        .toBeGreaterThan(2)
     } finally {
       await deleteTempUser(user.idToken)
     }

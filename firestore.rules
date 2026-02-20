@@ -5,11 +5,81 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function boardDoc(boardId) {
+      return get(/databases/$(database)/documents/boards/$(boardId));
+    }
+
+    function boardData(boardId) {
+      return boardDoc(boardId).data;
+    }
+
+    function boardOwnerId(boardId) {
+      return boardData(boardId).ownerId;
+    }
+
+    function boardSharedWith(boardId) {
+      return boardData(boardId).sharedWith;
+    }
+
+    function boardSharedRole(boardId, userId) {
+      return boardData(boardId).sharedRoles[userId];
+    }
+
+    function isBoardOwner(boardId) {
+      return isSignedIn() && boardOwnerId(boardId) == request.auth.uid;
+    }
+
+    function hasBoardAccess(boardId) {
+      return isSignedIn() && (
+        isBoardOwner(boardId) ||
+        request.auth.uid in boardSharedWith(boardId)
+      );
+    }
+
+    function hasBoardEditAccess(boardId) {
+      return isSignedIn() && (
+        isBoardOwner(boardId) ||
+        (
+          request.auth.uid in boardSharedWith(boardId) &&
+          boardSharedRole(boardId, request.auth.uid) != "view"
+        )
+      );
+    }
+
     match /boards/{boardId} {
-      allow read, write: if isSignedIn();
+      allow create: if isSignedIn() &&
+        request.resource.data.ownerId == request.auth.uid;
+      allow read: if hasBoardAccess(boardId);
+      allow update, delete: if isBoardOwner(boardId);
+
+      match /objects/{objectId} {
+        allow read: if hasBoardAccess(boardId);
+        allow write: if hasBoardEditAccess(boardId);
+      }
+
+      match /presence/{presenceId} {
+        allow read: if hasBoardAccess(boardId);
+        allow write: if hasBoardAccess(boardId);
+      }
+
+      match /activity/{activityId} {
+        allow read: if hasBoardAccess(boardId);
+        allow write: if hasBoardEditAccess(boardId);
+      }
+
+      match /aiCommands/{commandId} {
+        allow read: if hasBoardAccess(boardId);
+        allow write: if hasBoardEditAccess(boardId);
+      }
+
+      match /system/{docId} {
+        allow read: if hasBoardAccess(boardId);
+        allow write: if hasBoardEditAccess(boardId);
+      }
 
       match /{document=**} {
-        allow read, write: if isSignedIn();
+        allow read: if hasBoardAccess(boardId);
+        allow write: if hasBoardEditAccess(boardId);
       }
     }
   }

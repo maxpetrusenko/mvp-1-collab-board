@@ -35,7 +35,7 @@ const formatHistoryTime = (queuedAt?: number, completedAt?: number) => {
 
 export const AICommandPanel = ({ disabled, onSubmit, onIngestTextLines, history = [] }: AICommandPanelProps) => {
   const [command, setCommand] = useState('')
-  const [status, setStatus] = useState<'idle' | 'running' | 'success' | 'error'>('idle')
+  const [status, setStatus] = useState<'idle' | 'running' | 'success' | 'warning' | 'error'>('idle')
   const [message, setMessage] = useState('')
   const [ocrRunning, setOcrRunning] = useState(false)
   const screenshotInputRef = useRef<HTMLInputElement | null>(null)
@@ -47,20 +47,20 @@ export const AICommandPanel = ({ disabled, onSubmit, onIngestTextLines, history 
     }
 
     setStatus('running')
+    setMessage('')
     try {
       const submitResult = await onSubmit(trimmed)
-      const successMessage =
+      const submitPayload =
+        submitResult && typeof submitResult === 'object'
+          ? (submitResult as { level?: string; message?: string; aiResponse?: string })
+          : null
+      const returnedMessage =
         typeof submitResult === 'string' && submitResult.trim()
           ? submitResult.trim()
-          : submitResult &&
-              typeof submitResult === 'object' &&
-              'message' in submitResult &&
-              typeof submitResult.message === 'string' &&
-              submitResult.message.trim()
-            ? submitResult.message.trim()
-            : 'Command executed and synced to the board.'
-      setStatus('success')
-      setMessage(successMessage)
+          : submitPayload?.aiResponse?.trim() || submitPayload?.message?.trim() || ''
+      const isWarning = submitPayload?.level === 'warning'
+      setStatus(isWarning ? 'warning' : 'success')
+      setMessage(isWarning ? returnedMessage || "I can't help with that." : '')
       setCommand('')
     } catch (error) {
       setStatus('error')
@@ -94,7 +94,7 @@ export const AICommandPanel = ({ disabled, onSubmit, onIngestTextLines, history 
 
       await onIngestTextLines(lines)
       setStatus('success')
-      setMessage(`Extracted ${lines.length} lines from screenshot and added sticky notes.`)
+      setMessage('')
     } catch (error) {
       setStatus('error')
       setMessage(error instanceof Error ? error.message : 'Failed to process image')
@@ -175,9 +175,9 @@ export const AICommandPanel = ({ disabled, onSubmit, onIngestTextLines, history 
         Send Command
       </button>
 
-      {message && (
+      {message && (status === 'error' || status === 'warning') && (
         <div className={`ai-message ${status}`}>
-          <span className="message-icon">{status === 'success' ? '✓' : status === 'error' ? '✕' : '○'}</span>
+          <span className="message-icon">{status === 'warning' ? '!' : status === 'error' ? '✕' : '○'}</span>
           {message}
         </div>
       )}

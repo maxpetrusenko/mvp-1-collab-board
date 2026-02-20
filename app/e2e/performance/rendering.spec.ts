@@ -12,8 +12,8 @@ import {
 const APP_URL = process.env.PLAYWRIGHT_BASE_URL || 'https://mvp-1-collab-board.web.app'
 
 const FIRST_STICKY_SLA = { target: 500, warning: 750, critical: 2_500 }
-const DRAG_FPS_SLA = { target: 55, warning: 45, critical: 30 }
-const ZOOM_FPS_SLA = { target: 55, warning: 50, critical: 45 }
+const DRAG_FPS_SLA = { target: 60, warning: 50, critical: 30 }
+const ZOOM_FPS_SLA = { target: 60, warning: 52, critical: 45 }
 
 const annotateSla = (
   testInfo: TestInfo,

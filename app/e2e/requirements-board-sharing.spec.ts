@@ -1,8 +1,10 @@
 import { expect, test, type Page } from '@playwright/test'
 
 import { createTempUser, deleteTempUser, getUserIdFromIdToken, loginWithEmail } from './helpers/auth'
+import { fetchBoardMeta } from './helpers/firestore'
 
 const APP_URL = process.env.PLAYWRIGHT_BASE_URL || 'https://mvp-1-collab-board.web.app'
+const randomSuffix = () => `${Date.now()}-${Math.floor(Math.random() * 100_000)}`
 
 const openBoardsPanel = async (page: Page) => {
   await page.getByTestId('open-boards-panel').click()
@@ -21,33 +23,51 @@ const shareBoardWithEmail = async (page: Page, email: string, role: 'edit' | 'vi
 }
 
 test.describe('Requirements: board permission sharing', () => {
+  test.describe.configure({ mode: 'serial' })
   test.setTimeout(240_000)
 
+  let owner: Awaited<ReturnType<typeof createTempUser>> | null = null
+  let collaborator: Awaited<ReturnType<typeof createTempUser>> | null = null
+  let ownerId = ''
+  let collaboratorId = ''
+
+  test.beforeAll(async () => {
+    ;[owner, collaborator] = await Promise.all([createTempUser(), createTempUser()])
+    ownerId = getUserIdFromIdToken(owner.idToken)
+    collaboratorId = getUserIdFromIdToken(collaborator.idToken)
+  })
+
+  test.afterAll(async () => {
+    await Promise.all([
+      owner ? deleteTempUser(owner.idToken).catch(() => undefined) : Promise.resolve(),
+      collaborator ? deleteTempUser(collaborator.idToken).catch(() => undefined) : Promise.resolve(),
+    ])
+  })
+
   test('FR-22: owner can open share dialog from main board header', async ({ page }) => {
-    const owner = await createTempUser()
-    const boardId = `pw-req-board-share-header-${Date.now()}`
-
-    try {
-      await loginWithEmail(page, APP_URL, owner.email, owner.password)
-      await page.goto(`${APP_URL}/b/${boardId}`)
-      await expect(page.locator('.board-stage')).toBeVisible()
-
-      const shareButton = page.getByTestId('share-current-board-button')
-      await expect(shareButton).toBeVisible()
-      await shareButton.click()
-
-      await expect(page.getByTestId('boards-panel')).toBeVisible()
-      await expect(page.getByTestId('share-dialog')).toBeVisible()
-      await expect(page.getByTestId('share-role-select')).toHaveValue('edit')
-    } finally {
-      await deleteTempUser(owner.idToken).catch(() => undefined)
+    const boardId = `pw-req-board-share-header-${randomSuffix()}`
+    if (!owner) {
+      throw new Error('Expected owner test user to be created in beforeAll')
     }
+
+    await loginWithEmail(page, APP_URL, owner.email, owner.password)
+    await page.goto(`${APP_URL}/b/${boardId}`)
+    await expect(page.locator('.board-stage')).toBeVisible()
+
+    const shareButton = page.getByTestId('share-current-board-button')
+    await expect(shareButton).toBeVisible()
+    await shareButton.click()
+
+    await expect(page.getByTestId('boards-panel')).toBeVisible()
+    await expect(page.getByTestId('share-dialog')).toBeVisible()
+    await expect(page.getByTestId('share-role-select')).toHaveValue('edit')
   })
 
   test('FR-22: denies board access to authenticated user when board is not shared', async ({ browser }) => {
-    const owner = await createTempUser()
-    const collaborator = await createTempUser()
-    const boardId = `pw-req-board-denied-${Date.now()}`
+    const boardId = `pw-req-board-denied-${randomSuffix()}`
+    if (!owner || !collaborator) {
+      throw new Error('Expected test users to be created in beforeAll')
+    }
     const ownerContext = await browser.newContext()
     const collaboratorContext = await browser.newContext()
     const ownerPage = await ownerContext.newPage()
@@ -58,6 +78,16 @@ test.describe('Requirements: board permission sharing', () => {
       await ownerPage.goto(`${APP_URL}/b/${boardId}`)
       await expect(ownerPage.locator('.board-stage')).toBeVisible()
       await ownerPage.locator('button[title="Add sticky note (S)"]').click()
+      await expect
+        .poll(async () => {
+          const meta = await fetchBoardMeta(boardId, owner.idToken)
+          if (!meta) {
+            return false
+          }
+          const sharedWith = Array.isArray(meta.sharedWith) ? meta.sharedWith : []
+          return meta.ownerId === ownerId && !sharedWith.includes(collaboratorId)
+        })
+        .toBe(true)
 
       await loginWithEmail(collaboratorPage, APP_URL, collaborator.email, collaborator.password)
       await collaboratorPage.goto(`${APP_URL}/b/${boardId}`)
@@ -67,22 +97,18 @@ test.describe('Requirements: board permission sharing', () => {
         ownerContext.close().catch(() => undefined),
         collaboratorContext.close().catch(() => undefined),
       ])
-      await Promise.all([
-        deleteTempUser(owner.idToken).catch(() => undefined),
-        deleteTempUser(collaborator.idToken).catch(() => undefined),
-      ])
     }
   })
 
   test('FR-22: grants board access after owner shares board with collaborator email', async ({ browser }) => {
-    const owner = await createTempUser()
-    const collaborator = await createTempUser()
-    const boardId = `pw-req-board-share-${Date.now()}`
+    const boardId = `pw-req-board-share-${randomSuffix()}`
+    if (!owner || !collaborator) {
+      throw new Error('Expected test users to be created in beforeAll')
+    }
     const ownerContext = await browser.newContext()
     const collaboratorContext = await browser.newContext()
     const ownerPage = await ownerContext.newPage()
     const collaboratorPage = await collaboratorContext.newPage()
-    const collaboratorId = getUserIdFromIdToken(collaborator.idToken)
 
     try {
       await loginWithEmail(collaboratorPage, APP_URL, collaborator.email, collaborator.password)
@@ -93,7 +119,6 @@ test.describe('Requirements: board permission sharing', () => {
       await shareBoardWithEmail(ownerPage, collaborator.email)
       await expect(ownerPage.getByTestId(`share-collaborator-${collaboratorId}`)).toBeVisible()
 
-      await loginWithEmail(collaboratorPage, APP_URL, collaborator.email, collaborator.password)
       await collaboratorPage.goto(`${APP_URL}/b/${boardId}`)
       await expect(collaboratorPage.locator('.board-stage')).toBeVisible()
       await expect(collaboratorPage.locator('button[title="Add sticky note (S)"]')).toBeEnabled()
@@ -106,22 +131,18 @@ test.describe('Requirements: board permission sharing', () => {
         ownerContext.close().catch(() => undefined),
         collaboratorContext.close().catch(() => undefined),
       ])
-      await Promise.all([
-        deleteTempUser(owner.idToken).catch(() => undefined),
-        deleteTempUser(collaborator.idToken).catch(() => undefined),
-      ])
     }
   })
 
   test('FR-22: owner can share read-only access and collaborator cannot edit', async ({ browser }) => {
-    const owner = await createTempUser()
-    const collaborator = await createTempUser()
-    const boardId = `pw-req-board-view-${Date.now()}`
+    const boardId = `pw-req-board-view-${randomSuffix()}`
+    if (!owner || !collaborator) {
+      throw new Error('Expected test users to be created in beforeAll')
+    }
     const ownerContext = await browser.newContext()
     const collaboratorContext = await browser.newContext()
     const ownerPage = await ownerContext.newPage()
     const collaboratorPage = await collaboratorContext.newPage()
-    const collaboratorId = getUserIdFromIdToken(collaborator.idToken)
 
     try {
       await loginWithEmail(collaboratorPage, APP_URL, collaborator.email, collaborator.password)
@@ -144,22 +165,18 @@ test.describe('Requirements: board permission sharing', () => {
         ownerContext.close().catch(() => undefined),
         collaboratorContext.close().catch(() => undefined),
       ])
-      await Promise.all([
-        deleteTempUser(owner.idToken).catch(() => undefined),
-        deleteTempUser(collaborator.idToken).catch(() => undefined),
-      ])
     }
   })
 
   test('FR-22: revokes collaborator access after owner removes share', async ({ browser }) => {
-    const owner = await createTempUser()
-    const collaborator = await createTempUser()
-    const boardId = `pw-req-board-revoke-${Date.now()}`
+    const boardId = `pw-req-board-revoke-${randomSuffix()}`
+    if (!owner || !collaborator) {
+      throw new Error('Expected test users to be created in beforeAll')
+    }
     const ownerContext = await browser.newContext()
     const collaboratorContext = await browser.newContext()
     const ownerPage = await ownerContext.newPage()
     const collaboratorPage = await collaboratorContext.newPage()
-    const collaboratorId = getUserIdFromIdToken(collaborator.idToken)
 
     try {
       await loginWithEmail(collaboratorPage, APP_URL, collaborator.email, collaborator.password)
@@ -170,7 +187,6 @@ test.describe('Requirements: board permission sharing', () => {
       await shareBoardWithEmail(ownerPage, collaborator.email)
       await expect(ownerPage.getByTestId(`share-collaborator-${collaboratorId}`)).toBeVisible()
 
-      await loginWithEmail(collaboratorPage, APP_URL, collaborator.email, collaborator.password)
       await collaboratorPage.goto(`${APP_URL}/b/${boardId}`)
       await expect(collaboratorPage.locator('.board-stage')).toBeVisible()
 
@@ -183,10 +199,6 @@ test.describe('Requirements: board permission sharing', () => {
       await Promise.all([
         ownerContext.close().catch(() => undefined),
         collaboratorContext.close().catch(() => undefined),
-      ])
-      await Promise.all([
-        deleteTempUser(owner.idToken).catch(() => undefined),
-        deleteTempUser(collaborator.idToken).catch(() => undefined),
       ])
     }
   })

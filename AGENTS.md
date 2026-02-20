@@ -22,6 +22,7 @@
 - **Scalability**: Does code scale? Perform well?
 - **Components**: React 17+ with types
 - **Reuse**: Pre-built solutions over scratch builds
+- **Reusability**: build modular reusable components ( code ui and back end too ) that we can reuse for multiple items
 
 ### Tools & Agents
 - **Review**: Thinking Claude, Speed Cursor, Clarity Codex

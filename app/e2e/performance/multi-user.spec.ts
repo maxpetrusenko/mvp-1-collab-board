@@ -3,11 +3,13 @@ import { expect, test, type TestInfo } from '@playwright/test'
 import { cleanupTestUser, createOrReuseTestUser, createTempUser, deleteTempUser } from '../helpers/auth'
 import {
   decodeUserIdFromIdToken,
+  fetchBoardPresenceMap,
   fetchCursorPresence,
   writeCursorPresence,
 } from '../helpers/performance'
 
 const CURSOR_SYNC_SLA = { target: 50, warning: 75, critical: 100 }
+const PRESENCE_5P_SLA = { target: 600, warning: 1_200, critical: 2_500 }
 
 const annotateSla = (
   testInfo: TestInfo,
@@ -49,7 +51,7 @@ const waitForPresenceMatch = async (args: {
 test.describe('Performance: Multi-user cursor sync', () => {
   test.setTimeout(180_000)
 
-  test('NFR-3: cursor sync latency remains within PRD target and max bounds', async (_context, testInfo) => {
+  test('NFR-3: cursor sync latency remains within PRD target and max bounds', async (_, testInfo) => {
     const boardId = `pw-perf-cursor-${Date.now()}`
     const firstUser = await createOrReuseTestUser()
     const secondUser = await createTempUser()
@@ -118,6 +120,46 @@ test.describe('Performance: Multi-user cursor sync', () => {
         cleanupTestUser(firstUser).catch(() => undefined),
         deleteTempUser(secondUser.idToken).catch(() => undefined),
       ])
+    }
+  })
+
+  test('NFR-5: five concurrent users publish presence without degradation', async (_, testInfo) => {
+    const boardId = `pw-perf-presence5-${Date.now()}`
+    const users = await Promise.all(
+      Array.from({ length: 5 }, () => createTempUser()),
+    )
+
+    try {
+      const userIds = users.map((user) => decodeUserIdFromIdToken(user.idToken))
+      const startedAt = Date.now()
+      await Promise.all(
+        users.map((user, index) =>
+          writeCursorPresence({
+            boardId,
+            userId: userIds[index],
+            idToken: user.idToken,
+            displayName: user.email,
+            x: 120 + index * 45,
+            y: 180 + index * 25,
+            connectionId: `presence5-${index}`,
+          }),
+        ),
+      )
+
+      await expect
+        .poll(async () => {
+          const presenceMap = await fetchBoardPresenceMap(boardId, users[0].idToken)
+          const connectedCount = userIds.filter((userId) => Boolean(presenceMap[userId])).length
+          const hasNames = userIds.every((userId) => typeof presenceMap[userId]?.displayName === 'string')
+          return { connectedCount, hasNames }
+        })
+        .toEqual({ connectedCount: 5, hasNames: true })
+
+      const elapsedMs = Date.now() - startedAt
+      annotateSla(testInfo, 'presence-5-user-propagation', elapsedMs, PRESENCE_5P_SLA)
+      expect(elapsedMs).toBeLessThanOrEqual(PRESENCE_5P_SLA.critical)
+    } finally {
+      await Promise.all(users.map((user) => deleteTempUser(user.idToken).catch(() => undefined)))
     }
   })
 })

@@ -13,6 +13,12 @@ const submitAiCommand = async (page: Page, command: string) => {
   await page.locator(AI_PANEL).getByRole('button', { name: 'Send Command' }).click()
 }
 
+const expectAiSuccess = async (page: Page) => {
+  await expect(page.getByTestId('ai-status-pill')).toHaveText('success')
+  await expect(page.locator(`${AI_PANEL} .ai-message.error`)).toHaveCount(0)
+  await expect(page.locator(`${AI_PANEL} .ai-message.warning`)).toHaveCount(0)
+}
+
 test.describe('AI position commands', () => {
   test.setTimeout(180_000)
   let user: Awaited<ReturnType<typeof createOrReuseTestUser>> | null = null
@@ -36,7 +42,7 @@ test.describe('AI position commands', () => {
     await expect(page.locator('.board-stage')).toBeVisible()
 
     await submitAiCommand(page, 'add blue sticky note at top left')
-    await expect(page.locator(`${AI_PANEL} .ai-message.success`)).toBeVisible()
+    await expectAiSuccess(page)
 
     await expect
       .poll(async () => {
@@ -58,7 +64,7 @@ test.describe('AI position commands', () => {
     await expect(page.locator('.board-stage')).toBeVisible()
 
     await submitAiCommand(page, 'add red sticky note at bottom right')
-    await expect(page.locator(`${AI_PANEL} .ai-message.success`)).toBeVisible()
+    await expectAiSuccess(page)
 
     await expect
       .poll(async () => {
@@ -80,7 +86,7 @@ test.describe('AI position commands', () => {
     await expect(page.locator('.board-stage')).toBeVisible()
 
     await submitAiCommand(page, 'add green sticky note in the center')
-    await expect(page.locator(`${AI_PANEL} .ai-message.success`)).toBeVisible()
+    await expectAiSuccess(page)
 
     await expect
       .poll(async () => {
@@ -102,7 +108,7 @@ test.describe('AI position commands', () => {
     await expect(page.locator('.board-stage')).toBeVisible()
 
     await submitAiCommand(page, 'add yellow sticky note at top right')
-    await expect(page.locator(`${AI_PANEL} .ai-message.success`)).toBeVisible()
+    await expectAiSuccess(page)
 
     await expect
       .poll(async () => {

@@ -10,7 +10,9 @@
     "preview": "vite preview",
     "test:unit": "node --test test/**/*.test.mjs",
     "test:e2e": "playwright test",
-    "test:e2e:ui": "playwright test --ui"
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:stress": "RUN_EXTREME_STRESS=1 playwright test e2e/performance/stress-scale-5000-20users.spec.ts --reporter=line",
+    "sim:100-mixed": "node scripts/run-100-user-mixed-sim.mjs"
   },
   "dependencies": {
     "firebase": "^12.9.0",

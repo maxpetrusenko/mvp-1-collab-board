@@ -50,6 +50,12 @@ const submitAiCommand = async (page: Page, command: string) => {
   await page.locator('.ai-panel').first().getByRole('button', { name: 'Send Command' }).click()
 }
 
+const expectAiSuccess = async (page: Page) => {
+  await expect(page.getByTestId('ai-status-pill')).toHaveText('success')
+  await expect(page.locator('.ai-panel .ai-message.error')).toHaveCount(0)
+  await expect(page.locator('.ai-panel .ai-message.warning')).toHaveCount(0)
+}
+
 test.describe('Requirements: collaboration parity', () => {
   test.setTimeout(240_000)
 
@@ -233,7 +239,7 @@ test.describe('Requirements: collaboration parity', () => {
 
       await openAiWidgetIfNeeded(pageA)
       await submitAiCommand(pageA, `add green sticky note saying ${marker}`)
-      await expect(pageA.locator('.ai-panel .ai-message.success').first()).toBeVisible()
+      await expectAiSuccess(pageA)
 
       await expect
         .poll(async () => {

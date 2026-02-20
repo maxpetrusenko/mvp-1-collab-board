@@ -249,6 +249,33 @@ Purpose: log system decisions, alternatives, rationale, and change history.
 - Consequences: Manual create flow now centers on sticky notes + frame + connector; existing shape objects remain supported for compatibility but are no longer first-class toolbar creation actions.
 - Revisit Trigger: If advanced non-sticky shape use cases become core and require dedicated creation/authoring controls again.
 
+### D-027
+- Date: 2026-02-20
+- Status: Accepted
+- Decision: Keep boards create/share controls in a dedicated, scrollable side column inside the boards modal so share actions remain visible at constrained viewport heights.
+- Alternatives Considered: Keep share card as a separate grid row in the modal body; rely on outer modal resizing.
+- Rationale: In the previous layout, the share form could render below the fold and hide the share submit action, blocking board-sharing completion.
+- Consequences: Added a new `boards-side` layout container and modal-body overflow constraints to guarantee accessible create/share controls.
+- Revisit Trigger: If modal usability testing shows the side-column scroll pattern causes discoverability issues on smaller devices.
+
+### D-028
+- Date: 2026-02-20
+- Status: Accepted
+- Decision: Use a two-tier quality workflow: fast dev gate (lint + build, no tests) for day-to-day iteration, and a parallelized full gate (unit + functions + sharded Playwright) only before production pushes.
+- Alternatives Considered: Run full test suite on every local change; disable pre-prod full gate entirely.
+- Rationale: Full e2e runs were slowing iteration; splitting gates keeps development velocity high while preserving rigorous pre-prod verification.
+- Consequences: Added `scripts/run-dev-gate.sh` and `scripts/run-full-gate.sh`; teams must consistently run full gate before deploy.
+- Revisit Trigger: If defect escape rate increases or full gate runtime remains too slow even with sharding.
+
+### D-029
+- Date: 2026-02-20
+- Status: Accepted
+- Decision: Keep AI command success feedback in the status pill only, show inline AI messages only for warning/error states, and normalize out-of-scope prompts to a short warning response (`I can't help with that.`); also use board-access snapshot metadata as fallback for owner/share role gating when board list snapshots lag.
+- Alternatives Considered: Keep verbose success banners for every command; allow conversational model replies of arbitrary length; rely only on board-list snapshots for role/owner UI gating.
+- Rationale: Reduced AI panel noise while preserving actionable warnings, and eliminated transient UI regressions where owner share controls or edit/view role enforcement could momentarily mis-evaluate before board list hydration.
+- Consequences: Added warning-level AI result plumbing (`level: 'warning'`) across functions/web, and introduced `boardAccessMeta` fallback in board permission/role derivation.
+- Revisit Trigger: If users request richer conversational replies inside the panel or if access-role state can be made strictly server-authoritative in a single stream.
+
 ## Change Log
 - 2026-02-16: Initial decision set created.
 - 2026-02-16: Added auth provider, deployment URL strategy, and error recovery UX decisions.
@@ -262,3 +289,6 @@ Purpose: log system decisions, alternatives, rationale, and change history.
 - 2026-02-17: Added staged Yjs pilot mirror decision behind feature flag.
 - 2026-02-17: Added compact laptop layout decision (responsive toolbar/panel/minimap fit without page scroll).
 - 2026-02-17: Added sticky-shape-first creation decision and AI-right-panel default behavior decision.
+- 2026-02-20: Added boards modal side-column scroll decision to prevent hidden share actions.
+- 2026-02-20: Added two-tier gate policy (fast dev gate + parallel pre-prod full gate).
+- 2026-02-20: Added AI warning-only inline messaging + board access metadata fallback gating decision.

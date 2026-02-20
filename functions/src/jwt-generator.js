@@ -4,8 +4,18 @@ const jwt = require('jsonwebtoken')
 const TOKEN_TTL = 180 // 3 minutes
 let cachedToken = null
 
+function readEnv(...keys) {
+  for (const key of keys) {
+    const value = process.env[key]
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim()
+    }
+  }
+  return ''
+}
+
 function getApiKey() {
-  const apiKey = process.env.Z_AI_GLM_API_KEY
+  const apiKey = readEnv('Z_AI_GLM_API_KEY', 'z_ai_glm_api_key')
   if (!apiKey) {
     throw new Error('Z_AI_GLM_API_KEY not configured')
   }
@@ -55,4 +65,8 @@ function getCachedToken() {
   return cachedToken.token
 }
 
-module.exports = { getCachedToken, generateToken }
+function resetTokenCache() {
+  cachedToken = null
+}
+
+module.exports = { getCachedToken, generateToken, resetTokenCache }

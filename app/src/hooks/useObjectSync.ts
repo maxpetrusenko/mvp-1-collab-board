@@ -1,4 +1,4 @@
-import { useEffect, type Dispatch, type MutableRefObject, type SetStateAction } from 'react'
+import { useEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react'
 import { collection, onSnapshot, type Firestore } from 'firebase/firestore'
 
 import type { AnchorKind, BoardObject, ConnectorObject, Point } from '../types/board'
@@ -48,6 +48,7 @@ type UseObjectSyncArgs = {
 }
 
 const LOCAL_PENDING_TTL_MS = 3_000
+const SNAPSHOT_FLUSH_MS = 16
 
 const positionsEqual = (left: Point, right: Point, epsilon = 0.5) =>
   Math.abs(left.x - right.x) <= epsilon && Math.abs(left.y - right.y) <= epsilon
@@ -79,26 +80,37 @@ export const useObjectSync = ({
   setLocalObjectSizes,
   setLocalConnectorGeometry,
 }: UseObjectSyncArgs) => {
+  const draggingObjectIdRef = useRef<string | null>(draggingObjectId)
+  const draggingConnectorIdRef = useRef<string | null>(draggingConnectorId)
+  const resizingObjectIdRef = useRef<string | null>(resizingObjectId)
+  const pendingSnapshotRef = useRef<BoardObject[] | null>(null)
+  const snapshotFlushTimeoutRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    draggingObjectIdRef.current = draggingObjectId
+  }, [draggingObjectId])
+
+  useEffect(() => {
+    draggingConnectorIdRef.current = draggingConnectorId
+  }, [draggingConnectorId])
+
+  useEffect(() => {
+    resizingObjectIdRef.current = resizingObjectId
+  }, [resizingObjectId])
+
   useEffect(() => {
     if (!db || !enabled) {
+      pendingSnapshotRef.current = null
+      if (snapshotFlushTimeoutRef.current !== null) {
+        window.clearTimeout(snapshotFlushTimeoutRef.current)
+        snapshotFlushTimeoutRef.current = null
+      }
       return
     }
 
+    let disposed = false
     const objectsCollection = collection(db, 'boards', boardId, 'objects')
-    const unsubscribe = onSnapshot(objectsCollection, (snapshot) => {
-      const nextObjects: BoardObject[] = []
-
-      snapshot.forEach((docSnapshot) => {
-        const data = docSnapshot.data() as Partial<BoardObject>
-
-        if (!data.id || !data.type || !data.position || !data.size || data.deleted) {
-          return
-        }
-
-        nextObjects.push(data as BoardObject)
-      })
-
-      nextObjects.sort((left, right) => left.zIndex - right.zIndex)
+    const applySnapshot = (nextObjects: BoardObject[]) => {
       objectsRef.current = nextObjects
       if (yjsMirrorRef.current) {
         yjsMirrorRef.current.replaceSnapshot(nextObjects)
@@ -109,10 +121,11 @@ export const useObjectSync = ({
       }
 
       setObjects((prevObjects) => {
-        if (draggingObjectId) {
+        const draggingObjectIdValue = draggingObjectIdRef.current
+        if (draggingObjectIdValue) {
           return nextObjects.map((objectEntry) =>
-            objectEntry.id === draggingObjectId
-              ? prevObjects.find((candidate) => candidate.id === draggingObjectId) || objectEntry
+            objectEntry.id === draggingObjectIdValue
+              ? prevObjects.find((candidate) => candidate.id === draggingObjectIdValue) || objectEntry
               : objectEntry,
           )
         }
@@ -147,7 +160,12 @@ export const useObjectSync = ({
             return
           }
 
-          if (localOverride.mode === 'dragging' && draggingObjectId !== objectId) {
+          if (localOverride.mode === 'dragging') {
+            const draggingObjectIdValue = draggingObjectIdRef.current
+            if (draggingObjectIdValue === objectId) {
+              next[objectId] = localOverride
+              return
+            }
             next[objectId] = {
               ...localOverride,
               mode: 'pending',
@@ -190,7 +208,12 @@ export const useObjectSync = ({
             return
           }
 
-          if (localOverride.mode === 'resizing' && resizingObjectId !== objectId) {
+          if (localOverride.mode === 'resizing') {
+            const resizingObjectIdValue = resizingObjectIdRef.current
+            if (resizingObjectIdValue === objectId) {
+              next[objectId] = localOverride
+              return
+            }
             next[objectId] = {
               ...localOverride,
               mode: 'pending',
@@ -237,7 +260,12 @@ export const useObjectSync = ({
             return
           }
 
-          if (localOverride.mode === 'dragging' && draggingConnectorId !== objectId) {
+          if (localOverride.mode === 'dragging') {
+            const draggingConnectorIdValue = draggingConnectorIdRef.current
+            if (draggingConnectorIdValue === objectId) {
+              next[objectId] = localOverride
+              return
+            }
             next[objectId] = {
               ...localOverride,
               mode: 'pending',
@@ -252,17 +280,65 @@ export const useObjectSync = ({
 
         return changed ? next : prev
       })
+    }
+
+    const flushPendingSnapshot = () => {
+      if (snapshotFlushTimeoutRef.current !== null) {
+        window.clearTimeout(snapshotFlushTimeoutRef.current)
+        snapshotFlushTimeoutRef.current = null
+      }
+      if (disposed) {
+        return
+      }
+      const pending = pendingSnapshotRef.current
+      if (!pending) {
+        return
+      }
+      pendingSnapshotRef.current = null
+      applySnapshot(pending)
+    }
+
+    const scheduleSnapshotFlush = () => {
+      if (snapshotFlushTimeoutRef.current !== null) {
+        return
+      }
+      snapshotFlushTimeoutRef.current = window.setTimeout(() => {
+        flushPendingSnapshot()
+      }, SNAPSHOT_FLUSH_MS)
+    }
+
+    const unsubscribe = onSnapshot(objectsCollection, (snapshot) => {
+      const nextObjects: BoardObject[] = []
+
+      snapshot.forEach((docSnapshot) => {
+        const data = docSnapshot.data() as Partial<BoardObject>
+
+        if (!data.id || !data.type || !data.position || !data.size || data.deleted) {
+          return
+        }
+
+        nextObjects.push(data as BoardObject)
+      })
+
+      nextObjects.sort((left, right) => left.zIndex - right.zIndex)
+      pendingSnapshotRef.current = nextObjects
+      scheduleSnapshotFlush()
     })
 
-    return unsubscribe
+    return () => {
+      disposed = true
+      unsubscribe()
+      pendingSnapshotRef.current = null
+      if (snapshotFlushTimeoutRef.current !== null) {
+        window.clearTimeout(snapshotFlushTimeoutRef.current)
+        snapshotFlushTimeoutRef.current = null
+      }
+    }
   }, [
     boardId,
     db,
     enabled,
-    draggingConnectorId,
-    draggingObjectId,
     objectsRef,
-    resizingObjectId,
     setLocalConnectorGeometry,
     setLocalObjectPositions,
     setLocalObjectSizes,

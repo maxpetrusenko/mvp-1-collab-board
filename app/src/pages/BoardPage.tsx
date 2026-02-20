@@ -16,6 +16,7 @@ import {
   MousePointer2,
   Pause,
   Play,
+  Plus,
   Sun,
   Redo2,
   RotateCcw,
@@ -167,7 +168,6 @@ const BOARD_HEADER_HEIGHT = 64
 const CONNECTOR_SNAP_THRESHOLD_PX = 36
 const CONNECTOR_HANDLE_RADIUS = 7
 const TIMER_DEFAULT_MS = 5 * 60 * 1000
-const PRESENCE_AWAY_THRESHOLD_MS = 25_000
 const MIN_ZOOM_SCALE = 0.25
 const MAX_ZOOM_SCALE = 3
 const ZOOM_MOMENTUM_SMOOTHING = 0.24
@@ -199,6 +199,8 @@ const CONNECTOR_STYLE_OPTIONS: Array<{ value: ConnectorStyle; label: string }> =
 ]
 const ROTATION_STEP_DEGREES = 15
 const BOARD_DUPLICATE_BATCH_LIMIT = 400
+const NEW_OBJECT_OFFSET_STEP = 20
+const OBJECT_DUPLICATE_OFFSET = 20
 const THEME_STORAGE_KEY = 'collabboard-theme'
 const LAST_BOARD_STORAGE_PREFIX = 'collabboard-last-board-id'
 const COLOR_LABELS: Record<string, string> = {
@@ -289,6 +291,89 @@ const calculateRotationFromHandleTarget = (
   })
 
   return calculateRotationAngle(center.x, center.y, pointer.x, pointer.y)
+}
+const getVoteBadgeWidth = (voteCount: number) => (voteCount > 9 ? 34 : 30)
+const renderVoteBadge = (args: { voteCount: number; x: number; y: number }) => {
+  const { voteCount, x, y } = args
+  if (voteCount <= 0) {
+    return null
+  }
+
+  const badgeWidth = getVoteBadgeWidth(voteCount)
+  return (
+    <>
+      <Rect
+        x={x}
+        y={y}
+        width={badgeWidth}
+        height={18}
+        fill="#1d4ed8"
+        cornerRadius={9}
+        shadowBlur={4}
+        shadowOpacity={0.18}
+        listening={false}
+      />
+      <Line
+        points={[x + 7, y + 10, x + 10, y + 13, x + 15, y + 7]}
+        stroke="#ffffff"
+        strokeWidth={1.6}
+        lineCap="round"
+        lineJoin="round"
+        listening={false}
+      />
+      <Text
+        text={String(voteCount)}
+        x={x + 16}
+        y={y + 4}
+        width={badgeWidth - 16}
+        align="center"
+        fontSize={11}
+        fontStyle="bold"
+        fill="#ffffff"
+        listening={false}
+      />
+    </>
+  )
+}
+const renderCommentBadge = (args: { commentCount: number; x: number; y: number }) => {
+  const { commentCount, x, y } = args
+  if (commentCount <= 0) {
+    return null
+  }
+
+  return (
+    <>
+      <Rect
+        x={x}
+        y={y}
+        width={18}
+        height={18}
+        fill="#0f766e"
+        cornerRadius={9}
+        shadowBlur={4}
+        shadowOpacity={0.18}
+        listening={false}
+      />
+      <Rect
+        x={x + 4}
+        y={y + 5}
+        width={10}
+        height={7}
+        cornerRadius={2}
+        stroke="#ffffff"
+        strokeWidth={1.2}
+        listening={false}
+      />
+      <Line
+        points={[x + 8, y + 12, x + 7, y + 15, x + 10, y + 12]}
+        stroke="#ffffff"
+        strokeWidth={1.2}
+        lineCap="round"
+        lineJoin="round"
+        listening={false}
+      />
+    </>
+  )
 }
 const overlaps = (
   left: { x: number; y: number; width: number; height: number },
@@ -427,6 +512,24 @@ const formatTimerLabel = (ms: number) => {
   const seconds = clamped % 60
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
 }
+const parseTimerLabelToMs = (inputValue: string): number | null => {
+  const trimmed = inputValue.trim()
+  const match = trimmed.match(/^(\d{1,2}):(\d{2})$/)
+  if (!match) {
+    return null
+  }
+
+  const minutes = Number(match[1])
+  const seconds = Number(match[2])
+  if (!Number.isInteger(minutes) || !Number.isInteger(seconds)) {
+    return null
+  }
+  if (minutes < 0 || minutes > 99 || seconds < 0 || seconds > 59) {
+    return null
+  }
+
+  return (minutes * 60 + seconds) * 1000
+}
 const nowMs = () => Date.now()
 const wait = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms))
 const notifyExportComplete = (detail: { format: 'png' | 'pdf'; scope: 'full' | 'selection'; fileBase: string }) => {
@@ -515,7 +618,9 @@ export const BoardPage = () => {
   const [objects, setObjects] = useState<BoardObject[]>([])
   const objectsRef = useRef<BoardObject[]>([])
   const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const selectedIdsRef = useRef<string[]>([])
   const [clipboardObject, setClipboardObject] = useState<BoardObject | null>(null)
+  const clipboardObjectRef = useRef<BoardObject | null>(null)
   const [draggingObjectId, setDraggingObjectId] = useState<string | null>(null)
   const [resizingObjectId, setResizingObjectId] = useState<string | null>(null)
   const [rotatingObjectId, setRotatingObjectId] = useState<string | null>(null)
@@ -539,6 +644,8 @@ export const BoardPage = () => {
     endsAt: null,
     remainingMs: TIMER_DEFAULT_MS,
   })
+  const [isEditingTimer, setIsEditingTimer] = useState(false)
+  const [timerDraft, setTimerDraft] = useState(formatTimerLabel(TIMER_DEFAULT_MS))
   const [inlineEditor, setInlineEditor] = useState<InlineEditorDraft | null>(null)
   const [nowMsValue, setNowMsValue] = useState(Date.now())
   const [showShortcuts, setShowShortcuts] = useState(false)
@@ -547,6 +654,7 @@ export const BoardPage = () => {
   const [, setYjsPilotMetrics] = useState({ objects: 0, bytes: 0 })
   const connectionStatus = useConnectionStatus()
   const [boards, setBoards] = useState<BoardMeta[]>([])
+  const [boardAccessMeta, setBoardAccessMeta] = useState<BoardMeta | null>(null)
   const [boardAccessState, setBoardAccessState] = useState<'checking' | 'granted' | 'denied'>('checking')
   const [boardAccessError, setBoardAccessError] = useState<string | null>(null)
   const [showBoardsPanel, setShowBoardsPanel] = useState(false)
@@ -582,6 +690,14 @@ export const BoardPage = () => {
   const [showCommandPalette, setShowCommandPalette] = useState(false)
   const [commandPaletteQuery, setCommandPaletteQuery] = useState('')
   const [commandPaletteActiveIndex, setCommandPaletteActiveIndex] = useState(0)
+
+  useEffect(() => {
+    selectedIdsRef.current = selectedIds
+  }, [selectedIds])
+
+  useEffect(() => {
+    clipboardObjectRef.current = clipboardObject
+  }, [clipboardObject])
   const [hoveredObjectId, setHoveredObjectId] = useState<string | null>(null)
   const [shapeCreateDraft, setShapeCreateDraft] = useState<{
     shapeType: ShapeKind
@@ -614,19 +730,23 @@ export const BoardPage = () => {
     end: Point
   } | null>(null)
   const [voteConfettiParticles, setVoteConfettiParticles] = useState<VoteConfettiParticle[]>([])
+  const objectsCreatedCountRef = useRef(0)
+  const activeBoardMeta = useMemo(
+    () => boards.find((boardMeta) => boardMeta.id === boardId) || boardAccessMeta,
+    [boardAccessMeta, boardId, boards],
+  )
   const roleCanEditBoard = useMemo(() => {
     if (!userId) {
       return false
     }
-    const activeBoardMeta = boards.find((boardMeta) => boardMeta.id === boardId)
     if (!activeBoardMeta) {
-      return true
+      return false
     }
     if (activeBoardMeta.ownerId === userId) {
       return true
     }
     return (activeBoardMeta.sharedRoles[userId] || 'edit') !== 'view'
-  }, [boardId, boards, userId])
+  }, [activeBoardMeta, userId])
   const canEditBoard = interactionMode === 'edit' && roleCanEditBoard
   const boardCanvasBackground = themeMode === 'dark' ? '#0f172a' : '#f8fafc'
   const hasLiveBoardAccess = boardAccessState === 'granted'
@@ -773,13 +893,14 @@ export const BoardPage = () => {
     let cancelled = false
     setBoardAccessState('checking')
     setBoardAccessError(null)
+    setBoardAccessMeta(null)
 
     const boardRef = doc(db, 'boards', boardId)
     void (async () => {
       try {
         const snapshot = await getDoc(boardRef)
         if (!snapshot.exists()) {
-          await setDoc(boardRef, {
+          const createdBoardMeta: BoardMeta = {
             id: boardId,
             name: `Board ${boardId.slice(0, 8)}`,
             description: 'Untitled board',
@@ -788,10 +909,14 @@ export const BoardPage = () => {
             sharedRoles: {},
             createdBy: user.uid,
             updatedBy: user.uid,
+          }
+          await setDoc(boardRef, {
+            ...createdBoardMeta,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           })
           if (!cancelled) {
+            setBoardAccessMeta(createdBoardMeta)
             setBoardAccessState('granted')
           }
           return
@@ -808,6 +933,7 @@ export const BoardPage = () => {
         )
         if (!boardMeta || !canAccessBoardMeta(boardMeta, user.uid)) {
           if (!cancelled) {
+            setBoardAccessMeta(null)
             setBoardAccessState('denied')
             setBoardAccessError("You don't have permission to access this board.")
           }
@@ -815,6 +941,7 @@ export const BoardPage = () => {
         }
 
         if (!cancelled) {
+          setBoardAccessMeta(boardMeta)
           setBoardAccessState('granted')
         }
 
@@ -850,6 +977,7 @@ export const BoardPage = () => {
           typeof error === 'object' && error && 'code' in error ? String((error as { code?: unknown }).code || '') : ''
         if (errorCode.includes('permission-denied')) {
           if (!cancelled) {
+            setBoardAccessMeta(null)
             setBoardAccessState('denied')
             setBoardAccessError("You don't have permission to access this board.")
           }
@@ -858,6 +986,7 @@ export const BoardPage = () => {
 
         console.error('Failed to resolve board access', error)
         if (!cancelled) {
+          setBoardAccessMeta(null)
           setBoardAccessState('denied')
           setBoardAccessError('Unable to open this board right now.')
         }
@@ -960,6 +1089,16 @@ export const BoardPage = () => {
       unsubscribeShared()
     }
   }, [user])
+  useEffect(() => {
+    const current = boards.find((boardMeta) => boardMeta.id === boardId)
+    if (current) {
+      setBoardAccessMeta(current)
+    }
+  }, [boardId, boards])
+
+  useEffect(() => {
+    objectsCreatedCountRef.current = 0
+  }, [boardId])
 
   useObjectSync({
     db,
@@ -1195,10 +1334,7 @@ export const BoardPage = () => {
 
   const selectedId = selectedIds[0] || null
   const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds])
-  const currentBoardMeta = useMemo(
-    () => boards.find((boardMeta) => boardMeta.id === boardId) || null,
-    [boardId, boards],
-  )
+  const currentBoardMeta = useMemo(() => activeBoardMeta || null, [activeBoardMeta])
   const canManageCurrentBoardSharing = useMemo(
     () => Boolean(userId && currentBoardMeta && currentBoardMeta.ownerId === userId),
     [currentBoardMeta, userId],
@@ -1215,8 +1351,10 @@ export const BoardPage = () => {
   )
   const objectsById = useMemo(() => new Map(objects.map((boardObject) => [boardObject.id, boardObject])), [objects])
   const shareDialogBoardMeta = useMemo(
-    () => boards.find((boardMeta) => boardMeta.id === shareDialogBoardId) || null,
-    [boards, shareDialogBoardId],
+    () =>
+      boards.find((boardMeta) => boardMeta.id === shareDialogBoardId) ||
+      (shareDialogBoardId && activeBoardMeta?.id === shareDialogBoardId ? activeBoardMeta : null),
+    [activeBoardMeta, boards, shareDialogBoardId],
   )
   const selectedObject = useMemo(
     () => objects.find((boardObject) => boardObject.id === selectedId) || null,
@@ -1345,6 +1483,17 @@ export const BoardPage = () => {
   const effectiveTimerMs = timerState.running && timerState.endsAt
     ? Math.max(0, timerState.endsAt - nowMsValue)
     : timerState.remainingMs
+  useEffect(() => {
+    if (isEditingTimer) {
+      return
+    }
+    setTimerDraft(formatTimerLabel(effectiveTimerMs))
+  }, [effectiveTimerMs, isEditingTimer])
+  useEffect(() => {
+    if (!canEditBoard && isEditingTimer) {
+      setIsEditingTimer(false)
+    }
+  }, [canEditBoard, isEditingTimer])
   const selectedColorOptions = useMemo(() => {
     if (!selectedObject) {
       return [] as string[]
@@ -1640,15 +1789,17 @@ export const BoardPage = () => {
     }
   }, [selectionBox])
   const selectObjectId = useCallback((objectId: string, additive = false) => {
-    setSelectedIds((prev) => {
-      if (!additive) {
-        return [objectId]
-      }
-      if (prev.includes(objectId)) {
-        return prev.filter((id) => id !== objectId)
-      }
-      return [...prev, objectId]
-    })
+    const previous = selectedIdsRef.current
+    let nextIds: string[] = []
+    if (!additive) {
+      nextIds = [objectId]
+    } else if (previous.includes(objectId)) {
+      nextIds = previous.filter((id) => id !== objectId)
+    } else {
+      nextIds = [...previous, objectId]
+    }
+    selectedIdsRef.current = nextIds
+    setSelectedIds(nextIds)
   }, [])
   const resolveObjectPosition = useCallback(
     (boardObject: BoardObject) =>
@@ -2218,7 +2369,13 @@ export const BoardPage = () => {
   )
   const beginBoardRename = useCallback(
     (targetBoardMeta: BoardMeta) => {
-      if (!user || targetBoardMeta.ownerId !== user.uid) {
+      if (!user) {
+        return
+      }
+      const canRename =
+        targetBoardMeta.ownerId === user.uid ||
+        (boardAccessMeta?.id === targetBoardMeta.id && boardAccessMeta.ownerId === user.uid)
+      if (!canRename) {
         return
       }
       clearBoardNavigateTimeout()
@@ -2226,7 +2383,7 @@ export const BoardPage = () => {
       setRenamingBoardId(targetBoardMeta.id)
       setRenameBoardName(targetBoardMeta.name)
     },
-    [clearBoardNavigateTimeout, user],
+    [boardAccessMeta, clearBoardNavigateTimeout, user],
   )
   const cancelBoardRename = useCallback(() => {
     setRenamingBoardId(null)
@@ -2241,8 +2398,18 @@ export const BoardPage = () => {
       if (renamingBoardId !== targetBoardId) {
         return
       }
-      const targetBoardMeta = boards.find((candidate) => candidate.id === targetBoardId)
-      if (!targetBoardMeta || targetBoardMeta.ownerId !== user.uid) {
+      const targetBoardMeta =
+        boards.find((candidate) => candidate.id === targetBoardId) ||
+        (currentBoardMeta?.id === targetBoardId ? currentBoardMeta : null) ||
+        (boardAccessMeta?.id === targetBoardId ? boardAccessMeta : null)
+      if (!targetBoardMeta) {
+        cancelBoardRename()
+        return
+      }
+      const canRenameTarget =
+        targetBoardMeta.ownerId === user.uid ||
+        (boardAccessMeta?.id === targetBoardId && boardAccessMeta.ownerId === user.uid)
+      if (!canRenameTarget) {
         cancelBoardRename()
         return
       }
@@ -2257,24 +2424,33 @@ export const BoardPage = () => {
         return
       }
 
-      await setDoc(
-        doc(db, 'boards', targetBoardId),
-        {
-          name: trimmedName,
-          updatedBy: user.uid,
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true },
-      )
+      try {
+        await setDoc(
+          doc(db, 'boards', targetBoardId),
+          {
+            name: trimmedName,
+            updatedBy: user.uid,
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true },
+        )
 
-      setBoards((prev) =>
-        prev.map((boardMeta) =>
-          boardMeta.id === targetBoardId ? { ...boardMeta, name: trimmedName, updatedAt: nowMs() } : boardMeta,
-        ),
-      )
-      cancelBoardRename()
+        const updatedAt = nowMs()
+        setBoards((prev) =>
+          prev.map((boardMeta) =>
+            boardMeta.id === targetBoardId ? { ...boardMeta, name: trimmedName, updatedAt } : boardMeta,
+          ),
+        )
+        setBoardAccessMeta((prev) =>
+          prev && prev.id === targetBoardId ? { ...prev, name: trimmedName, updatedAt } : prev,
+        )
+        cancelBoardRename()
+      } catch (error) {
+        console.error('Unable to rename board', error)
+        setRenameBoardError('Unable to rename board right now.')
+      }
     },
-    [boards, cancelBoardRename, renameBoardName, renamingBoardId, user],
+    [boardAccessMeta, boards, cancelBoardRename, currentBoardMeta, renameBoardName, renamingBoardId, user],
   )
   const openShareDialog = useCallback((targetBoardId: string) => {
     setShareDialogBoardId(targetBoardId)
@@ -2643,10 +2819,11 @@ export const BoardPage = () => {
         0,
       )
 
+      const creationOffset = options?.position ? 0 : objectsCreatedCountRef.current * NEW_OBJECT_OFFSET_STEP
       const centerPosition =
         options?.position || {
-          x: (-viewport.x + stageSize.width / 2) / viewport.scale,
-          y: (-viewport.y + stageSize.height / 2) / viewport.scale,
+          x: (-viewport.x + stageSize.width / 2) / viewport.scale + creationOffset,
+          y: (-viewport.y + stageSize.height / 2) / viewport.scale + creationOffset,
         }
 
       const shapeType = normalizeShapeKind(options?.shapeType)
@@ -2775,6 +2952,9 @@ export const BoardPage = () => {
       })
       if (!options?.skipSelection) {
         setSelectedIds([id])
+      }
+      if (!options?.position) {
+        objectsCreatedCountRef.current += 1
       }
       touchBoard()
       return nextObject
@@ -3284,29 +3464,29 @@ export const BoardPage = () => {
               ...source,
               id,
               start: {
-                x: source.start.x + 24,
-                y: source.start.y + 24,
+                x: source.start.x + OBJECT_DUPLICATE_OFFSET,
+                y: source.start.y + OBJECT_DUPLICATE_OFFSET,
               },
               end: {
-                x: source.end.x + 24,
-                y: source.end.y + 24,
+                x: source.end.x + OBJECT_DUPLICATE_OFFSET,
+                y: source.end.y + OBJECT_DUPLICATE_OFFSET,
               },
               ...toConnectorBounds(
                 {
-                  x: source.start.x + 24,
-                  y: source.start.y + 24,
+                  x: source.start.x + OBJECT_DUPLICATE_OFFSET,
+                  y: source.start.y + OBJECT_DUPLICATE_OFFSET,
                 },
                 {
-                  x: source.end.x + 24,
-                  y: source.end.y + 24,
+                  x: source.end.x + OBJECT_DUPLICATE_OFFSET,
+                  y: source.end.y + OBJECT_DUPLICATE_OFFSET,
                 },
               ),
               fromObjectId: null,
               toObjectId: null,
               fromAnchor: null,
               toAnchor: null,
-              comments: undefined,
-              votesByUser: undefined,
+              comments: [],
+              votesByUser: {},
               zIndex: zIndex + 1,
               createdBy: user.uid,
               updatedBy: user.uid,
@@ -3319,11 +3499,11 @@ export const BoardPage = () => {
               frameId: null,
               id,
               position: {
-                x: source.position.x + 24,
-                y: source.position.y + 24,
+                x: source.position.x + OBJECT_DUPLICATE_OFFSET,
+                y: source.position.y + OBJECT_DUPLICATE_OFFSET,
               },
-              comments: undefined,
-              votesByUser: undefined,
+              comments: [],
+              votesByUser: {},
               zIndex: zIndex + 1,
               createdBy: user.uid,
               updatedBy: user.uid,
@@ -3353,12 +3533,22 @@ export const BoardPage = () => {
   )
 
   const duplicateSelected = useCallback(async () => {
-    if (!canEditBoard || selectedObjects.length === 0) {
+    if (!canEditBoard) {
+      return
+    }
+
+    const sourceIds = selectedIdsRef.current
+    const sourceObjects = selectedObjects.length > 0
+      ? selectedObjects
+      : sourceIds
+          .map((id) => objectsRef.current.find((boardObject) => boardObject.id === id))
+          .filter((boardObject): boardObject is BoardObject => Boolean(boardObject))
+    if (sourceObjects.length === 0) {
       return
     }
 
     const duplicatedIds: string[] = []
-    for (const boardObject of selectedObjects) {
+    for (const boardObject of sourceObjects) {
       const duplicated = await duplicateObject(boardObject, { selectAfter: false })
       if (duplicated) {
         duplicatedIds.push(duplicated.id)
@@ -3366,6 +3556,7 @@ export const BoardPage = () => {
     }
 
     if (duplicatedIds.length > 0) {
+      selectedIdsRef.current = duplicatedIds
       setSelectedIds(duplicatedIds)
     }
   }, [canEditBoard, duplicateObject, selectedObjects])
@@ -3827,30 +4018,48 @@ export const BoardPage = () => {
         return
       }
 
-      if (isMetaCombo && event.key.toLowerCase() === 'd' && selectedIds.length > 0) {
+      if (isMetaCombo && keyLower === 'd' && (selectedIdsRef.current.length > 0 || selectedObject)) {
         if (!canEditBoard) {
           return
         }
         event.preventDefault()
-        void duplicateSelected()
+        if (selectedIdsRef.current.length > 0) {
+          void duplicateSelected()
+        } else if (selectedObject) {
+          void duplicateObject(selectedObject)
+        }
         return
       }
 
-      if (isMetaCombo && event.key.toLowerCase() === 'c' && selectedObject) {
+      if (
+        isMetaCombo &&
+        keyLower === 'c' &&
+        (selectedIdsRef.current.length > 0 || selectedObjects.length > 0 || selectedObject)
+      ) {
         if (!canEditBoard) {
           return
         }
+
+        const sourceObject =
+          selectedObjects[0] ||
+          objectsRef.current.find((boardObject) => boardObject.id === selectedIdsRef.current[0]) ||
+          selectedObject
+        if (!sourceObject) {
+          return
+        }
+
         event.preventDefault()
-        setClipboardObject(selectedObject)
+        clipboardObjectRef.current = sourceObject
+        setClipboardObject(sourceObject)
         return
       }
 
-      if (isMetaCombo && event.key.toLowerCase() === 'v' && clipboardObject) {
+      if (isMetaCombo && keyLower === 'v' && clipboardObjectRef.current) {
         if (!canEditBoard) {
           return
         }
         event.preventDefault()
-        void duplicateObject(clipboardObject)
+        void duplicateObject(clipboardObjectRef.current)
         return
       }
 
@@ -3922,7 +4131,6 @@ export const BoardPage = () => {
   }, [
     activeCreatePopover,
     canEditBoard,
-    clipboardObject,
     closeCommandPalette,
     commandPaletteActiveIndex,
     deleteSelected,
@@ -3934,6 +4142,7 @@ export const BoardPage = () => {
     runCommandPaletteEntry,
     roleCanEditBoard,
     selectedIds,
+    selectedObjects,
     selectedObject,
     selectionMode,
     showCommandPalette,
@@ -4015,6 +4224,17 @@ export const BoardPage = () => {
     }
   }, [])
 
+  const beginTimerEdit = useCallback(() => {
+    if (!canEditBoard) {
+      return
+    }
+    setTimerDraft(formatTimerLabel(effectiveTimerMs))
+    setIsEditingTimer(true)
+  }, [canEditBoard, effectiveTimerMs])
+  const cancelTimerEdit = useCallback(() => {
+    setIsEditingTimer(false)
+    setTimerDraft(formatTimerLabel(effectiveTimerMs))
+  }, [effectiveTimerMs])
   const updateBoardTimer = useCallback(
     async (nextTimer: TimerState) => {
       if (!timerRef.current) {
@@ -4026,8 +4246,23 @@ export const BoardPage = () => {
     },
     [setTimerState],
   )
+  const commitTimerEdit = useCallback(async () => {
+    const parsedMs = parseTimerLabelToMs(timerDraft)
+    setIsEditingTimer(false)
+    if (parsedMs === null) {
+      setTimerDraft(formatTimerLabel(effectiveTimerMs))
+      return
+    }
+
+    await updateBoardTimer({
+      running: false,
+      endsAt: null,
+      remainingMs: parsedMs,
+    })
+  }, [effectiveTimerMs, timerDraft, updateBoardTimer])
 
   const startTimer = useCallback(async () => {
+    setIsEditingTimer(false)
     const remaining = timerState.running && timerState.endsAt
       ? Math.max(0, timerState.endsAt - Date.now())
       : timerState.remainingMs
@@ -4040,6 +4275,7 @@ export const BoardPage = () => {
   }, [timerState.endsAt, timerState.remainingMs, timerState.running, updateBoardTimer])
 
   const pauseTimer = useCallback(async () => {
+    setIsEditingTimer(false)
     const remaining = timerState.running && timerState.endsAt
       ? Math.max(0, timerState.endsAt - Date.now())
       : timerState.remainingMs
@@ -4051,6 +4287,7 @@ export const BoardPage = () => {
   }, [timerState.endsAt, timerState.remainingMs, timerState.running, updateBoardTimer])
 
   const resetTimer = useCallback(async () => {
+    setIsEditingTimer(false)
     await updateBoardTimer({
       running: false,
       endsAt: null,
@@ -4635,7 +4872,7 @@ export const BoardPage = () => {
     })
 
     const payload = (await response.json().catch(() => null)) as
-      | { error?: string; result?: { message?: string; aiResponse?: string } }
+      | { error?: string; result?: { message?: string; aiResponse?: string; level?: 'warning' } }
       | null
 
     if (!response.ok) {
@@ -4650,7 +4887,7 @@ export const BoardPage = () => {
       targetType: null,
     })
 
-    return payload?.result?.aiResponse || payload?.result?.message
+    return payload?.result || { message: 'Command executed and synced to the board.' }
   }
   const renderBoardListItem = (boardMeta: BoardMeta) => {
     const isOwner = boardMeta.ownerId === userId
@@ -4661,16 +4898,7 @@ export const BoardPage = () => {
         className={`board-list-item ${boardMeta.id === boardId ? 'active' : ''}`}
         data-testid={`board-list-item-${boardMeta.id}`}
       >
-        <button
-          type="button"
-          className="board-list-link"
-          onClick={() => {
-            if (renamingBoardId === boardMeta.id) {
-              return
-            }
-            scheduleBoardNavigate(boardMeta.id)
-          }}
-        >
+        <div className="board-list-link">
           {renamingBoardId === boardMeta.id ? (
             <input
               className="board-list-rename-input"
@@ -4728,37 +4956,68 @@ export const BoardPage = () => {
               ? ` · ${collaboratorsCount} collaborator${collaboratorsCount === 1 ? '' : 's'}`
               : ''}
           </span>
-        </button>
+        </div>
         <div className="board-list-actions">
           <button
             type="button"
-            className="board-list-share"
-            onClick={() => void duplicateBoardMeta(boardMeta.id)}
-            title="Duplicate board"
-            data-testid={`duplicate-board-${boardMeta.id}`}
+            className="button-icon with-tooltip tooltip-bottom board-list-action-button"
+            onClick={() => scheduleBoardNavigate(boardMeta.id)}
+            title="Open board"
+            data-tooltip="Open board"
+            aria-label={`Open board ${boardMeta.name}`}
+            disabled={renamingBoardId === boardMeta.id}
+            data-testid={`open-board-${boardMeta.id}`}
           >
-            Duplicate
+            <Eye size={14} />
           </button>
           {isOwner ? (
             <button
               type="button"
-              className="board-list-share"
-              onClick={() => openShareDialog(boardMeta.id)}
-              title="Share board"
-              data-testid={`share-board-${boardMeta.id}`}
+              className="button-icon with-tooltip tooltip-bottom board-list-action-button"
+              onClick={() => beginBoardRename(boardMeta)}
+              title="Rename board"
+              data-tooltip="Rename board"
+              aria-label={`Rename board ${boardMeta.name}`}
+              data-testid={`rename-board-${boardMeta.id}`}
             >
-              Share
+              <Pencil size={14} />
             </button>
           ) : null}
           <button
             type="button"
-            className="board-list-delete"
+            className="button-icon with-tooltip tooltip-bottom board-list-action-button"
+            onClick={() => void duplicateBoardMeta(boardMeta.id)}
+            title="Duplicate board"
+            data-tooltip="Duplicate board"
+            aria-label={`Duplicate board ${boardMeta.name}`}
+            data-testid={`duplicate-board-${boardMeta.id}`}
+          >
+            <Copy size={14} />
+          </button>
+          {isOwner ? (
+            <button
+              type="button"
+              className="button-icon with-tooltip tooltip-bottom board-list-action-button"
+              onClick={() => openShareDialog(boardMeta.id)}
+              title="Share board"
+              data-tooltip="Share board"
+              aria-label={`Share board ${boardMeta.name}`}
+              data-testid={`share-board-${boardMeta.id}`}
+            >
+              <Share2 size={14} />
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="button-icon with-tooltip tooltip-bottom board-list-action-button"
             onClick={() => void deleteBoardMeta(boardMeta.id)}
             title="Delete board"
+            data-tooltip="Delete board"
+            aria-label={`Delete board ${boardMeta.name}`}
             disabled={!isOwner || boards.length <= 1}
             data-testid={`delete-board-${boardMeta.id}`}
           >
-            Delete
+            <Trash2 size={14} />
           </button>
         </div>
         {renamingBoardId === boardMeta.id && renameBoardError ? <p className="error-text">{renameBoardError}</p> : null}
@@ -4886,7 +5145,42 @@ export const BoardPage = () => {
             <span className="timer-icon" aria-hidden>
               <Timer size={14} />
             </span>
-            <span>{formatTimerLabel(effectiveTimerMs)}</span>
+            {isEditingTimer ? (
+              <input
+                className="timer-edit-input"
+                value={timerDraft}
+                onChange={(event) => setTimerDraft(event.target.value)}
+                onBlur={() => {
+                  void commitTimerEdit()
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    void commitTimerEdit()
+                    return
+                  }
+                  if (event.key === 'Escape') {
+                    event.preventDefault()
+                    cancelTimerEdit()
+                  }
+                }}
+                autoFocus
+                aria-label="Edit timer"
+                data-testid="timer-edit-input"
+              />
+            ) : (
+              <button
+                type="button"
+                className="timer-display"
+                onClick={beginTimerEdit}
+                disabled={!canEditBoard}
+                title={canEditBoard ? 'Edit timer' : 'Timer is read-only in view mode'}
+                aria-label="Timer display"
+                data-testid="timer-display"
+              >
+                {formatTimerLabel(effectiveTimerMs)}
+              </button>
+            )}
             {timerState.running ? (
               <button
                 type="button"
@@ -4895,6 +5189,7 @@ export const BoardPage = () => {
                 title="Pause timer"
                 data-tooltip="Pause timer"
                 aria-label="Pause timer"
+                data-testid="timer-pause-button"
               >
                 <Pause size={16} />
               </button>
@@ -4906,6 +5201,7 @@ export const BoardPage = () => {
                 title="Start timer"
                 data-tooltip="Start timer"
                 aria-label="Start timer"
+                data-testid="timer-start-button"
               >
                 <Play size={16} />
               </button>
@@ -4917,6 +5213,7 @@ export const BoardPage = () => {
               title="Reset timer"
               data-tooltip="Reset timer"
               aria-label="Reset timer"
+              data-testid="timer-reset-button"
             >
               <RotateCcw size={16} />
             </button>
@@ -5040,153 +5337,165 @@ export const BoardPage = () => {
                   </section>
                 ) : null}
               </div>
-              <form
-                className="board-create-form"
-                onSubmit={(event) => {
-                  event.preventDefault()
-                  void createBoard()
-                }}
-                data-testid="board-create-form"
-              >
-                <h4>Create Board</h4>
-                <label className="board-field">
-                  <span>Name</span>
-                  <input
-                    value={newBoardName}
-                    onChange={(event) => {
-                      setNewBoardName(event.target.value)
-                      if (boardFormError) {
-                        setBoardFormError(null)
-                      }
-                    }}
-                    placeholder="Sprint planning"
-                    maxLength={80}
-                    data-testid="board-name-input"
-                  />
-                </label>
-                <label className="board-field">
-                  <span>Description</span>
-                  <textarea
-                    value={newBoardDescription}
-                    onChange={(event) => {
-                      setNewBoardDescription(event.target.value)
-                      if (boardFormError) {
-                        setBoardFormError(null)
-                      }
-                    }}
-                    placeholder="Optional board summary"
-                    rows={3}
-                    maxLength={240}
-                    data-testid="board-description-input"
-                  />
-                </label>
-                {boardFormError ? (
-                  <p className="error-text" data-testid="board-form-error">
-                    {boardFormError}
-                  </p>
-                ) : null}
-                <button type="submit" className="primary-button" data-testid="create-board-button">
-                  Create board
-                </button>
-              </form>
-              {shareDialogBoardId && shareDialogBoardMeta ? (
-                <section className="share-dialog-card" data-testid="share-dialog">
-                  <div className="share-dialog-header">
-                    <h4>Share "{shareDialogBoardMeta.name}"</h4>
-                    <button type="button" className="button-icon" onClick={closeShareDialog} aria-label="Close share dialog">
-                      <X size={14} />
-                    </button>
-                  </div>
-                  <form
-                    className="share-form"
-                    onSubmit={(event) => {
-                      event.preventDefault()
-                      void submitShareInvite()
-                    }}
-                    data-testid="share-board-form"
-                  >
-                    <label className="board-field">
-                      <span>Invite by email</span>
-                      <input
-                        type="email"
-                        value={shareEmail}
-                        onChange={(event) => {
-                          setShareEmail(event.target.value)
-                          if (shareError) {
-                            setShareError(null)
-                          }
-                        }}
-                        placeholder="collaborator@example.com"
-                        data-testid="share-email-input"
-                      />
-                    </label>
-                    <label className="board-field">
-                      <span>Permission</span>
-                      <select
-                        value={shareRole}
-                        onChange={(event) =>
-                          setShareRole(event.target.value === 'view' ? 'view' : 'edit')
+              <div className="boards-side">
+                <form
+                  className="board-create-form"
+                  onSubmit={(event) => {
+                    event.preventDefault()
+                    void createBoard()
+                  }}
+                  data-testid="board-create-form"
+                >
+                  <h4>Create Board</h4>
+                  <label className="board-field">
+                    <span>Name</span>
+                    <input
+                      value={newBoardName}
+                      onChange={(event) => {
+                        setNewBoardName(event.target.value)
+                        if (boardFormError) {
+                          setBoardFormError(null)
                         }
-                        data-testid="share-role-select"
-                      >
-                        <option value="edit">Can edit</option>
-                        <option value="view">Read only</option>
-                      </select>
-                    </label>
-                    {shareError ? (
-                      <p className="error-text" data-testid="share-error">
-                        {shareError}
-                      </p>
-                    ) : null}
-                    {shareStatus ? (
-                      <p className="panel-note" data-testid="share-status">
-                        {shareStatus}
-                      </p>
-                    ) : null}
-                    <button
-                      type="submit"
-                      className="primary-button"
-                      disabled={isShareSubmitting}
-                      data-testid="share-submit-button"
+                      }}
+                      placeholder="Sprint planning"
+                      maxLength={80}
+                      data-testid="board-name-input"
+                    />
+                  </label>
+                  <label className="board-field">
+                    <span>Description</span>
+                    <textarea
+                      value={newBoardDescription}
+                      onChange={(event) => {
+                        setNewBoardDescription(event.target.value)
+                        if (boardFormError) {
+                          setBoardFormError(null)
+                        }
+                      }}
+                      placeholder="Optional board summary"
+                      rows={3}
+                      maxLength={240}
+                      data-testid="board-description-input"
+                    />
+                  </label>
+                  {boardFormError ? (
+                    <p className="error-text" data-testid="board-form-error">
+                      {boardFormError}
+                    </p>
+                  ) : null}
+                  <button
+                    type="submit"
+                    className="button-icon button-primary with-tooltip tooltip-bottom board-create-icon-button"
+                    title="Create board"
+                    data-tooltip="Create board"
+                    aria-label="Create board"
+                    data-testid="create-board-button"
+                  >
+                    <Plus size={16} />
+                  </button>
+                </form>
+                {shareDialogBoardId && shareDialogBoardMeta ? (
+                  <section className="share-dialog-card" data-testid="share-dialog">
+                    <div className="share-dialog-header">
+                      <h4>Share "{shareDialogBoardMeta.name}"</h4>
+                      <button type="button" className="button-icon" onClick={closeShareDialog} aria-label="Close share dialog">
+                        <X size={14} />
+                      </button>
+                    </div>
+                    <form
+                      className="share-form"
+                      onSubmit={(event) => {
+                        event.preventDefault()
+                        void submitShareInvite()
+                      }}
+                      data-testid="share-board-form"
                     >
-                      {isShareSubmitting ? 'Sharing…' : 'Share'}
-                    </button>
-                  </form>
-                  <div className="share-collaborators">
-                    <h5>Collaborators</h5>
-                    {shareDialogBoardMeta.sharedWith.length === 0 ? (
-                      <p className="panel-note">No collaborators yet.</p>
-                    ) : (
-                      shareDialogBoardMeta.sharedWith.map((collaboratorId) => (
-                        <div
-                          key={collaboratorId}
-                          className="share-collaborator-row"
-                          data-testid={`share-collaborator-${collaboratorId}`}
+                      <label className="board-field">
+                        <span>Invite by email</span>
+                        <input
+                          type="email"
+                          value={shareEmail}
+                          onChange={(event) => {
+                            setShareEmail(event.target.value)
+                            if (shareError) {
+                              setShareError(null)
+                            }
+                          }}
+                          placeholder="collaborator@example.com"
+                          data-testid="share-email-input"
+                        />
+                      </label>
+                      <label className="board-field">
+                        <span>Permission</span>
+                        <select
+                          value={shareRole}
+                          onChange={(event) =>
+                            setShareRole(event.target.value === 'view' ? 'view' : 'edit')
+                          }
+                          data-testid="share-role-select"
                         >
-                          <span className="share-collaborator-id">{collaboratorId}</span>
-                          <span
-                            className="panel-note"
-                            data-testid={`share-collaborator-role-${collaboratorId}`}
+                          <option value="edit">Can edit</option>
+                          <option value="view">Read only</option>
+                        </select>
+                      </label>
+                      {shareError ? (
+                        <p className="error-text" data-testid="share-error">
+                          {shareError}
+                        </p>
+                      ) : null}
+                      {shareStatus ? (
+                        <p className="panel-note" data-testid="share-status">
+                          {shareStatus}
+                        </p>
+                      ) : null}
+                      <button
+                        type="submit"
+                        className="primary-button"
+                        disabled={isShareSubmitting}
+                        data-testid="share-submit-button"
+                      >
+                        {isShareSubmitting ? 'Sharing…' : 'Share'}
+                      </button>
+                    </form>
+                    <div className="share-collaborators">
+                      <h5>Collaborators</h5>
+                      {shareDialogBoardMeta.sharedWith.length === 0 ? (
+                        <p className="panel-note">No collaborators yet.</p>
+                      ) : (
+                        shareDialogBoardMeta.sharedWith.map((collaboratorId) => (
+                          <div
+                            key={collaboratorId}
+                            className="share-collaborator-row"
+                            data-testid={`share-collaborator-${collaboratorId}`}
                           >
-                            {shareDialogBoardMeta.sharedRoles[collaboratorId] === 'view'
-                              ? 'Read only'
-                              : 'Can edit'}
-                          </span>
-                          <button
-                            type="button"
-                            className="board-list-delete"
-                            disabled={isShareSubmitting}
-                            onClick={() => void revokeSharedCollaborator(shareDialogBoardMeta.id, collaboratorId)}
-                            data-testid={`revoke-collaborator-${collaboratorId}`}
-                          >
-                            Revoke
-                          </button>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </section>
-              ) : null}
+                            <span className="share-collaborator-id">{collaboratorId}</span>
+                            <span
+                              className="panel-note"
+                              data-testid={`share-collaborator-role-${collaboratorId}`}
+                            >
+                              {shareDialogBoardMeta.sharedRoles[collaboratorId] === 'view'
+                                ? 'Read only'
+                                : 'Can edit'}
+                            </span>
+                            <button
+                              type="button"
+                              className="button-icon with-tooltip tooltip-bottom board-list-action-button"
+                              disabled={isShareSubmitting}
+                              onClick={() => void revokeSharedCollaborator(shareDialogBoardMeta.id, collaboratorId)}
+                              title="Revoke access"
+                              data-tooltip="Revoke access"
+                              aria-label={`Revoke access for ${collaboratorId}`}
+                              data-testid={`revoke-collaborator-${collaboratorId}`}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </section>
+                ) : null}
+              </div>
             </div>
           </section>
         </div>
@@ -5729,7 +6038,15 @@ export const BoardPage = () => {
           <button
             type="button"
             className="button-icon with-tooltip"
-            onClick={() => void duplicateSelected()}
+            onClick={() => {
+              if (selectedIds.length > 0) {
+                void duplicateSelected()
+                return
+              }
+              if (selectedObject) {
+                void duplicateObject(selectedObject)
+              }
+            }}
             disabled={!canEditBoard || selectedIds.length === 0}
             title="Duplicate selected (Cmd/Ctrl + D)"
             data-tooltip="Duplicate selected object"
@@ -5766,14 +6083,7 @@ export const BoardPage = () => {
             </span>
             {remotePresenceEntries.map((cursor) => (
               <span key={cursor.userId} className="presence-pill">
-                <span
-                  className={`presence-dot ${
-                    typeof cursor.lastSeen === 'number' &&
-                    nowMsValue - cursor.lastSeen > PRESENCE_AWAY_THRESHOLD_MS
-                      ? 'away'
-                      : ''
-                  }`}
-                />
+                <span className="presence-dot" />
                 {cursor.displayName}
               </span>
             ))}
@@ -6031,44 +6341,12 @@ export const BoardPage = () => {
                           verticalAlign={shapeType === 'rectangle' ? 'top' : 'middle'}
                         />
                       ) : null}
-                      {voteCount > 0 ? (
-                        <>
-                          <Circle x={size.width - 16} y={16} radius={11} fill="#1d4ed8" />
-                          <Text
-                            text={String(voteCount)}
-                            x={size.width - 21}
-                            y={10}
-                            width={10}
-                            align="center"
-                            fontSize={11}
-                            fill="#ffffff"
-                          />
-                        </>
-                      ) : null}
-                      {commentCount > 0 ? (
-                        <>
-                          <Rect
-                            x={8}
-                            y={8}
-                            width={commentCount > 9 ? 28 : 24}
-                            height={18}
-                            fill="#0f766e"
-                            cornerRadius={9}
-                            shadowBlur={4}
-                            shadowOpacity={0.18}
-                          />
-                          <Text
-                            text={`C${commentCount}`}
-                            x={8}
-                            y={11}
-                            width={commentCount > 9 ? 28 : 24}
-                            align="center"
-                            fontSize={11}
-                            fontStyle="bold"
-                            fill="#ffffff"
-                          />
-                        </>
-                      ) : null}
+                      {renderVoteBadge({
+                        voteCount,
+                        x: size.width - getVoteBadgeWidth(voteCount) - 8,
+                        y: 8,
+                      })}
+                      {renderCommentBadge({ commentCount, x: 8, y: 8 })}
                       {selected ? (
                         <Rect
                           width={size.width}
@@ -6302,44 +6580,12 @@ export const BoardPage = () => {
                           verticalAlign={shapeType === 'rectangle' ? 'top' : 'middle'}
                         />
                       ) : null}
-                      {voteCount > 0 ? (
-                        <>
-                          <Circle x={size.width - 16} y={16} radius={11} fill="#1d4ed8" />
-                          <Text
-                            text={String(voteCount)}
-                            x={size.width - 21}
-                            y={10}
-                            width={10}
-                            align="center"
-                            fontSize={11}
-                            fill="#ffffff"
-                          />
-                        </>
-                      ) : null}
-                      {commentCount > 0 ? (
-                        <>
-                          <Rect
-                            x={8}
-                            y={8}
-                            width={commentCount > 9 ? 28 : 24}
-                            height={18}
-                            fill="#0f766e"
-                            cornerRadius={9}
-                            shadowBlur={4}
-                            shadowOpacity={0.18}
-                          />
-                          <Text
-                            text={`C${commentCount}`}
-                            x={8}
-                            y={11}
-                            width={commentCount > 9 ? 28 : 24}
-                            align="center"
-                            fontSize={11}
-                            fontStyle="bold"
-                            fill="#ffffff"
-                          />
-                        </>
-                      ) : null}
+                      {renderVoteBadge({
+                        voteCount,
+                        x: size.width - getVoteBadgeWidth(voteCount) - 8,
+                        y: 8,
+                      })}
+                      {renderCommentBadge({ commentCount, x: 8, y: 8 })}
                       {!selected && hovered ? (
                         <Rect
                           width={size.width}
@@ -6526,44 +6772,20 @@ export const BoardPage = () => {
                           hitStrokeWidth={16}
                         />
                       )}
-                      {voteCount > 0 ? (
-                        <>
-                          <Circle x={connectorMidpoint.x + 14} y={connectorMidpoint.y - 14} radius={11} fill="#1d4ed8" />
-                          <Text
-                            text={String(voteCount)}
-                            x={connectorMidpoint.x + 9}
-                            y={connectorMidpoint.y - 20}
-                            width={10}
-                            align="center"
-                            fontSize={11}
-                            fill="#ffffff"
-                          />
-                        </>
-                      ) : null}
-                      {commentCount > 0 ? (
-                        <>
-                          <Rect
-                            x={connectorMidpoint.x - (commentCount > 9 ? 28 : 24) - 6}
-                            y={connectorMidpoint.y - 23}
-                            width={commentCount > 9 ? 28 : 24}
-                            height={18}
-                            fill="#0f766e"
-                            cornerRadius={9}
-                            shadowBlur={4}
-                            shadowOpacity={0.18}
-                          />
-                          <Text
-                            text={`C${commentCount}`}
-                            x={connectorMidpoint.x - (commentCount > 9 ? 28 : 24) - 6}
-                            y={connectorMidpoint.y - 20}
-                            width={commentCount > 9 ? 28 : 24}
-                            align="center"
-                            fontSize={11}
-                            fontStyle="bold"
-                            fill="#ffffff"
-                          />
-                        </>
-                      ) : null}
+                      {renderVoteBadge({
+                        voteCount,
+                        x: connectorMidpoint.x + 6,
+                        y: connectorMidpoint.y - 23,
+                      })}
+                      {renderCommentBadge({
+                        commentCount,
+                        x:
+                          connectorMidpoint.x +
+                          6 -
+                          (commentCount > 0 && voteCount > 0 ? 24 : 0) -
+                          (voteCount > 0 ? 0 : 12),
+                        y: connectorMidpoint.y - 23,
+                      })}
                       {selected && canEditBoard ? (
                         <>
                           <Circle
@@ -6861,44 +7083,18 @@ export const BoardPage = () => {
                           fill={getContrastingTextColor(boardObject.color)}
                         />
                       ) : null}
-                      {voteCount > 0 ? (
-                        <>
-                          <Circle x={size.width - 16} y={16} radius={11} fill="#1d4ed8" />
-                          <Text
-                            text={String(voteCount)}
-                            x={size.width - 21}
-                            y={10}
-                            width={10}
-                            align="center"
-                            fontSize={11}
-                            fill="#ffffff"
-                          />
-                        </>
-                      ) : null}
-                      {commentCount > 0 ? (
-                        <>
-                          <Rect
-                            x={size.width - (commentCount > 9 ? 28 : 24) - 8}
-                            y={36}
-                            width={commentCount > 9 ? 28 : 24}
-                            height={18}
-                            fill="#0f766e"
-                            cornerRadius={9}
-                            shadowBlur={4}
-                            shadowOpacity={0.18}
-                          />
-                          <Text
-                            text={`C${commentCount}`}
-                            x={size.width - (commentCount > 9 ? 28 : 24) - 8}
-                            y={39}
-                            width={commentCount > 9 ? 28 : 24}
-                            align="center"
-                            fontSize={11}
-                            fontStyle="bold"
-                            fill="#ffffff"
-                          />
-                        </>
-                      ) : null}
+                      {renderVoteBadge({
+                        voteCount,
+                        x: size.width - getVoteBadgeWidth(voteCount) - 8,
+                        y: 8,
+                      })}
+                      {renderCommentBadge({
+                        commentCount,
+                        x: voteCount > 0
+                          ? size.width - getVoteBadgeWidth(voteCount) - 8 - 24
+                          : size.width - 18 - 8,
+                        y: 8,
+                      })}
                       {selected && canEditBoard ? (
                         <Rect
                           x={size.width - RESIZE_HANDLE_SIZE}
@@ -7060,44 +7256,12 @@ export const BoardPage = () => {
                           shadowOpacity={hovered ? 0.28 : 0}
                         />
                       ) : null}
-                      {voteCount > 0 ? (
-                        <>
-                          <Circle x={textWidth - 16} y={16} radius={11} fill="#1d4ed8" />
-                          <Text
-                            text={String(voteCount)}
-                            x={textWidth - 21}
-                            y={10}
-                            width={10}
-                            align="center"
-                            fontSize={11}
-                            fill="#ffffff"
-                          />
-                        </>
-                      ) : null}
-                      {commentCount > 0 ? (
-                        <>
-                          <Rect
-                            x={8}
-                            y={8}
-                            width={commentCount > 9 ? 28 : 24}
-                            height={18}
-                            fill="#0f766e"
-                            cornerRadius={9}
-                            shadowBlur={4}
-                            shadowOpacity={0.18}
-                          />
-                          <Text
-                            text={`C${commentCount}`}
-                            x={8}
-                            y={11}
-                            width={commentCount > 9 ? 28 : 24}
-                            align="center"
-                            fontSize={11}
-                            fontStyle="bold"
-                            fill="#ffffff"
-                          />
-                        </>
-                      ) : null}
+                      {renderVoteBadge({
+                        voteCount,
+                        x: textWidth - getVoteBadgeWidth(voteCount) - 8,
+                        y: 8,
+                      })}
+                      {renderCommentBadge({ commentCount, x: 8, y: 8 })}
                       {!selected && hovered ? (
                         <Rect
                           width={textWidth}

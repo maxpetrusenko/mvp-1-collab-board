@@ -65,9 +65,9 @@ firebase deploy
 
 ## Quality Gates
 
-- Lint: `cd app && npm run lint`
-- E2E tests: `cd app && npm run test:e2e`
-- MVP regression test: `cd app && npx playwright test e2e/mvp-regression.spec.ts`
+- Fast dev gate (default while coding, no tests): `bash scripts/run-dev-gate.sh`
+- Full pre-prod gate (parallelized checks + sharded Playwright): `bash scripts/run-full-gate.sh`
+- Optional critical backend checks in full gate: `RUN_CRITICAL_CHECKS=1 bash scripts/run-full-gate.sh`
 - Critical backend checks: `bash scripts/run-critical-checks.sh`
 - Submission QA: `bash scripts/run-submission-qa.sh`
 

@@ -41,7 +41,7 @@ test('TS-014 / RQ-014: AI command history is collected and rendered in the panel
 
 test('TS-015 / FR-7 / RQ-015: shift+click additive multi-select logic is present', () => {
   assert.equal(boardPageSource.includes('if (!additive) {'), true)
-  assert.equal(boardPageSource.includes('if (prev.includes(objectId)) {'), true)
+  assert.equal(boardPageSource.includes('if (previous.includes(objectId)) {'), true)
   assert.equal(
     boardPageSource.includes("handleObjectSelection(boardObject, Boolean(event.evt.shiftKey), 'text')"),
     true,
@@ -71,7 +71,9 @@ test('TS-018 / FR-7 / RQ-018: bulk move for selected groups uses shared drag sna
 
 test('TS-019 / FR-7 / RQ-020: bulk duplicate duplicates every selected object', () => {
   assert.equal(boardPageSource.includes('const duplicateSelected = useCallback(async () => {'), true)
-  assert.equal(boardPageSource.includes('for (const boardObject of selectedObjects) {'), true)
+  assert.equal(boardPageSource.includes('const sourceObjects ='), true)
+  assert.equal(boardPageSource.includes('selectedObjects.length > 0'), true)
+  assert.equal(boardPageSource.includes('for (const boardObject of sourceObjects) {'), true)
   assert.equal(boardPageSource.includes('setSelectedIds(duplicatedIds)'), true)
 })
 
@@ -122,6 +124,16 @@ test('TS-050 / FR-22+FR-16 UX: AI panel submit is disabled when board is not edi
   assert.equal(boardPageSource.includes('disabled={!user || !canEditBoard || !hasLiveBoardAccess}'), true)
   assert.equal(aiPanelSource.includes('disabled={disabled || !command.trim()}'), true)
   assert.equal(boardPageSource.includes("throw new Error('Switch to edit mode to run AI commands.')"), true)
+})
+
+test('TS-058 / AI UX: inline AI messages render only for warnings/errors while success uses status pill', () => {
+  assert.equal(
+    aiPanelSource.includes("const [status, setStatus] = useState<'idle' | 'running' | 'success' | 'warning' | 'error'>('idle')"),
+    true,
+  )
+  assert.equal(aiPanelSource.includes("submitPayload?.level === 'warning'"), true)
+  assert.equal(aiPanelSource.includes("status === 'error' || status === 'warning'"), true)
+  assert.equal(aiPanelSource.includes("setMessage(isWarning ? returnedMessage || \"I can't help with that.\" : '')"), true)
 })
 
 test('TS-026 / UX: toolbar exposes explicit Select and Area selection modes', () => {
@@ -198,6 +210,26 @@ test('TS-033 / T-060: board rename supports double-click inline edit in boards p
   assert.equal(boardPageSource.includes('const submitBoardRename = useCallback('), true)
 })
 
+test('TS-060 / UX: boards panel uses explicit open/rename actions instead of opening on row click', () => {
+  assert.equal(boardPageSource.includes('<div className="board-list-link">'), true)
+  assert.equal(boardPageSource.includes('data-testid={`open-board-${boardMeta.id}`}'), true)
+  assert.equal(boardPageSource.includes('data-testid={`rename-board-${boardMeta.id}`}'), true)
+  assert.equal(boardPageSource.includes('title="Open board"'), true)
+  assert.equal(boardPageSource.includes('onClick={() => scheduleBoardNavigate(boardMeta.id)}'), true)
+  assert.equal(boardPageSource.includes('className="board-list-link"\n          role="button"'), false)
+})
+
+test('TS-061 / UX: board actions and create action are icon-first', () => {
+  assert.equal(boardPageSource.includes('<Copy size={14} />'), true)
+  assert.equal(boardPageSource.includes('<Share2 size={14} />'), true)
+  assert.equal(boardPageSource.includes('<Trash2 size={14} />'), true)
+  assert.equal(boardPageSource.includes('<Plus size={16} />'), true)
+  assert.equal(boardPageSource.includes('data-testid={`duplicate-board-${boardMeta.id}`}'), true)
+  assert.equal(boardPageSource.includes('data-testid={`share-board-${boardMeta.id}`}'), true)
+  assert.equal(boardPageSource.includes('data-testid={`delete-board-${boardMeta.id}`}'), true)
+  assert.equal(boardPageSource.includes('data-testid="create-board-button"'), true)
+})
+
 test('TS-055 / T-113: current board header supports inline rename for board owners', () => {
   assert.equal(boardPageSource.includes('data-testid="current-board-name"'), true)
   assert.equal(boardPageSource.includes('data-testid="current-board-name-input"'), true)
@@ -231,11 +263,14 @@ test('TS-035 / T-068: object hover state is tracked and rendered for board objec
   assert.equal(boardPageSource.includes("container.style.cursor = 'pointer'"), true)
 })
 
-test('TS-049 / T-032 UX: vote badges render icon + numeric count with dynamic width for multi-vote clarity', () => {
+test('TS-049 / T-032 UX: vote badges render icon + numeric count, while comment badges are icon-only', () => {
   assert.equal(boardPageSource.includes('const voteCount = Object.keys(boardObject.votesByUser || {}).length'), true)
+  assert.equal(boardPageSource.includes('const getVoteBadgeWidth = (voteCount: number) => (voteCount > 9 ? 34 : 30)'), true)
+  assert.equal(boardPageSource.includes('const renderVoteBadge = (args: { voteCount: number; x: number; y: number }) => {'), true)
+  assert.equal(boardPageSource.includes('const renderCommentBadge = (args: { commentCount: number; x: number; y: number }) => {'), true)
   assert.equal(boardPageSource.includes('voteCount > 0'), true)
-  assert.equal(boardPageSource.includes('fill="#1d4ed8"'), true)
   assert.equal(boardPageSource.includes('String(voteCount)'), true)
+  assert.equal(boardPageSource.includes('text={`C${commentCount}`}'), false)
 })
 
 test('TS-051 / FR-22: share dialog exposes role selection, defaults to edit, and renders collaborator role labels', () => {
@@ -247,6 +282,14 @@ test('TS-051 / FR-22: share dialog exposes role selection, defaults to edit, and
   assert.equal(boardPageSource.includes('data-testid={`share-collaborator-role-${collaboratorId}`}'), true)
   assert.equal(boardPageSource.includes('role: shareRole'), true)
   assert.equal(boardPageSource.includes('disabled={!roleCanEditBoard}'), true)
+})
+
+test('TS-059 / FR-22: permission/role gating uses board-access metadata fallback during board list hydration', () => {
+  assert.equal(boardPageSource.includes('const [boardAccessMeta, setBoardAccessMeta] = useState<BoardMeta | null>(null)'), true)
+  assert.equal(boardPageSource.includes('const activeBoardMeta = useMemo('), true)
+  assert.equal(boardPageSource.includes('boards.find((boardMeta) => boardMeta.id === boardId) || boardAccessMeta'), true)
+  assert.equal(boardPageSource.includes('if (!activeBoardMeta) {'), true)
+  assert.equal(boardPageSource.includes('return false'), true)
 })
 
 test('TS-052 / FR-16: AI commands are routed through backend planner/LLM path (no local hardcoded parser)', () => {
@@ -325,8 +368,38 @@ test('G4-SHARE-002: main board header exposes a direct share action for owners',
   assert.equal(boardPageSource.includes('setShowBoardsPanel(true)'), true)
 })
 
+test('G4-PRESENCE-001: online presence indicators stay green (no away/yellow fallback class)', () => {
+  assert.equal(boardPageSource.includes('className="presence-dot"'), true)
+  assert.equal(boardPageSource.includes('presence-dot away'), false)
+  assert.equal(boardPageSource.includes('PRESENCE_AWAY_THRESHOLD_MS'), false)
+})
+
+test('G4-OPS-001: keyboard copy/duplicate actions resolve from live selection state and selected refs', () => {
+  assert.equal(
+    boardPageSource.includes(
+      "if (\n        isMetaCombo &&\n        keyLower === 'c' &&\n        (selectedIdsRef.current.length > 0 || selectedObjects.length > 0 || selectedObject)\n      )",
+    ),
+    true,
+  )
+  assert.equal(
+    boardPageSource.includes("if (isMetaCombo && keyLower === 'd' && (selectedIdsRef.current.length > 0 || selectedObject))"),
+    true,
+  )
+  assert.equal(
+    boardPageSource.includes('selectedObjects[0] ||'),
+    true,
+  )
+  assert.equal(boardPageSource.includes('const sourceObjects ='), true)
+  assert.equal(boardPageSource.includes('const sourceObjects = selectedObjects.length > 0'), true)
+  assert.equal(boardPageSource.includes('if (selectedIds.length > 0) {'), true)
+  assert.equal(boardPageSource.includes('data-testid="duplicate-selected-button"'), true)
+})
+
 test('G4-TIMER-001: timer editing functionality is present', () => {
   assert.equal(boardPageSource.includes('className="timer-widget"'), true)
+  assert.equal(boardPageSource.includes('data-testid="timer-display"'), true)
+  assert.equal(boardPageSource.includes('data-testid="timer-edit-input"'), true)
+  assert.equal(boardPageSource.includes('const parseTimerLabelToMs = (inputValue: string): number | null => {'), true)
   assert.equal(boardPageSource.includes('formatTimerLabel(effectiveTimerMs)'), true)
   assert.equal(boardPageSource.includes('title="Start timer"'), true)
   assert.equal(boardPageSource.includes('title="Pause timer"'), true)
@@ -335,10 +408,13 @@ test('G4-TIMER-001: timer editing functionality is present', () => {
 
 test('G4-OFFSET-001: auto-offset is applied to newly created objects', () => {
   assert.equal(boardPageSource.includes('const duplicateObject = useCallback('), true)
-  assert.equal(boardPageSource.includes('x: source.position.x + 24'), true)
-  assert.equal(boardPageSource.includes('y: source.position.y + 24'), true)
-  assert.equal(boardPageSource.includes('x: source.start.x + 24'), true)
-  assert.equal(boardPageSource.includes('y: source.end.y + 24'), true)
+  assert.equal(boardPageSource.includes('const NEW_OBJECT_OFFSET_STEP = 20'), true)
+  assert.equal(boardPageSource.includes('const OBJECT_DUPLICATE_OFFSET = 20'), true)
+  assert.equal(boardPageSource.includes('objectsCreatedCountRef.current * NEW_OBJECT_OFFSET_STEP'), true)
+  assert.equal(boardPageSource.includes('x: source.position.x + OBJECT_DUPLICATE_OFFSET'), true)
+  assert.equal(boardPageSource.includes('y: source.position.y + OBJECT_DUPLICATE_OFFSET'), true)
+  assert.equal(boardPageSource.includes('x: source.start.x + OBJECT_DUPLICATE_OFFSET'), true)
+  assert.equal(boardPageSource.includes('y: source.end.y + OBJECT_DUPLICATE_OFFSET'), true)
 })
 
 test('G4-VOTING-001: voting works on all object types not just sticky notes', () => {
@@ -364,9 +440,10 @@ test('G4-VOTING-001: voting works on all object types not just sticky notes', ()
 
 test('G4-VOTING-002: vote badges are rendered on frames and shapes', () => {
   assert.equal(boardPageSource.includes('const voteCount = Object.keys(boardObject.votesByUser || {}).length'), true)
-  assert.equal(boardPageSource.includes('voteCount > 0'), true)
-  assert.equal(boardPageSource.includes('fill="#1d4ed8"'), true) // Blue vote badge
+  assert.equal(boardPageSource.includes('renderVoteBadge({'), true)
+  assert.equal(boardPageSource.includes('renderCommentBadge({'), true)
   assert.equal(boardPageSource.includes('String(voteCount)'), true)
+  assert.equal(boardPageSource.includes('text={`C${commentCount}`}'), false)
 })
 
 test('G4-ROTATION-001: Miro-style drag-to-rotate handle is present', () => {
@@ -444,5 +521,5 @@ test('G4-GLM-002: GLM function handlers implemented in index.js', () => {
 
   // duplicateObject creates new ID and offsets position
   assert.equal(glmIndexSource.includes('const id = crypto.randomUUID()'), true)
-  assert.equal(glmIndexSource.includes('const offsetX = parseNumber(args.offsetX, 30)'), true)
+  assert.equal(glmIndexSource.includes('const offsetX = parseNumber(args.offsetX, 20)'), true)
 })

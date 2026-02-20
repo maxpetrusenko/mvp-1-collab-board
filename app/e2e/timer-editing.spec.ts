@@ -28,7 +28,7 @@ test.describe('Timer Editing', () => {
       await expect(timerDisplay).toBeVisible()
       await expect(timerDisplay).toHaveText('05:00')
     } finally {
-      await deleteTempUser(user)
+      await deleteTempUser(user.idToken)
     }
   })
 
@@ -53,7 +53,7 @@ test.describe('Timer Editing', () => {
       await expect(timerInput).toBeVisible()
       await expect(timerInput).toHaveFocus()
     } finally {
-      await deleteTempUser(user)
+      await deleteTempUser(user.idToken)
     }
   })
 
@@ -82,7 +82,7 @@ test.describe('Timer Editing', () => {
       await expect(timerDisplay).toBeVisible()
       await expect(timerDisplay).toHaveText('10:30')
     } finally {
-      await deleteTempUser(user)
+      await deleteTempUser(user.idToken)
     }
   })
 
@@ -116,7 +116,7 @@ test.describe('Timer Editing', () => {
       await expect(timerDisplay).toBeVisible()
       await expect(timerDisplay).toHaveText('05:00')
     } finally {
-      await deleteTempUser(user)
+      await deleteTempUser(user.idToken)
     }
   })
 
@@ -145,7 +145,7 @@ test.describe('Timer Editing', () => {
       await expect(timerDisplay).toBeVisible()
       await expect(timerDisplay).toHaveText('05:00')
     } finally {
-      await deleteTempUser(user)
+      await deleteTempUser(user.idToken)
     }
   })
 
@@ -173,7 +173,7 @@ test.describe('Timer Editing', () => {
       await expect(timerInput).not.toBeVisible()
       await expect(timerDisplay).toHaveText('05:00')
     } finally {
-      await deleteTempUser(user)
+      await deleteTempUser(user.idToken)
     }
   })
 
@@ -205,7 +205,7 @@ test.describe('Timer Editing', () => {
       await page.waitForTimeout(2000)
       await expect(timerDisplay).not.toHaveText('05:00')
     } finally {
-      await deleteTempUser(user)
+      await deleteTempUser(user.idToken)
     }
   })
 
@@ -239,7 +239,7 @@ test.describe('Timer Editing', () => {
       const stillPausedTime = await timerDisplay.textContent()
       expect(stillPausedTime).toBe(pausedTime)
     } finally {
-      await deleteTempUser(user)
+      await deleteTempUser(user.idToken)
     }
   })
 
@@ -272,7 +272,7 @@ test.describe('Timer Editing', () => {
       // Timer should be stopped (start button visible again)
       await expect(startButton).toBeVisible()
     } finally {
-      await deleteTempUser(user)
+      await deleteTempUser(user.idToken)
     }
   })
 })

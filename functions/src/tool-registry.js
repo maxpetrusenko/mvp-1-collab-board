@@ -380,11 +380,11 @@ const TOOL_DEFINITIONS = [
           },
           offsetX: {
             type: 'number',
-            description: 'X offset in pixels for the duplicate (optional, defaults to 30)'
+            description: 'X offset in pixels for the duplicate (optional, defaults to 20)'
           },
           offsetY: {
             type: 'number',
-            description: 'Y offset in pixels for the duplicate (optional, defaults to 30)'
+            description: 'Y offset in pixels for the duplicate (optional, defaults to 20)'
           }
         },
         required: ['objectId']

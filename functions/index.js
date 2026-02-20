@@ -74,6 +74,7 @@ const parseNumber = (value, fallback) => {
 
 const sanitizeText = (text) => String(text || '').trim().slice(0, 300)
 const sanitizeAiAssistantResponse = (text) => sanitizeText(String(text || '').replace(/\s+/g, ' '))
+const OUT_OF_SCOPE_AI_MESSAGE = "I can't help with that."
 const normalizeCommand = (value) =>
   String(value || '')
     .normalize('NFKC')
@@ -959,8 +960,8 @@ const duplicateObject = async (ctx, args) => {
   const id = crypto.randomUUID()
   const now = nowMs()
   const zIndex = getNextZIndex(ctx.state)
-  const offsetX = parseNumber(args.offsetX, 30)
-  const offsetY = parseNumber(args.offsetY, 30)
+  const offsetX = parseNumber(args.offsetX, 20)
+  const offsetY = parseNumber(args.offsetY, 20)
 
   const duplicate = {
     ...source,
@@ -1006,6 +1007,38 @@ const arrangeGrid = async (ctx, objects) => {
   }
 
   ctx.executedTools.push({ tool: 'arrangeGrid', count: objects.length })
+}
+
+const createStickyGridTemplate = async (ctx, args = {}) => {
+  const rows = Math.min(6, Math.max(1, parseNumber(args.rows, 2)))
+  const columns = Math.min(6, Math.max(1, parseNumber(args.columns, 3)))
+  const total = rows * columns
+  const startX = 120
+  const startY = 120
+  const gapX = 220
+  const gapY = 150
+  const labels = String(args.labelText || '')
+    .split(/\s*(?:,|\/|\|)\s*|\s+and\s+/i)
+    .map((entry) => sanitizeText(entry))
+    .filter(Boolean)
+
+  for (let index = 0; index < total; index += 1) {
+    const row = Math.floor(index / columns)
+    const column = index % columns
+    const label =
+      labels.length > 0
+        ? labels[index % labels.length]
+        : `R${row + 1}C${column + 1}`
+
+    await createStickyNote(ctx, {
+      text: label,
+      x: startX + column * gapX,
+      y: startY + row * gapY,
+      color: '#fde68a',
+    })
+  }
+
+  ctx.executedTools.push({ tool: 'createStickyGridTemplate', rows, columns, count: total })
 }
 
 const createJourneyMap = async (ctx, stages) => {
@@ -1220,6 +1253,19 @@ const runCommandPlan = async (ctx, command) => {
   const normalizedCommand = normalizeCommandForPlan(command)
   const lower = normalizedCommand.toLowerCase()
 
+  const gridTemplateMatch = normalizedCommand.match(
+    /(?:create|add|build)\s+(?:a\s+)?(\d+)\s*x\s*(\d+)\s+grid\s+of\s+sticky(?:\s*notes?)?(?:\s+for\s+(.+))?/i,
+  )
+  if (gridTemplateMatch) {
+    const [, rowsRaw, columnsRaw, labelTextRaw] = gridTemplateMatch
+    await createStickyGridTemplate(ctx, {
+      rows: Number(rowsRaw),
+      columns: Number(columnsRaw),
+      labelText: stripWrappingQuotes(labelTextRaw || ''),
+    })
+    return
+  }
+
   const stickyCommand = parseStickyCommand(normalizedCommand)
   if (stickyCommand) {
     const stickyCount = Math.min(10, Math.max(1, stickyCommand.count || stickyCommand.texts.length || 1))
@@ -1263,12 +1309,12 @@ const runCommandPlan = async (ctx, command) => {
   }
 
   const frameMatch = normalizedCommand.match(
-    /^(?:add|create)\s+(?:a|an)?\s*frame(?:\s+named\s+(.+?))?(?:\s+at(?:\s+position)?\s*(-?\d+)\s*,\s*(-?\d+))?[.!?]?\s*$/i,
+    /^(?:add|create)\s+(?:a|an)?\s*frame(?:\s+(?:named|called)\s+(.+?))?(?:\s+at(?:\s+position)?\s*(-?\d+)\s*,\s*(-?\d+))?[.!?]?\s*$/i,
   )
   if (frameMatch) {
     const [, titleRaw, xRaw, yRaw] = frameMatch
     await createFrame(ctx, {
-      title: sanitizeText(titleRaw || 'New Frame'),
+      title: sanitizeText(stripWrappingQuotes(titleRaw || 'New Frame')),
       x: parseNumber(xRaw, 120),
       y: parseNumber(yRaw, 120),
       width: 480,
@@ -1393,13 +1439,16 @@ const runCommandPlan = async (ctx, command) => {
       return {
         message: modelUnavailableMessage,
         aiResponse: modelUnavailableMessage,
+        level: 'warning',
       }
     }
   }
 
-  throw new Error(
-    'Unsupported command. Try: "add hello world sticker", "add rectangle", "add circle", "add diamond", "add frame", "add connector", "organize by color", "organize this board into groups", "space these elements evenly", "resize the frame to fit its contents", "summarize all stickies into themes", "arrange in grid", "create SWOT template", "retrospective", or "user journey map with 5 stages".',
-  )
+  return {
+    message: OUT_OF_SCOPE_AI_MESSAGE,
+    aiResponse: OUT_OF_SCOPE_AI_MESSAGE,
+    level: 'warning',
+  }
 }
 
 /**
@@ -1420,17 +1469,17 @@ const executeViaLLM = async (ctx, command) => {
   const textResponse = sanitizeAiAssistantResponse(glmClient.getTextResponse(glmResponse))
 
   if (toolCalls.length === 0) {
-    if (textResponse) {
-      ctx.executedTools.push({
-        tool: 'assistantResponse',
-        llmGenerated: true,
-      })
-      return {
-        message: textResponse,
-        aiResponse: textResponse,
-      }
+    ctx.executedTools.push({
+      tool: 'assistantResponse',
+      llmGenerated: true,
+      outOfScope: true,
+      ...(textResponse ? { modelText: textResponse } : {}),
+    })
+    return {
+      message: OUT_OF_SCOPE_AI_MESSAGE,
+      aiResponse: OUT_OF_SCOPE_AI_MESSAGE,
+      level: 'warning',
     }
-    throw new Error('LLM did not return any tool calls')
   }
 
   // Execute each tool call sequentially
@@ -1838,7 +1887,16 @@ exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) =>
       }
     }
 
-    let queueSequence = parseNumber(existingData.queueSequence, 0)
+    // Failed attempts may leave a stale queueSequence. Retry should reserve a fresh slot.
+    let queueSequence = existingData.status === 'error' ? 0 : parseNumber(existingData.queueSequence, 0)
+    if (queueSequence > 0) {
+      const lockSnapshot = await getSystemRef(boardId).get()
+      const lockData = lockSnapshot.exists ? lockSnapshot.data() : null
+      const processingSequence = parseNumber(lockData?.processingSequence, 1)
+      if (queueSequence < processingSequence) {
+        queueSequence = 0
+      }
+    }
     if (!queueSequence) {
       queueSequence = await reserveQueueSequence(boardId)
     }
@@ -1879,11 +1937,13 @@ exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) =>
     const resultMessage = sanitizeAiAssistantResponse(planResult?.message) || 'Command executed and synced to the board.'
     const aiResponse = sanitizeAiAssistantResponse(planResult?.aiResponse)
 
+    const resultLevel = planResult?.level === 'warning' ? 'warning' : undefined
     const result = {
       executedTools: context.executedTools,
       objectCount: context.state.length,
       message: resultMessage,
       ...(aiResponse ? { aiResponse } : {}),
+      ...(resultLevel ? { level: resultLevel } : {}),
     }
 
     await commandRef.set(

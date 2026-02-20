@@ -13,6 +13,12 @@ const submitAiCommand = async (page: Page, command: string) => {
   await page.locator(AI_PANEL).getByRole('button', { name: 'Send Command' }).click()
 }
 
+const expectAiSuccess = async (page: Page) => {
+  await expect(page.getByTestId('ai-status-pill')).toHaveText('success')
+  await expect(page.locator(`${AI_PANEL} .ai-message.error`)).toHaveCount(0)
+  await expect(page.locator(`${AI_PANEL} .ai-message.warning`)).toHaveCount(0)
+}
+
 test.describe('AI command UI', () => {
   test.setTimeout(180_000)
   let user: Awaited<ReturnType<typeof createOrReuseTestUser>> | null = null
@@ -36,7 +42,7 @@ test.describe('AI command UI', () => {
     await expect(page.locator('.board-stage')).toBeVisible()
 
     await submitAiCommand(page, `add green sticky note saying ai-ui-${Date.now()}`)
-    await expect(page.locator(`${AI_PANEL} .ai-message.success`)).toBeVisible()
+    await expectAiSuccess(page)
 
     await expect
       .poll(async () => {
@@ -46,7 +52,7 @@ test.describe('AI command UI', () => {
       .toBe(true)
 
     await submitAiCommand(page, 'add circle')
-    await expect(page.locator(`${AI_PANEL} .ai-message.success`)).toBeVisible()
+    await expectAiSuccess(page)
     await expect
       .poll(async () => {
         const objects = await fetchBoardObjects(boardId, user.idToken)
@@ -66,7 +72,7 @@ test.describe('AI command UI', () => {
     await expect(page.locator('.board-stage')).toBeVisible()
 
     await submitAiCommand(page, 'create two stickers with circle form one say 1 another says 2')
-    await expect(page.locator(`${AI_PANEL} .ai-message.success`)).toBeVisible()
+    await expectAiSuccess(page)
 
     await expect
       .poll(async () => {
@@ -112,7 +118,7 @@ test.describe('AI command UI', () => {
       .not.toBe('')
 
     await submitAiCommand(page, 'change the sticky note color to blue')
-    await expect(page.locator(`${AI_PANEL} .ai-message.success`)).toBeVisible()
+    await expectAiSuccess(page)
 
     await expect
       .poll(async () => {
@@ -136,7 +142,7 @@ test.describe('AI command UI', () => {
 
     // Command: "add red sticky note" with text
     await submitAiCommand(page, `add red sticky note saying ${testText}`)
-    await expect(page.locator(`${AI_PANEL} .ai-message.success`)).toBeVisible()
+    await expectAiSuccess(page)
 
     // Verify sticky note created with red color and correct text
     await expect
@@ -162,7 +168,7 @@ test.describe('AI command UI', () => {
     await expect(page.locator('.board-stage')).toBeVisible()
 
     await submitAiCommand(page, `add 1 red sticky note saying ${testText}`)
-    await expect(page.locator(`${AI_PANEL} .ai-message.success`)).toBeVisible()
+    await expectAiSuccess(page)
 
     await expect
       .poll(async () => {
@@ -187,7 +193,7 @@ test.describe('AI command UI', () => {
     await expect(page.locator('.board-stage')).toBeVisible()
 
     await submitAiCommand(page, `add round sticky note with green color and text: ${testText}`)
-    await expect(page.locator(`${AI_PANEL} .ai-message.success`)).toBeVisible()
+    await expectAiSuccess(page)
 
     await expect
       .poll(async () => {
@@ -216,7 +222,7 @@ test.describe('AI command UI', () => {
 
     const startTime = Date.now()
     await submitAiCommand(page, 'add yellow sticky note saying performance test')
-    await expect(page.locator(`${AI_PANEL} .ai-message.success`)).toBeVisible()
+    await expectAiSuccess(page)
     const endTime = Date.now()
 
     const duration = endTime - startTime
@@ -235,7 +241,7 @@ test.describe('AI command UI', () => {
 
     // Test position understanding: "add sticky at top left"
     await submitAiCommand(page, 'add blue sticky note at top left')
-    await expect(page.locator(`${AI_PANEL} .ai-message.success`)).toBeVisible()
+    await expectAiSuccess(page)
 
     await expect
       .poll(async () => {

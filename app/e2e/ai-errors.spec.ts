@@ -13,6 +13,19 @@ const submitAiCommand = async (page: Page, command: string) => {
   await page.locator(AI_PANEL).getByRole('button', { name: 'Send Command' }).click()
 }
 
+const expectAiSuccess = async (page: Page) => {
+  await expect(page.getByTestId('ai-status-pill')).toHaveText('success')
+  await expect(page.locator(`${AI_PANEL} .ai-message.error`)).toHaveCount(0)
+  await expect(page.locator(`${AI_PANEL} .ai-message.warning`)).toHaveCount(0)
+}
+
+const expectAiWarning = async (page: Page) => {
+  await expect(page.getByTestId('ai-status-pill')).toHaveText('warning')
+  const warningMessage = page.locator(`${AI_PANEL} .ai-message.warning`)
+  await expect(warningMessage).toBeVisible()
+  await expect(warningMessage).toContainText(/can't help with that|temporarily unavailable/i)
+}
+
 test.describe('AI conversational responses', () => {
   test.setTimeout(180_000)
   let user: Awaited<ReturnType<typeof createOrReuseTestUser>> | null = null
@@ -36,9 +49,7 @@ test.describe('AI conversational responses', () => {
     await expect(page.locator('.board-stage')).toBeVisible()
 
     await submitAiCommand(page, '2+2')
-    const successMessage = page.locator(`${AI_PANEL} .ai-message.success`)
-    await expect(successMessage).toBeVisible()
-    await expect(successMessage).toContainText(/4|temporarily unavailable/i)
+    await expectAiWarning(page)
 
     await expect
       .poll(async () => {
@@ -59,11 +70,11 @@ test.describe('AI conversational responses', () => {
     await expect(page.locator('.board-stage')).toBeVisible()
 
     await submitAiCommand(page, 'What is 3 + 5?')
-    await expect(page.locator(`${AI_PANEL} .ai-message.success`)).toBeVisible()
+    await expectAiWarning(page)
 
     const recoveryToken = `ai-conversation-recovery-${Date.now()}`
     await submitAiCommand(page, `add green sticky note saying ${recoveryToken}`)
-    await expect(page.locator(`${AI_PANEL} .ai-message.success`)).toBeVisible()
+    await expectAiSuccess(page)
 
     await expect
       .poll(async () => {
