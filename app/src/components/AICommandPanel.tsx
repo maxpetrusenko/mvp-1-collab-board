@@ -1,68 +1,20 @@
-import { type ChangeEvent, useEffect, useRef, useState } from 'react'
+import { type ChangeEvent, useRef, useState } from 'react'
+import { ImageUp, LoaderCircle } from 'lucide-react'
 
 type AICommandPanelProps = {
   disabled: boolean
   onSubmit: (command: string) => Promise<unknown>
   onIngestTextLines?: (lines: string[]) => Promise<void>
+  history?: AICommandHistoryItem[]
 }
 
-type SpeechRecognitionEventLike = {
-  resultIndex?: number
-  results: ArrayLike<
-    ArrayLike<{
-      transcript?: string
-    }> & {
-      isFinal?: boolean
-    }
-  >
-}
-
-type SpeechRecognitionInstanceLike = {
-  start: () => void
-  stop: () => void
-  abort?: () => void
-  continuous: boolean
-  interimResults: boolean
-  lang?: string
-  maxAlternatives?: number
-  onresult: ((event: SpeechRecognitionEventLike) => void) | null
-  onerror: ((event: { error?: string }) => void) | null
-  onend: (() => void) | null
-}
-
-type SpeechRecognitionConstructorLike = new () => SpeechRecognitionInstanceLike
-
-const getSpeechRecognitionCtor = (): SpeechRecognitionConstructorLike | null => {
-  if (typeof window === 'undefined') {
-    return null
-  }
-
-  const speechWindow = window as Window & {
-    SpeechRecognition?: SpeechRecognitionConstructorLike
-    webkitSpeechRecognition?: SpeechRecognitionConstructorLike
-  }
-
-  return speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition || null
-}
-
-const toVoiceErrorMessage = (errorCode?: string): string => {
-  if (errorCode === 'not-allowed' || errorCode === 'service-not-allowed') {
-    return 'Microphone permission denied. Enable microphone access and try again.'
-  }
-
-  if (errorCode === 'audio-capture') {
-    return 'No microphone detected. Connect a microphone and try again.'
-  }
-
-  if (errorCode === 'no-speech') {
-    return 'No speech detected. Try again and speak clearly.'
-  }
-
-  if (errorCode === 'network') {
-    return 'Voice recognition network error. Check connection and retry.'
-  }
-
-  return `Voice input error: ${errorCode || 'unknown error'}`
+type AICommandHistoryItem = {
+  id: string
+  command: string
+  status: 'queued' | 'running' | 'success' | 'error'
+  queuedAt?: number
+  completedAt?: number
+  error?: string
 }
 
 const quickActions = [
@@ -72,40 +24,26 @@ const quickActions = [
   { label: 'Summarize', prompt: 'Summarize all sticky notes into themes', icon: '≣' },
 ]
 
-export const AICommandPanel = ({ disabled, onSubmit, onIngestTextLines }: AICommandPanelProps) => {
+const formatHistoryTime = (queuedAt?: number, completedAt?: number) => {
+  const timestamp = completedAt ?? queuedAt
+  if (!timestamp) {
+    return ''
+  }
+  const date = new Date(timestamp)
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+export const AICommandPanel = ({ disabled, onSubmit, onIngestTextLines, history = [] }: AICommandPanelProps) => {
   const [command, setCommand] = useState('')
   const [status, setStatus] = useState<'idle' | 'running' | 'success' | 'error'>('idle')
   const [message, setMessage] = useState('')
-  const [isListening, setIsListening] = useState(false)
   const [ocrRunning, setOcrRunning] = useState(false)
-  const recognitionRef = useRef<SpeechRecognitionInstanceLike | null>(null)
-  const stoppingVoiceRef = useRef(false)
-  const heardFinalSpeechRef = useRef(false)
-  const heardAnySpeechRef = useRef(false)
-  const latestTranscriptRef = useRef('')
-  const voiceErrorCodeRef = useRef<string | null>(null)
-  const voiceSupported = Boolean(getSpeechRecognitionCtor())
-
-  useEffect(() => {
-    return () => {
-      if (recognitionRef.current) {
-        stoppingVoiceRef.current = true
-        recognitionRef.current.stop()
-        recognitionRef.current.abort?.()
-      }
-    }
-  }, [])
+  const screenshotInputRef = useRef<HTMLInputElement | null>(null)
 
   const handleSubmit = async () => {
     const trimmed = command.trim()
     if (!trimmed || disabled) {
       return
-    }
-
-    if (isListening && recognitionRef.current) {
-      stoppingVoiceRef.current = true
-      recognitionRef.current.stop()
-      setIsListening(false)
     }
 
     setStatus('running')
@@ -117,143 +55,6 @@ export const AICommandPanel = ({ disabled, onSubmit, onIngestTextLines }: AIComm
     } catch (error) {
       setStatus('error')
       setMessage(error instanceof Error ? error.message : 'Failed to submit command')
-    }
-  }
-
-  const toggleVoiceInput = () => {
-    if (disabled) {
-      return
-    }
-
-    if (isListening && recognitionRef.current) {
-      stoppingVoiceRef.current = true
-      recognitionRef.current.stop()
-      setIsListening(false)
-      return
-    }
-
-    const SpeechRecognitionCtor = getSpeechRecognitionCtor()
-
-    if (!SpeechRecognitionCtor) {
-      setStatus('error')
-      setMessage('Voice input is not supported in this browser.')
-      return
-    }
-
-    const recognition = new SpeechRecognitionCtor()
-
-    recognition.continuous = true
-    recognition.interimResults = true
-    recognition.lang = 'en-US'
-    recognition.maxAlternatives = 1
-    stoppingVoiceRef.current = false
-    heardFinalSpeechRef.current = false
-    heardAnySpeechRef.current = false
-    latestTranscriptRef.current = ''
-    voiceErrorCodeRef.current = null
-
-    recognition.onresult = (event) => {
-      let finalFragments = ''
-      let interimFragments = ''
-      const startIndex = Number.isFinite(event.resultIndex) ? Number(event.resultIndex) : 0
-
-      for (let i = startIndex; i < event.results.length; i += 1) {
-        const result = event.results[i]
-        const transcript = String(result?.[0]?.transcript || '').trim()
-        if (!transcript) {
-          continue
-        }
-
-        if (result?.isFinal) {
-          finalFragments = `${finalFragments} ${transcript}`.trim()
-        } else {
-          interimFragments = `${interimFragments} ${transcript}`.trim()
-        }
-      }
-
-      if (finalFragments) {
-        heardFinalSpeechRef.current = true
-        heardAnySpeechRef.current = true
-        latestTranscriptRef.current = finalFragments
-        setCommand((prev) => (prev ? `${prev} ${finalFragments}`.trim() : finalFragments))
-        // Keep listening and showing live transcript
-        setStatus('idle')
-        setMessage(`Listening: ${finalFragments}`)
-      } else if (interimFragments) {
-        heardAnySpeechRef.current = true
-        latestTranscriptRef.current = interimFragments
-        setStatus('idle')
-        setMessage(`Listening: ${interimFragments}`)
-      }
-    }
-    recognition.onerror = (event) => {
-      const errorCode = String(event.error || '')
-      voiceErrorCodeRef.current = errorCode || null
-      if (errorCode === 'no-speech') {
-        return
-      }
-      setStatus('error')
-      setMessage(toVoiceErrorMessage(errorCode))
-      setIsListening(false)
-      recognitionRef.current = null
-      stoppingVoiceRef.current = false
-    }
-    recognition.onend = () => {
-      const stoppedManually = stoppingVoiceRef.current
-      const fallbackTranscript = latestTranscriptRef.current.trim()
-      const voiceErrorCode = voiceErrorCodeRef.current
-      stoppingVoiceRef.current = false
-      setIsListening(false)
-      recognitionRef.current = null
-      voiceErrorCodeRef.current = null
-
-      if (stoppedManually) {
-        if (fallbackTranscript) {
-          setCommand((prev) => (prev ? `${prev} ${fallbackTranscript}`.trim() : fallbackTranscript))
-          setStatus('success')
-          setMessage('Voice captured. Review and press Send Command.')
-        } else {
-          setStatus('idle')
-          setMessage('Voice input stopped.')
-        }
-        return
-      }
-
-      if (fallbackTranscript) {
-        setCommand((prev) => (prev ? `${prev} ${fallbackTranscript}`.trim() : fallbackTranscript))
-        setStatus('success')
-        setMessage('Voice captured. Review and press Send Command.')
-        return
-      }
-
-      if (heardAnySpeechRef.current) {
-        setStatus('success')
-        setMessage('Voice captured. Review and press Send Command.')
-        return
-      }
-
-      if (voiceErrorCode) {
-        setStatus('error')
-        setMessage(toVoiceErrorMessage(voiceErrorCode))
-        return
-      }
-
-      setStatus('error')
-      setMessage('No speech detected. Try again and speak clearly.')
-    }
-
-    recognitionRef.current = recognition
-    try {
-      recognition.start()
-      setIsListening(true)
-      setStatus('idle')
-      setMessage('Listening…')
-    } catch (error) {
-      setStatus('error')
-      setMessage(error instanceof Error ? error.message : 'Failed to start voice input')
-      setIsListening(false)
-      recognitionRef.current = null
-      stoppingVoiceRef.current = false
     }
   }
 
@@ -297,12 +98,15 @@ export const AICommandPanel = ({ disabled, onSubmit, onIngestTextLines }: AIComm
     <aside className="ai-panel">
       <div className="ai-panel-header">
         <h3>AI Assistant</h3>
-        <span className={`status-pill ${status}`}>{status}</span>
+        <span className={`status-pill ${status}`} role="status" aria-live="polite" data-testid="ai-status-pill">
+          {status}
+        </span>
       </div>
 
       <textarea
         className="ai-input"
         placeholder="Describe what you want to create or ask me to organize your board..."
+        aria-label="AI command input"
         value={command}
         onChange={(event) => setCommand(event.target.value)}
         disabled={disabled}
@@ -333,51 +137,28 @@ export const AICommandPanel = ({ disabled, onSubmit, onIngestTextLines }: AIComm
       <div className="ai-tools-row">
         <button
           type="button"
-          className={`button ${isListening ? 'button-primary' : 'button-secondary'}`}
-          onClick={toggleVoiceInput}
-          disabled={disabled || !voiceSupported}
-          aria-pressed={isListening}
-          title={voiceSupported ? 'Start or stop microphone input' : 'Voice input is not supported in this browser'}
+          className="button-icon ai-tool-icon-button"
+          onClick={() => screenshotInputRef.current?.click()}
+          disabled={disabled || ocrRunning || !onIngestTextLines}
+          aria-label="Import screenshot"
+          title={ocrRunning ? 'Processing screenshot...' : 'Import screenshot'}
         >
-          {isListening ? (
-            <>
-              <span className="mic-active">●</span>
-              Listening...
-            </>
-          ) : (
-            <>
-              <span className="mic-icon">🎤</span>
-              Voice Input
-            </>
-          )}
+          {ocrRunning ? <LoaderCircle className="spinner" size={16} /> : <ImageUp size={16} />}
         </button>
-
-        <label
-          className={`button button-secondary upload-label ${disabled || ocrRunning ? 'disabled' : ''}`}
-        >
-          {ocrRunning ? (
-            <>
-              <span className="spinner">○</span>
-              Processing...
-            </>
-          ) : (
-            <>
-              <span>📷</span>
-              Import Screenshot
-            </>
-          )}
-          <input
-            type="file"
-            accept="image/*"
-            onChange={(event) => void handleImageUpload(event)}
-            disabled={disabled || ocrRunning || !onIngestTextLines}
-          />
-        </label>
+        <input
+          ref={screenshotInputRef}
+          type="file"
+          accept="image/*"
+          aria-label="Import screenshot"
+          onChange={(event) => void handleImageUpload(event)}
+          disabled={disabled || ocrRunning || !onIngestTextLines}
+          className="ai-upload-input"
+        />
       </div>
 
       <button
         type="button"
-        className="button button-primary"
+        className="button button-primary send-command-button"
         onClick={() => void handleSubmit()}
         disabled={disabled || !command.trim()}
       >
@@ -386,12 +167,30 @@ export const AICommandPanel = ({ disabled, onSubmit, onIngestTextLines }: AIComm
 
       {message && (
         <div className={`ai-message ${status}`}>
-          <span className="message-icon">
-            {status === 'success' ? '✓' : status === 'error' ? '✕' : '○'}
-          </span>
+          <span className="message-icon">{status === 'success' ? '✓' : status === 'error' ? '✕' : '○'}</span>
           {message}
         </div>
       )}
+
+      <section className="ai-history" data-testid="ai-command-history">
+        <div className="ai-history-header">
+          <h4>Command History</h4>
+          <span className="value-badge">{history.length}</span>
+        </div>
+        {history.length === 0 ? <p className="panel-note">No commands yet.</p> : null}
+        <div className="ai-history-list">
+          {history.slice(0, 12).map((item) => (
+            <article key={item.id} className="ai-history-item" data-testid={`ai-history-item-${item.id}`}>
+              <div className="ai-history-row">
+                <span className={`status-pill ${item.status}`}>{item.status}</span>
+                <span className="ai-history-time">{formatHistoryTime(item.queuedAt, item.completedAt)}</span>
+              </div>
+              <p>{item.command}</p>
+              {item.error ? <p className="error-text">{item.error}</p> : null}
+            </article>
+          ))}
+        </div>
+      </section>
 
       <p className="panel-note">
         <strong>Tip:</strong> Try commands like "Create 5 yellow stickies in a circle" or "Organize by color"

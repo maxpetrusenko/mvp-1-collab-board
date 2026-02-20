@@ -6,7 +6,7 @@ import { countByType, fetchBoardObjects } from '../helpers/firestore'
 const APP_URL = process.env.PLAYWRIGHT_BASE_URL || 'https://mvp-1-collab-board.web.app'
 const AI_PANEL = '.ai-chat-widget .ai-panel'
 
-const SIMPLE_AI_SLA = { target: 2_500, warning: 4_000, critical: 5_000 }
+const SIMPLE_AI_SLA = { target: 2_000, warning: 2_500, critical: 3_000 }
 const COMPLEX_AI_SLA = { target: 8_000, warning: 12_000, critical: 15_000 }
 
 const annotateSla = (
@@ -47,7 +47,7 @@ test.describe('Performance: AI response', () => {
     await cleanupTestUser(user)
   })
 
-  test('simple AI command responds within critical SLA', async ({ page }, testInfo) => {
+  test('FR-16: simple AI command responds within PRD target SLA', async ({ page }, testInfo) => {
     if (!user) {
       throw new Error('Shared performance test user unavailable')
     }
@@ -72,7 +72,7 @@ test.describe('Performance: AI response', () => {
     const elapsedMs = Date.now() - startedAt
     console.log(`[PERF] Simple AI command response: ${elapsedMs}ms`)
     annotateSla(testInfo, 'ai-simple-command', elapsedMs, SIMPLE_AI_SLA)
-    expect(elapsedMs).toBeLessThanOrEqual(SIMPLE_AI_SLA.critical)
+    expect(elapsedMs).toBeLessThanOrEqual(SIMPLE_AI_SLA.target)
   })
 
   test('complex AI command responds within critical SLA', async ({ page }, testInfo) => {

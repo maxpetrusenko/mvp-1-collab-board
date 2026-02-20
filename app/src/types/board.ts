@@ -1,6 +1,7 @@
-export type BoardObjectKind = 'stickyNote' | 'shape' | 'frame' | 'connector'
-export type ShapeKind = 'rectangle' | 'circle' | 'diamond' | 'triangle'
+export type BoardObjectKind = 'stickyNote' | 'shape' | 'frame' | 'connector' | 'text'
+export type ShapeKind = 'rectangle' | 'circle' | 'diamond' | 'triangle' | 'line'
 export type AnchorKind = 'top' | 'right' | 'bottom' | 'left' | 'center'
+export type ConnectorStyle = 'arrow' | 'line'
 
 export type Point = {
   x: number
@@ -18,6 +19,8 @@ export type BoardComment = {
   createdBy: string
   createdByName: string
   createdAt: number
+  editedAt?: number
+  editedBy?: string
 }
 
 type BoardObjectBase = {
@@ -26,6 +29,8 @@ type BoardObjectBase = {
   type: BoardObjectKind
   position: Point
   size: Size
+  frameId?: string | null
+  rotation?: number
   zIndex: number
   createdBy: string
   createdAt: number
@@ -57,18 +62,26 @@ export type FrameObject = BoardObjectBase & {
   color: string
 }
 
+export type TextObject = BoardObjectBase & {
+  type: 'text'
+  text: string
+  color: string
+  fontSize?: number
+}
+
 export type ConnectorObject = BoardObjectBase & {
   type: 'connector'
   start: Point
   end: Point
   color: string
+  style?: ConnectorStyle
   fromObjectId?: string | null
   toObjectId?: string | null
   fromAnchor?: AnchorKind | null
   toAnchor?: AnchorKind | null
 }
 
-export type BoardObject = StickyNoteObject | ShapeObject | FrameObject | ConnectorObject
+export type BoardObject = StickyNoteObject | ShapeObject | FrameObject | ConnectorObject | TextObject
 
 export type BoardActivityEvent = {
   id: string

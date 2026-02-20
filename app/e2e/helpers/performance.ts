@@ -34,7 +34,7 @@ export type DragFrameRateOptions = {
 }
 
 export type SeedBoardObjectsOptions = {
-  kind?: 'sticky' | 'shape' | 'mixed'
+  kind?: 'sticky' | 'shape' | 'frame' | 'mixed'
   columns?: number
   spacingX?: number
   spacingY?: number
@@ -294,6 +294,18 @@ export const seedBoardObjects = async (
     }
 
     const asShape = kind === 'shape' || (kind === 'mixed' && index % 3 === 0)
+    const asFrame = kind === 'frame'
+
+    if (asFrame) {
+      return {
+        ...base,
+        type: 'frame',
+        title: `Seed frame ${index + 1}`,
+        size: { width: 520, height: 320 },
+        color: '#e2e8f0',
+      }
+    }
+
     if (asShape) {
       return {
         ...base,
