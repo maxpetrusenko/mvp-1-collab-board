@@ -1,7 +1,7 @@
 # TASKS.md
 
 Date initialized: 2026-02-16
-Last updated: 2026-02-20 (runtime backend NFR harness + artifact capture)
+Last updated: 2026-02-20 (AI parser/reason creativity regressions fixed + tests)
 Cadence: 1-hour deliverables with hard deadlines
 Source: `AGENTS.md` + `G4 Week 1 - CollabBoard-requirements.pdf`
 
@@ -142,6 +142,7 @@ Source: `AGENTS.md` + `G4 Week 1 - CollabBoard-requirements.pdf`
 | T-125 | 2026-02-20 20:40 | Fix duplicate/copy-paste regressions by resolving source objects from live selected state (`selectedObjects`) with ref fallback and keep duplicate toolbar action wired to state-backed selection | A | Max | Done |
 | T-126 | 2026-02-20 21:30 | Close evidence-backed UX/sync gaps: restore away-state presence dots (green/orange from `lastSeen`), add throttled in-flight drag publishes (`100ms`) with final commit unchanged, implement multi-object clipboard copy/paste with deterministic progressive offsets, and harden FR-22 E2E user setup with reusable credential slots + sequential provisioning | A | Max | Done |
 | T-128 | 2026-02-20 22:00 | Add non-Playwright runtime NFR measurement harness (`app/test/backend-performance.mjs`) for cursor sync + 5-user presence with Firebase direct probes, credential fallback paths, and artifact output (`submission/test-artifacts/latest-backend-performance.json`) | A | Max | Done |
+| T-129 | 2026-02-20 22:20 | Fix AI command regressions: harden multi-sticky count parsing with filler wording and generate distinct creative reason text for `N reasons why ...` commands | B | Max | Done |
 
 ## Current Evidence Snapshot
 - Deployed app: `https://mvp-1-collab-board.web.app`

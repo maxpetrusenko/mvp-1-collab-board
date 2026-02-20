@@ -60,14 +60,24 @@ test('parseStickyCommand preserves count and color for multi-sticky requests', (
   assert.deepEqual(parsed.texts, ['Note 1', 'Note 2'])
 })
 
+test('parseStickyCommand keeps count and color when instruction contains filler wording', () => {
+  const parsed = __test.parseStickyCommand('add a command to add 5 blue stickies')
+
+  assert.ok(parsed)
+  assert.equal(parsed.count, 5)
+  assert.equal(parsed.color, 'blue')
+  assert.deepEqual(parsed.texts, ['Note 1', 'Note 2', 'Note 3', 'Note 4', 'Note 5'])
+})
+
 test('parseStickyCommand supports stickies plural phrasing with count and reason-list text', () => {
   const parsed = __test.parseStickyCommand('add 10 stickies that list the reasons why my husband is awesome')
 
   assert.ok(parsed)
   assert.equal(parsed.count, 10)
   assert.equal(parsed.texts.length, 10)
-  assert.equal(parsed.texts[0], 'Reason 1: my husband is awesome')
-  assert.equal(parsed.texts[9], 'Reason 10: my husband is awesome')
+  assert.equal(new Set(parsed.texts).size, 10)
+  assert.ok(parsed.texts.every((entry) => entry.startsWith('Reason ')))
+  assert.ok(parsed.texts.some((entry) => entry.toLowerCase().includes('my husband')))
 })
 
 test('parseStickyCommand supports common sticky typo variants', () => {
@@ -76,7 +86,17 @@ test('parseStickyCommand supports common sticky typo variants', () => {
   assert.ok(parsed)
   assert.equal(parsed.count, 10)
   assert.equal(parsed.texts.length, 10)
-  assert.equal(parsed.texts[0], 'Reason 1: my husband is awesome')
+  assert.equal(new Set(parsed.texts).size, 10)
+})
+
+test('parseReasonListCommand supports creative reason generation without explicit sticky wording', () => {
+  const parsed = __test.parseReasonListCommand('10 reasons why my husband is awesome')
+
+  assert.ok(parsed)
+  assert.equal(parsed.count, 10)
+  assert.equal(parsed.texts.length, 10)
+  assert.equal(new Set(parsed.texts).size, 10)
+  assert.ok(parsed.texts.every((entry) => entry.startsWith('Reason ')))
 })
 
 test('parseStickyCommand keeps position with numbered color requests', () => {

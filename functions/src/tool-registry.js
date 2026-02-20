@@ -415,7 +415,7 @@ AVAILABLE COLORS: ${COLOR_OPTIONS.join(', ')}
 SHAPE TYPES: ${SHAPE_TYPES.join(', ')}
 
 GUIDELINES:
-1. Call only ONE tool per request unless the user explicitly asks for multiple actions
+1. Call one tool by default, but if the user explicitly asks for multiple objects (for example "add 5 stickies"), call the creation tool once per object
 2. Use sensible defaults for optional parameters (x=120, y=120 for new objects)
 3. Don't invent object IDs - use existing ones from the board context when referencing objects
 4. If the command is ambiguous, make a reasonable assumption based on context

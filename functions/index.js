@@ -36,11 +36,14 @@ const COLOR_MAP = {
 }
 const COLOR_NAME_ALTERNATION = 'yellow|blue|green|pink|red|orange|purple|gray'
 const COLOR_NAME_PATTERN = `(?:${COLOR_NAME_ALTERNATION})`
+const CREATE_VERB_PATTERN = '(?:add(?:ed)?|create(?:d)?|make|generate|build|insert|put)'
 const COLOR_PHRASE_REGEX = new RegExp(`\\b(${COLOR_NAME_ALTERNATION})\\s+color\\b`, 'i')
 const COLOR_AND_TEXT_CUE_REGEX = new RegExp(
   `\\b(?:that\\s+says|saying|with\\s+text|with\\s+(?:a\\s+)?${COLOR_NAME_PATTERN}\\s+color\\s+and\\s+text|text\\s*[:=-])\\b\\s*(.+)$`,
   'i',
 )
+const POSITION_PHRASE_REGEX =
+  /(?:at|in(?:\s+the)?)\s+(top\s+left|top\s+right|bottom\s+left|bottom\s+right|center|middle|top|bottom|left|right)/i
 const STICKY_SHAPE_SIZES = {
   rectangle: { width: 180, height: 110 },
   circle: { width: 130, height: 130 },
@@ -112,6 +115,9 @@ const NUMBER_WORD_MAP = {
   nine: 9,
   ten: 10,
 }
+const COUNT_TOKEN_ALTERNATION = `\\d+|${Object.keys(NUMBER_WORD_MAP).join('|')}`
+const INSTRUCTION_ONLY_TEXT_REGEX =
+  /^(?:(?:please|can|could|would|you|me|us|to|a|an|the|some|new|command|comand|cmd|add|added|create|created|make|generate|build|insert|put|sticky|stickies|sticker|note|notes)+\s*)+$/
 
 const parseStickyCountToken = (token) => {
   const normalized = String(token || '').toLowerCase().trim()
@@ -127,6 +133,25 @@ const parseStickyCountToken = (token) => {
   return Math.min(10, Math.max(1, numericValue))
 }
 
+const startsWithCountToken = (value) => new RegExp(`^\\s*(?:${COUNT_TOKEN_ALTERNATION})\\b`, 'i').test(String(value || ''))
+
+const stripLeadingCreateInstruction = (value) =>
+  String(value || '')
+    .replace(/^(?:please\s+)?(?:can|could|would)\s+you\s+/i, '')
+    .replace(new RegExp(`^(?:please\\s+)?${CREATE_VERB_PATTERN}\\b`, 'i'), '')
+    .replace(/^\s*(?:me|us)\s+/i, '')
+    .replace(/^\s*(?:a|an)\b/i, '')
+    .trim()
+
+const isInstructionOnlyText = (value) =>
+  INSTRUCTION_ONLY_TEXT_REGEX.test(
+    String(value || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim(),
+  )
+
 const extractStickyPrefixMeta = (beforeMarker) => {
   const tokens = String(beforeMarker || '')
     .toLowerCase()
@@ -137,10 +162,10 @@ const extractStickyPrefixMeta = (beforeMarker) => {
   }
 
   let count = null
-  const prefixCount = parseStickyCountToken(tokens[0])
-  if (prefixCount !== null) {
-    count = prefixCount
-    tokens.shift()
+  const countIndex = tokens.findIndex((token) => parseStickyCountToken(token) !== null)
+  if (countIndex >= 0) {
+    count = parseStickyCountToken(tokens[countIndex])
+    tokens.splice(countIndex, 1)
   }
 
   const colorIndex = tokens.findIndex((token) => isKnownColor(token))
@@ -269,6 +294,21 @@ const stripWrappingQuotes = (value) => {
   return trimmed.replace(/^['"]|['"]$/g, '').trim()
 }
 
+const escapeRegExp = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+const extractPositionPhrase = (value) => {
+  const normalized = normalizeCommand(value)
+  const positionMatch = normalized.match(POSITION_PHRASE_REGEX)
+  if (!positionMatch) {
+    return { position: undefined, matchText: '' }
+  }
+
+  return {
+    position: positionMatch[1]?.toLowerCase().trim(),
+    matchText: positionMatch[0] || '',
+  }
+}
+
 const extractColorAndText = (raw) => {
   const normalized = stripWrappingQuotes(raw)
   if (!normalized) {
@@ -320,7 +360,7 @@ const inferStickyShapeType = (command) => {
 const parseRequestedStickyCount = (command) => {
   const lower = normalizeStickyVocabulary(normalizeCommand(command)).toLowerCase()
   const countMatch = lower.match(
-    /\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:sticky(?:\s*note)?|sticker|note)s?\b/,
+    new RegExp(`\\b(${COUNT_TOKEN_ALTERNATION})\\b(?:\\s+\\w+){0,4}\\s+(?:sticky(?:\\s*note)?|sticker|note)s?\\b`, 'i'),
   )
   if (!countMatch) {
     return 1
@@ -378,6 +418,66 @@ const getStickyBatchLayoutPositions = ({ count, anchor, shapeType = 'rectangle' 
   })
 }
 
+const hashText = (value) => {
+  let hash = 0
+  const normalized = String(value || '')
+  for (let index = 0; index < normalized.length; index += 1) {
+    hash = (hash * 31 + normalized.charCodeAt(index)) >>> 0
+  }
+  return hash
+}
+
+const parseReasonSubjectMeta = (subject) => {
+  const sanitizedSubject = stripWrappingQuotes(String(subject || '').replace(/[.!?]+$/g, '').trim())
+  const qualityMatch = sanitizedSubject.match(/^(.+?)\s+is\s+(.+)$/i)
+
+  if (!qualityMatch) {
+    return {
+      entity: sanitizeText(sanitizedSubject) || 'this person',
+      quality: 'great',
+    }
+  }
+
+  return {
+    entity: sanitizeText(qualityMatch[1]) || sanitizeText(sanitizedSubject) || 'this person',
+    quality: sanitizeText(qualityMatch[2]) || 'great',
+  }
+}
+
+const buildReasonStickyTexts = (subject, count) => {
+  const safeCount = Math.max(1, Math.min(10, parseNumber(count, 1)))
+  const { entity, quality } = parseReasonSubjectMeta(subject)
+  const reasonCandidates = [
+    `${entity} listens with patience and empathy.`,
+    `${entity} shows up consistently when support is needed most.`,
+    `${entity} makes stressful moments feel manageable and calm.`,
+    `${entity} celebrates your wins like they are their own.`,
+    `${entity} keeps promises and follows through on commitments.`,
+    `${entity} brings humor that lightens hard days.`,
+    `${entity} notices small details that make everyday life easier.`,
+    `${entity} communicates honestly and respectfully.`,
+    `${entity} makes thoughtful decisions even under pressure.`,
+    `${entity} keeps growing and learning from experience.`,
+    `${entity} creates a strong sense of trust and safety.`,
+    `${entity} supports your goals without hesitation.`,
+    `${entity} stays kind and steady during disagreements.`,
+    `${entity} turns routine moments into meaningful memories.`,
+    `${entity} shows what "${quality}" looks like through real actions.`,
+  ]
+    .map((entry) => sanitizeText(entry))
+    .filter(Boolean)
+
+  if (reasonCandidates.length === 0) {
+    return Array.from({ length: safeCount }, (_, index) => `Reason ${index + 1}: ${entity} is ${quality}.`)
+  }
+
+  const startOffset = hashText(`${entity}:${quality}`) % reasonCandidates.length
+  return Array.from({ length: safeCount }, (_, index) => {
+    const reason = reasonCandidates[(startOffset + index) % reasonCandidates.length]
+    return sanitizeText(`Reason ${index + 1}: ${reason}`)
+  })
+}
+
 const buildStickyTextsFromTemplate = (template, count) => {
   const safeCount = Math.max(1, Math.min(10, parseNumber(count, 1)))
   const normalizedTemplate = sanitizeText(template || 'New sticky note') || 'New sticky note'
@@ -387,8 +487,7 @@ const buildStickyTextsFromTemplate = (template, count) => {
 
   const reasonsMatch = normalizedTemplate.match(/^(?:(?:that\s+)?list\s+)?(?:the\s+)?reasons?\s+why\s+(.+)$/i)
   if (reasonsMatch) {
-    const subject = sanitizeText(reasonsMatch[1]) || 'this is awesome'
-    return Array.from({ length: safeCount }, (_, index) => `Reason ${index + 1}: ${subject}`)
+    return buildReasonStickyTexts(reasonsMatch[1], safeCount)
   }
 
   return Array.from({ length: safeCount }, (_, index) =>
@@ -396,9 +495,54 @@ const buildStickyTextsFromTemplate = (template, count) => {
   )
 }
 
+const parseReasonListCommand = (command) => {
+  const normalized = normalizeStickyVocabulary(normalizeCommand(command))
+  const reasonMatch = normalized.match(
+    new RegExp(
+      `(?:^|\\b)(${COUNT_TOKEN_ALTERNATION})\\s+(?:different\\s+|distinct\\s+|creative\\s+|unique\\s+)?reasons?\\s+why\\s+(.+)$`,
+      'i',
+    ),
+  )
+  if (!reasonMatch) {
+    return null
+  }
+
+  const hasCreateIntent =
+    new RegExp(CREATE_VERB_PATTERN, 'i').test(normalized) ||
+    /\b(?:brainstorm|list|write)\b/i.test(normalized) ||
+    startsWithCountToken(normalized)
+  if (!hasCreateIntent) {
+    return null
+  }
+
+  const count = parseStickyCountToken(reasonMatch[1]) || 1
+  const { position, matchText } = extractPositionPhrase(normalized)
+  let subject = String(reasonMatch[2] || '').trim()
+  if (matchText) {
+    subject = subject.replace(new RegExp(escapeRegExp(matchText), 'i'), '').trim()
+  }
+  subject = stripWrappingQuotes(subject.replace(/[.!?]+$/g, '').trim())
+  if (!subject) {
+    return null
+  }
+
+  const prefixForColor = normalized.slice(0, (reasonMatch.index || 0) + String(reasonMatch[1] || '').length)
+  const prefixMeta = extractStickyPrefixMeta(prefixForColor)
+  const colorCandidate = prefixMeta.color || extractColorFromPhrase(prefixForColor)
+
+  return {
+    color: colorCandidate,
+    shapeType: inferStickyShapeType(normalized),
+    count,
+    position,
+    texts: buildReasonStickyTexts(subject, count),
+  }
+}
+
 const parseStickyCommand = (command) => {
   const normalized = normalizeStickyVocabulary(normalizeCommand(command))
-  if (!/^(?:add|create)\b/i.test(normalized)) {
+  const hasCreateIntent = new RegExp(CREATE_VERB_PATTERN, 'i').test(normalized) || startsWithCountToken(normalized)
+  if (!hasCreateIntent) {
     return null
   }
 
@@ -409,24 +553,19 @@ const parseStickyCommand = (command) => {
 
   const markerStart = stickyMarker.index || 0
   const markerText = stickyMarker[0]
-  const beforeMarker = normalized
-    .slice(0, markerStart)
-    .replace(/^(?:add|create)\b/i, '')
-    .replace(/^\s*(?:a|an)\b/i, '')
-    .trim()
+  const beforeMarker = stripLeadingCreateInstruction(normalized.slice(0, markerStart))
 
   const afterMarker = normalized.slice(markerStart + markerText.length).trim()
 
   // Extract position from "at top left", "at center", "in the center", etc.
-  const positionMatch = normalized.match(/(?:at|in(?:\s+the)?)\s+(top\s+left|top\s+right|bottom\s+left|bottom\s+right|center|middle|top|bottom|left|right)/i)
-  const position = positionMatch ? positionMatch[1].toLowerCase().trim() : undefined
+  const { position, matchText: positionMatchText } = extractPositionPhrase(normalized)
 
   const cueMatch = normalized.match(COLOR_AND_TEXT_CUE_REGEX)
   const cueText = cueMatch ? cueMatch[1].replace(/^[:\-\s]+/, '').trim() : ''
   // Remove position from suffix text if present
   let suffixText = afterMarker.replace(/^[.!?]+|[.!?]+$/g, '').trim()
-  if (positionMatch) {
-    suffixText = suffixText.replace(new RegExp(positionMatch[0], 'i'), '').trim()
+  if (positionMatchText) {
+    suffixText = suffixText.replace(new RegExp(escapeRegExp(positionMatchText), 'i'), '').trim()
   }
 
   const stickyPrefix = extractStickyPrefixMeta(beforeMarker)
@@ -449,7 +588,10 @@ const parseStickyCommand = (command) => {
     colorCandidate = extractColorFromPhrase(`${beforeMarker} ${afterMarker}`)
   }
 
-  const sanitizedParsedText = stripColorInstructionText(parsed.text)
+  let sanitizedParsedText = stripColorInstructionText(parsed.text)
+  if (!cueText && !suffixText && prefixConsumed && isInstructionOnlyText(sanitizedParsedText)) {
+    sanitizedParsedText = ''
+  }
 
   const explicitTexts = parseExplicitStickyTexts(normalized)
   const requestedCount = parseRequestedStickyCount(normalized)
@@ -1390,6 +1532,60 @@ const synthesizeStickyThemes = async (ctx) => {
   ctx.executedTools.push({ tool: 'synthesizeStickyThemes', count: topThemes.length })
 }
 
+const executeStickyBatch = async (ctx, stickyCommand) => {
+  const stickyCount = Math.min(10, Math.max(1, stickyCommand.count || stickyCommand.texts.length || 1))
+  const basePosition = stickyCommand.position ? parsePosition(stickyCommand.position, 120, 120) : null
+  const commandPlacementAnchor =
+    ctx.commandPlacement?.anchor || ctx.commandPlacement?.pointer || ctx.commandPlacement?.viewportCenter || null
+  const layoutPositions =
+    stickyCount > 1
+      ? basePosition
+        ? Array.from({ length: stickyCount }, (_, index) => ({
+            x: basePosition.x + (index % 4) * 220,
+            y: basePosition.y + Math.floor(index / 4) * 150,
+          }))
+        : getStickyBatchLayoutPositions({
+            count: stickyCount,
+            anchor: commandPlacementAnchor,
+            shapeType: stickyCommand.shapeType || 'rectangle',
+          })
+      : []
+
+  for (let index = 0; index < stickyCount; index += 1) {
+    const stickyArgs = {
+      text:
+        stickyCommand.texts[index] ||
+        (stickyCount > 1
+          ? `Note ${index + 1}`
+          : sanitizeText(stickyCommand.texts[0] || 'New sticky note') || 'New sticky note'),
+      color: toColor(stickyCommand.color, '#fde68a'),
+      shapeType: stickyCommand.shapeType || 'rectangle',
+      position: stickyCommand.position,
+    }
+
+    if (stickyCount > 1) {
+      const targetPosition = layoutPositions[index] || layoutPositions[layoutPositions.length - 1] || { x: 120, y: 120 }
+      await createStickyNote(ctx, {
+        ...stickyArgs,
+        position: undefined,
+        x: targetPosition.x,
+        y: targetPosition.y,
+      })
+    } else if (!stickyCommand.position && commandPlacementAnchor) {
+      const stickyShapeType = normalizeShapeType(stickyCommand.shapeType || 'rectangle', 'rectangle')
+      const stickySize = STICKY_SHAPE_SIZES[stickyShapeType] || STICKY_SHAPE_SIZES.rectangle
+      await createStickyNote(ctx, {
+        ...stickyArgs,
+        position: undefined,
+        x: Math.round(commandPlacementAnchor.x - stickySize.width / 2),
+        y: Math.round(commandPlacementAnchor.y - stickySize.height / 2),
+      })
+    } else {
+      await createStickyNote(ctx, stickyArgs)
+    }
+  }
+}
+
 const runCommandPlan = async (ctx, command) => {
   const normalizedCommand = normalizeCommandForPlan(command)
   const lower = normalizedCommand.toLowerCase()
@@ -1407,57 +1603,15 @@ const runCommandPlan = async (ctx, command) => {
     return
   }
 
+  const reasonListCommand = parseReasonListCommand(normalizedCommand)
+  if (reasonListCommand) {
+    await executeStickyBatch(ctx, reasonListCommand)
+    return
+  }
+
   const stickyCommand = parseStickyCommand(normalizedCommand)
   if (stickyCommand) {
-    const stickyCount = Math.min(10, Math.max(1, stickyCommand.count || stickyCommand.texts.length || 1))
-    const basePosition = stickyCommand.position ? parsePosition(stickyCommand.position, 120, 120) : null
-    const commandPlacementAnchor =
-      ctx.commandPlacement?.anchor || ctx.commandPlacement?.pointer || ctx.commandPlacement?.viewportCenter || null
-    const layoutPositions =
-      stickyCount > 1
-        ? basePosition
-          ? Array.from({ length: stickyCount }, (_, index) => ({
-              x: basePosition.x + (index % 4) * 220,
-              y: basePosition.y + Math.floor(index / 4) * 150,
-            }))
-          : getStickyBatchLayoutPositions({
-              count: stickyCount,
-              anchor: commandPlacementAnchor,
-              shapeType: stickyCommand.shapeType || 'rectangle',
-            })
-        : []
-
-    for (let index = 0; index < stickyCount; index += 1) {
-      const stickyArgs = {
-        text: stickyCommand.texts[index] || `Note ${index + 1}`,
-        color: toColor(stickyCommand.color, '#fde68a'),
-        shapeType: stickyCommand.shapeType || 'rectangle',
-        position: stickyCommand.position,
-      }
-
-      if (stickyCount > 1) {
-        const targetPosition = layoutPositions[index] || layoutPositions[layoutPositions.length - 1] || { x: 120, y: 120 }
-        await createStickyNote(ctx, {
-          ...stickyArgs,
-          position: undefined,
-          x: targetPosition.x,
-          y: targetPosition.y,
-        })
-      } else {
-        if (!stickyCommand.position && commandPlacementAnchor) {
-          const stickyShapeType = normalizeShapeType(stickyCommand.shapeType || 'rectangle', 'rectangle')
-          const stickySize = STICKY_SHAPE_SIZES[stickyShapeType] || STICKY_SHAPE_SIZES.rectangle
-          await createStickyNote(ctx, {
-            ...stickyArgs,
-            position: undefined,
-            x: Math.round(commandPlacementAnchor.x - stickySize.width / 2),
-            y: Math.round(commandPlacementAnchor.y - stickySize.height / 2),
-          })
-        } else {
-          await createStickyNote(ctx, stickyArgs)
-        }
-      }
-    }
+    await executeStickyBatch(ctx, stickyCommand)
     return
   }
 
@@ -2271,6 +2425,8 @@ exports.__test = {
   normalizeCommandForPlan,
   isOrganizeByColorCommand,
   parseStickyCommand,
+  parseReasonListCommand,
+  buildReasonStickyTexts,
   getAutoStickyPosition,
   normalizeAiPlacementHint,
   getStickyBatchLayoutPositions,
