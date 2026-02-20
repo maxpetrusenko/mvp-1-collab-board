@@ -4,6 +4,7 @@
 
 const COLOR_OPTIONS = ['yellow', 'blue', 'green', 'pink', 'red', 'orange', 'purple', 'gray']
 const SHAPE_TYPES = ['rectangle', 'circle', 'diamond', 'triangle', 'line']
+const POSITION_OPTIONS = ['top left', 'top right', 'bottom left', 'bottom right', 'center', 'top', 'bottom', 'left', 'right']
 
 const TOOL_DEFINITIONS = [
   {
@@ -28,13 +29,18 @@ const TOOL_DEFINITIONS = [
             enum: SHAPE_TYPES,
             description: 'Optional sticky note shape variant'
           },
+          position: {
+            type: 'string',
+            enum: POSITION_OPTIONS,
+            description: 'Relative position on the board (optional, e.g., "top left", "center", "bottom right")'
+          },
           x: {
             type: 'number',
-            description: 'X position in pixels (optional, defaults to 120)'
+            description: 'X position in pixels (optional, defaults to 120, ignored if position is specified)'
           },
           y: {
             type: 'number',
-            description: 'Y position in pixels (optional, defaults to 120)'
+            description: 'Y position in pixels (optional, defaults to 120, ignored if position is specified)'
           },
           width: {
             type: 'number',
@@ -75,13 +81,18 @@ const TOOL_DEFINITIONS = [
             enum: COLOR_OPTIONS,
             description: 'Fill color of the shape (optional, defaults to blue)'
           },
+          position: {
+            type: 'string',
+            enum: POSITION_OPTIONS,
+            description: 'Relative position on the board (optional, e.g., "top left", "center", "bottom right")'
+          },
           x: {
             type: 'number',
-            description: 'X position in pixels (optional, defaults to 200)'
+            description: 'X position in pixels (optional, defaults to 200, ignored if position is specified)'
           },
           y: {
             type: 'number',
-            description: 'Y position in pixels (optional, defaults to 200)'
+            description: 'Y position in pixels (optional, defaults to 200, ignored if position is specified)'
           }
         },
         required: ['type']
@@ -414,4 +425,4 @@ GUIDELINES:
 8. When user says "sticker" or "sticky note", use createStickyNote`
 }
 
-module.exports = { TOOL_DEFINITIONS, buildSystemPrompt, COLOR_OPTIONS, SHAPE_TYPES }
+module.exports = { TOOL_DEFINITIONS, buildSystemPrompt, COLOR_OPTIONS, SHAPE_TYPES, POSITION_OPTIONS }

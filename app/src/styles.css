@@ -1381,25 +1381,67 @@ select:focus-visible,
 
 .inline-editor {
   position: absolute;
-  border: 1px solid rgba(15, 23, 42, 0.35);
-  border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.95);
+  margin: 0;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
   color: var(--color-text-primary);
-  font: inherit;
+  font-family: var(--font-display);
+  font-weight: 500;
   line-height: 1.35;
-  padding: 6px 8px;
-  box-shadow: var(--shadow-md);
+  padding: 8px 10px;
+  box-shadow: none;
   pointer-events: auto;
+  caret-color: currentColor;
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    background-color var(--transition-fast);
+}
+
+.inline-editor::placeholder {
+  color: rgba(100, 116, 139, 0.75);
 }
 
 .inline-editor:focus {
-  outline: 2px solid transparent;
-  border-color: var(--color-accent);
-  box-shadow: 0 0 0 3px rgba(78, 205, 196, 0.18), var(--shadow-md);
+  outline: none;
+  border-color: rgba(15, 118, 110, 0.55);
+  box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.18);
 }
 
 .inline-editor-textarea {
   resize: none;
+  overflow: hidden;
+}
+
+.inline-editor-align-left {
+  text-align: left;
+}
+
+.inline-editor-align-center {
+  text-align: center;
+}
+
+.inline-editor-pill {
+  border-radius: 999px;
+}
+
+.inline-editor-text-object {
+  padding: 0;
+  border-radius: 0;
+  border-color: transparent;
+  box-shadow: none;
+  line-height: 1.2;
+}
+
+.inline-editor-text-object:focus {
+  border-color: transparent;
+  box-shadow: 0 0 0 1px rgba(15, 118, 110, 0.35);
+}
+
+.inline-editor-frame {
+  font-weight: 700;
+  padding: 4px 8px;
 }
 
 /* === ZOOM CONTROLS === */

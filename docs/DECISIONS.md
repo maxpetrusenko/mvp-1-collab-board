@@ -438,6 +438,24 @@ Purpose: log system decisions, alternatives, rationale, and change history.
 - Consequences: Added `sharedRoles` normalization/backfill across frontend/backend/rules, updated share dialog with role selector and collaborator role labels, enforced owner/editor-only mutation paths, disabled AI submit when board is not editable, and extended sticky parser aliases for `note(s)`.
 - Revisit Trigger: If invitation workflows require pending/accepted states, per-object ACL, or if AI command authorization moves to a dedicated policy service.
 
+### D-048
+- Date: 2026-02-20
+- Status: Accepted
+- Decision: Parse sticky command intent deterministically before LLM fallback by extracting prefix count/color tokens (`add 1 red sticky note`), supporting explicit color-text phrasing (`with green color and text: ...`), and treating `round` as a circle-shape alias.
+- Alternatives Considered: Rely on LLM fallback/tool-calling for these variants; keep single-token color parsing only.
+- Rationale: Reported regressions showed numeric-count and color-text prompts dropping intended sticky color/text, causing incorrect outputs for core AI-create flows.
+- Consequences: Backend parser now handles count/color/text/shape cues with stricter normalization, command-plan multi-sticky placement supports position-aware grid offsets, and parser regression tests cover numbered red and color-text green scenarios.
+- Revisit Trigger: If prompt patterns become too broad for regex-style parsing and require a dedicated intent parser or structured LLM extraction pass.
+
+### D-049
+- Date: 2026-02-20
+- Status: Accepted
+- Decision: Keep canvas text editing implemented with positioned native HTML inputs (Konva overlay technique), but restyle it per object type so edits feel inside the object (sticky/shape/text/frame) instead of a floating white form.
+- Alternatives Considered: Keep existing generic floating editor; move text editing into side-panel/modals; build a custom in-canvas text editor.
+- Rationale: Native HTML inputs provide reliable selection/IME behavior and fast delivery, while object-aware styling closes the UX gap without risky editor rewrites.
+- Consequences: Added `inlineEditorAppearance` mapping in `app/src/pages/BoardPage.tsx` and new inline editor style variants in `app/src/styles.css`.
+- Revisit Trigger: If product requirements expand to rich-text, true shape-clipped text editing, or advanced rotation-aware text editing.
+
 ## Change Log
 - 2026-02-16: Initial decision set created.
 - 2026-02-16: Added auth provider, deployment URL strategy, and error recovery UX decisions.
@@ -470,3 +488,5 @@ Purpose: log system decisions, alternatives, rationale, and change history.
 - 2026-02-19: Added legacy board metadata fallback/backfill decision to eliminate false access-denied on owner boards (`D-045`).
 - 2026-02-19: Added connector attachment parity + share-by-handle decision (`D-046`).
 - 2026-02-19: Added role-aware sharing + AI submit gating + note-alias latency hardening decision (`D-047`).
+- 2026-02-20: Added deterministic numbered color-sticky parser decision and regression coverage (`D-048`).
+- 2026-02-20: Added object-aware inline editor styling decision to keep native overlay editing while matching in-object Miro-like UX (`D-049`).

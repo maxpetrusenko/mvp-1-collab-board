@@ -1,7 +1,7 @@
 # TASKS.md
 
 Date initialized: 2026-02-16
-Last updated: 2026-02-19 (role-aware sharing + AI note-latency hardening + vote badge clarity)
+Last updated: 2026-02-20 (regression sweep: AI color-text, FR-22 deny-path, and guardrail recheck)
 Cadence: 1-hour deliverables with hard deadlines
 Source: `docs/Requirements.md` (markdown mirror) + `docs/G4 Week 1 - CollabBoard-requirements.pdf`
 
@@ -114,12 +114,25 @@ Source: `docs/Requirements.md` (markdown mirror) + `docs/G4 Week 1 - CollabBoard
 | T-098 | 2026-02-19 16:00 | Fix: Dark mode text color uses lighter dark text for better contrast | A | Max | Done |
 | T-099 | 2026-02-19 16:15 | Add: Miro-style drag-to-rotate handle on all object types | E | Max | Done |
 | T-100 | 2026-02-19 16:30 | Add: GLM tools (rotateObject, deleteObject, duplicateObject) | B | Max | Done |
-| T-101 | 2026-02-19 17:00 | Debug: "add red sticky note" AI command not working - test color parsing, GLM tool calling, add performance test | B | Max | In Progress |
+| T-101 | 2026-02-19 17:00 | Debug: "add red sticky note" AI command not working - test color parsing, GLM tool calling, add performance test | B | Max | Done |
 | T-102 | 2026-02-19 17:30 | Add: AI command position understanding (top/bottom/left/right, center coordinates) | B | Max | Pending |
 | T-103 | 2026-02-19 18:00 | Optimize: AI command latency to <2s (GLM API timeout, Firestore batch writes) | B | Max | Pending |
+| T-104 | 2026-02-20 11:30 | Restyle canvas inline editing to look in-object (sticky/shape/text/frame) and remove floating overlay visual for text edits | E | Max | Done |
+| T-105 | 2026-02-20 12:00 | Fix AI sticky parser for count+color + "with <color> color and text" phrasing (`round` alias), then redeploy functions and re-run AI E2E regressions | B | Max | Blocked |
+| T-106 | 2026-02-20 12:30 | Restore FR-22 behavior end-to-end: unshared collaborator must see access-denied state (`board-access-denied`) and lose canvas access | A | Max | In Progress |
+| T-107 | 2026-02-20 13:00 | Restore role-aware share UX/data model (`share-role-select`, `sharedRoles`, owner/edit/view enforcement) in board UI + API flow | A | Max | Pending |
+| T-108 | 2026-02-20 13:30 | Restore AI panel non-editable gating (disable submit in view/read-only mode, not only runtime error on submit) | B | Max | Done |
+| T-109 | 2026-02-20 14:00 | Restore timer inline editing UX (`timer-edit-input`, Enter submit, Escape cancel, validation) regression from T-096 baseline | A | Max | Pending |
+| T-110 | 2026-02-20 14:30 | Revalidate object creation offset behavior (`objectsCreatedCountRef` and deterministic 20px duplication offset) post sticky/AI changes | A | Max | Pending |
+| T-111 | 2026-02-20 15:00 | Unblock backend deployment auth (`firebase login --reauth`) and redeploy functions so parser fixes are reflected on `web.app` | D | Max | Blocked |
 
 ## Current Evidence Snapshot
 - Deployed app: `https://mvp-1-collab-board.web.app`
+- Regression sweep (current): `app unit 80/80 pass` (`cd app && npm run test:unit --silent`, 2026-02-20)
+- Regression sweep (current): `functions 46/46 pass` (`cd functions && npm test --silent`, 2026-02-20)
+- Regression sweep (current): `AI E2E 7/8 pass, 1 fail` (`cd app && playwright test e2e/ai-command-ui.spec.ts`, failing `creates green circle sticky from color-and-text instruction phrasing`, 2026-02-20)
+- Regression sweep (current): `FR-22 deny E2E 0/1 pass` (`cd app && playwright test e2e/requirements-board-sharing.spec.ts --grep "denies board access"`, `board-access-denied` not shown, 2026-02-20)
+- Regression artifact: AI phrasing command still creates yellow rectangle with literal instruction text on deployed app (see `app/test-results/ai-command-ui-AI-command-U-a39c7-d-text-instruction-phrasing-chromium/test-failed-1.png`, 2026-02-20)
 - Playwright run: `32 passed, 0 skipped` (`npx playwright test --list`, 2026-02-17)
 - Targeted regression run: `passed` (`npx playwright test e2e/object-deletion.spec.ts e2e/color-changes.spec.ts e2e/ai-errors.spec.ts e2e/ai-command-ui.spec.ts`, 2026-02-17)
 - Local validation run (post T-052): `5 passed` (`PLAYWRIGHT_BASE_URL=http://127.0.0.1:4173 npx playwright test e2e/color-changes.spec.ts e2e/shape-editing.spec.ts e2e/mvp-regression.spec.ts`, 2026-02-17)
@@ -138,6 +151,7 @@ Source: `docs/Requirements.md` (markdown mirror) + `docs/G4 Week 1 - CollabBoard
 - Accessibility baseline + reconnect validation (post T-075): `4 passed` (`PLAYWRIGHT_BASE_URL=http://127.0.0.1:4173 npx playwright test e2e/accessibility-baseline.spec.ts e2e/requirements-reconnect-ux.spec.ts --reporter=line`, 2026-02-18)
 - Accessibility contrast guardrails (post T-075): `3 passed` (`cd app && npm run test:unit`, includes `A11Y-CONTRAST-001..003`, 2026-02-18)
 - Resilience + keyboard shortcuts validation (post T-077 + T-065/T-066): `lint + build + unit green` (`cd app && npm run lint && npm run build && npm run test:unit`, 2026-02-18)
+- AI sticky parser regression validation (post T-101): `46 passed` (`cd functions && npm test`, includes numbered red-sticky + green color-and-text parser cases, 2026-02-20)
 - Popover + reconnect validation (post T-078/T-079): `lint + build + unit + functions green` (`cd app && npm run lint && npm run build && npm run test:unit && cd ../functions && npm test`, 2026-02-18)
 - Targeted Playwright popover/reconnect run (local preview): `2 passed` (`PLAYWRIGHT_BASE_URL=http://127.0.0.1:4173 npx playwright test e2e/requirements-reconnect-ux.spec.ts e2e/toolbar-create-popovers.spec.ts --reporter=line`, 2026-02-18)
 - Board polish validation (T-060/T-061): `2 passed` (`PLAYWRIGHT_BASE_URL=http://127.0.0.1:4174 npx playwright test e2e/board-polish.spec.ts --reporter=line`, 2026-02-18)
@@ -166,13 +180,13 @@ Source: `docs/Requirements.md` (markdown mirror) + `docs/G4 Week 1 - CollabBoard
   - `docs/VPAT_DRAFT.md` (optional)
 
 ## Phase 2 Closeout Snapshot
-- **PRD (41 FRs)**: `PASS 41 / PARTIAL 0 / FAIL 0` (FR-22 implemented in code + tests).
-- **G4 PDF (22 core reqs)**: collaboration + whiteboard interaction scope complete, including permission-checked sharing path.
+- **PRD (41 FRs)**: `PASS 36 / PARTIAL 5 / FAIL 0` (regression sweep reopened FR-22/AI UX-adjacent behavior until T-106..T-110 close).
+- **G4 PDF (22 core reqs)**: partially regressed in current branch/deployed behavior; permission-checked sharing and AI UX require revalidation.
 - **Transforms**: Move ✅, Resize ✅, Rotate (Miro-style drag handle) ✅
 - **Selection**: Single-click ✅, Shift-click multi-select ✅, Drag marquee ✅
 - **GLM Tools**: 14 tools including rotateObject, deleteObject, duplicateObject ✅
-- **Overall readiness**: `~100 / 100` with core requirement gaps closed; optional scale/polish backlog remains.
-- **Remaining partials (documented)**: none.
+- **Overall readiness**: `~84 / 100` pending critical regression closure.
+- **Remaining partials (documented)**: FR-22 deny path, role-aware sharing UX, AI non-editable gating, timer inline edit parity, object offset parity.
 
 ### 1) Requirements
 
@@ -268,6 +282,8 @@ Source: `docs/Requirements.md` (markdown mirror) + `docs/G4 Week 1 - CollabBoard
 - [x] `TS-050` Add guardrail coverage for AI submit gating when board is in non-editable mode (view mode or read-only role).
 - [x] `TS-051` Add guardrail coverage for share-role UX (`share-role-select`, default edit, collaborator role label rendering, role payload).
 - [x] `TS-052` Add guardrail coverage for local AI `note` alias parsing to avoid slow fallback for simple sticky commands.
+- [x] `TS-053` Add parser regression coverage for numbered color sticky commands (`add 1 red sticky note`, `create two red sticky notes`) to keep color/count deterministic.
+- [x] `TS-054` Add parser regression coverage for "with <color> color and text" AI phrasing and `round` shape alias to keep color/text/shape deterministic.
 
 #### Pending Polish Feature-to-Test Mapping (T-060..T-070) (T-091)
 - [x] `T-060` -> `app/e2e/board-polish.spec.ts` (`T-060: board name supports inline rename from boards panel`) + `TS-033`.

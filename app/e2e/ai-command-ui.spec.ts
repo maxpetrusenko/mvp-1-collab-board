@@ -150,6 +150,60 @@ test.describe('AI command UI', () => {
       .toBeTruthy()
   })
 
+  test('creates red sticky note when command includes numeric count prefix', async ({ page }) => {
+    if (!user) {
+      throw new Error('Shared test user unavailable')
+    }
+    const boardId = `pw-ai-red-sticky-count-${Date.now()}`
+    const testText = `red-sticky-count-${Date.now()}`
+
+    await loginWithEmail(page, APP_URL, user.email, user.password)
+    await page.goto(`${APP_URL}/b/${boardId}`)
+    await expect(page.locator('.board-stage')).toBeVisible()
+
+    await submitAiCommand(page, `add 1 red sticky note saying ${testText}`)
+    await expect(page.locator(`${AI_PANEL} .ai-message.success`)).toBeVisible()
+
+    await expect
+      .poll(async () => {
+        const objects = await fetchBoardObjects(boardId, user.idToken)
+        const redSticky = objects.find(
+          (object) => object.type === 'stickyNote' && object.color === '#fca5a5' && object.text?.includes(testText),
+        )
+        return redSticky || null
+      })
+      .toBeTruthy()
+  })
+
+  test('creates green circle sticky from color-and-text instruction phrasing', async ({ page }) => {
+    if (!user) {
+      throw new Error('Shared test user unavailable')
+    }
+    const boardId = `pw-ai-green-round-${Date.now()}`
+    const testText = `yo yo yo ${Date.now()}`
+
+    await loginWithEmail(page, APP_URL, user.email, user.password)
+    await page.goto(`${APP_URL}/b/${boardId}`)
+    await expect(page.locator('.board-stage')).toBeVisible()
+
+    await submitAiCommand(page, `add round sticky note with green color and text: ${testText}`)
+    await expect(page.locator(`${AI_PANEL} .ai-message.success`)).toBeVisible()
+
+    await expect
+      .poll(async () => {
+        const objects = await fetchBoardObjects(boardId, user.idToken)
+        const sticky = objects.find(
+          (object) =>
+            object.type === 'stickyNote' &&
+            object.color === '#86efac' &&
+            object.shapeType === 'circle' &&
+            object.text?.includes(testText),
+        )
+        return sticky || null
+      })
+      .toBeTruthy()
+  })
+
   test('AI command completes within 2 seconds', async ({ page }) => {
     if (!user) {
       throw new Error('Shared test user unavailable')

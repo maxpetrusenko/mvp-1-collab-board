@@ -34,6 +34,13 @@ const COLOR_MAP = {
   purple: '#c4b5fd',
   gray: '#e2e8f0',
 }
+const COLOR_NAME_ALTERNATION = 'yellow|blue|green|pink|red|orange|purple|gray'
+const COLOR_NAME_PATTERN = `(?:${COLOR_NAME_ALTERNATION})`
+const COLOR_PHRASE_REGEX = new RegExp(`\\b(${COLOR_NAME_ALTERNATION})\\s+color\\b`, 'i')
+const COLOR_AND_TEXT_CUE_REGEX = new RegExp(
+  `\\b(?:that\\s+says|saying|with\\s+text|with\\s+(?:a\\s+)?${COLOR_NAME_PATTERN}\\s+color\\s+and\\s+text|text\\s*[:=-])\\b\\s*(.+)$`,
+  'i',
+)
 const STICKY_SHAPE_SIZES = {
   rectangle: { width: 180, height: 110 },
   circle: { width: 130, height: 130 },
@@ -98,6 +105,101 @@ const NUMBER_WORD_MAP = {
   ten: 10,
 }
 
+const parseStickyCountToken = (token) => {
+  const normalized = String(token || '').toLowerCase().trim()
+  if (!normalized) {
+    return null
+  }
+
+  const numericValue = /^\d+$/.test(normalized) ? Number(normalized) : NUMBER_WORD_MAP[normalized]
+  if (!Number.isFinite(numericValue)) {
+    return null
+  }
+
+  return Math.min(10, Math.max(1, numericValue))
+}
+
+const extractStickyPrefixMeta = (beforeMarker) => {
+  const tokens = String(beforeMarker || '')
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+  if (tokens.length === 0) {
+    return { count: null, color: undefined, remainingText: '' }
+  }
+
+  let count = null
+  const prefixCount = parseStickyCountToken(tokens[0])
+  if (prefixCount !== null) {
+    count = prefixCount
+    tokens.shift()
+  }
+
+  const colorIndex = tokens.findIndex((token) => isKnownColor(token))
+  let color
+  if (colorIndex >= 0) {
+    color = tokens[colorIndex]
+    tokens.splice(colorIndex, 1)
+  }
+
+  return {
+    count,
+    color,
+    remainingText: tokens.join(' ').trim(),
+  }
+}
+
+// Parse position from string (supports "top left", "bottom right", "center", etc.)
+// Returns { x, y }
+// Args: positionString (string like "top left"), defaultX (number), defaultY (number)
+const parsePosition = (positionString, defaultX = 120, defaultY = 120) => {
+  if (!positionString) return { x: defaultX, y: defaultY }
+
+  const normalized = String(positionString).toLowerCase().trim()
+
+  // Board dimensions (typical viewport)
+  const BOARD_WIDTH = 1920
+  const BOARD_HEIGHT = 1080
+
+  let x = defaultX
+  let y = defaultY
+
+  // Check for center/middle first (explicit center position)
+  if (/^(center|middle)$/.test(normalized)) {
+    x = BOARD_WIDTH / 2 - 90 // Center minus half sticky width
+    y = BOARD_HEIGHT / 2 - 55 // Center minus half sticky height
+    return { x, y }
+  }
+
+  // Check for relative position patterns
+  const hasTop = /\btop\b/.test(normalized)
+  const hasBottom = /\bbottom\b/.test(normalized)
+  const hasLeft = /\bleft\b/.test(normalized)
+  const hasRight = /\bright\b/.test(normalized)
+
+  // Horizontal position
+  if (hasLeft) {
+    x = 120
+  } else if (hasRight) {
+    x = BOARD_WIDTH - 300
+  } else if (!hasLeft && !hasRight && (hasTop || hasBottom)) {
+    // Only "top" or "bottom" specified, center horizontally
+    x = BOARD_WIDTH / 2 - 90
+  }
+
+  // Vertical position
+  if (hasTop) {
+    y = 120
+  } else if (hasBottom) {
+    y = BOARD_HEIGHT - 200
+  } else if (!hasTop && !hasBottom && (hasLeft || hasRight)) {
+    // Only "left" or "right" specified, center vertically
+    y = BOARD_HEIGHT / 2 - 55
+  }
+
+  return { x, y }
+}
+
 const stripWrappingQuotes = (value) => {
   const trimmed = String(value || '').trim()
   if (!trimmed) return ''
@@ -126,9 +228,27 @@ const extractColorAndText = (raw) => {
   }
 }
 
+const extractColorFromPhrase = (raw) => {
+  const normalized = normalizeCommand(raw)
+  const match = normalized.match(COLOR_PHRASE_REGEX)
+  if (!match) {
+    return undefined
+  }
+
+  return match[1]?.toLowerCase()
+}
+
+const stripColorInstructionText = (rawText) =>
+  String(rawText || '')
+    .replace(new RegExp(`\\bwith\\s+(?:a\\s+)?${COLOR_NAME_PATTERN}\\s+color\\b`, 'gi'), '')
+    .replace(new RegExp(`\\b${COLOR_NAME_PATTERN}\\s+color\\b`, 'gi'), '')
+    .replace(/\b(?:and\s+)?text\b[:\-]?\s*/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+
 const inferStickyShapeType = (command) => {
   const lower = normalizeCommand(command).toLowerCase()
-  if (/\bcircle\b/.test(lower)) return 'circle'
+  if (/\b(?:circle|round)\b/.test(lower)) return 'circle'
   if (/\b(?:diamond|rhombus|romb)\b/.test(lower)) return 'diamond'
   if (/\btriangle\b/.test(lower)) return 'triangle'
   return 'rectangle'
@@ -143,9 +263,7 @@ const parseRequestedStickyCount = (command) => {
     return 1
   }
 
-  const token = countMatch[1]
-  const numericValue = /^\d+$/.test(token) ? Number(token) : NUMBER_WORD_MAP[token] || 1
-  return Math.min(10, Math.max(1, numericValue))
+  return parseStickyCountToken(countMatch[1]) || 1
 }
 
 const parseExplicitStickyTexts = (command) => {
@@ -189,38 +307,57 @@ const parseStickyCommand = (command) => {
     .trim()
 
   const afterMarker = normalized.slice(markerStart + markerText.length).trim()
-  const cueMatch = normalized.match(/\b(?:that\s+says|saying|with\s+text)\b\s*(.+)$/i)
-  const cueText = cueMatch ? cueMatch[1].trim() : ''
-  const suffixText = afterMarker.replace(/^[.!?]+|[.!?]+$/g, '').trim()
 
-  let textSource = cueText || suffixText || beforeMarker
-  let colorCandidate
+  // Extract position from "at top left", "at center", "in the center", etc.
+  const positionMatch = normalized.match(/(?:at|in(?:\s+the)?)\s+(top\s+left|top\s+right|bottom\s+left|bottom\s+right|center|middle|top|bottom|left|right)/i)
+  const position = positionMatch ? positionMatch[1].toLowerCase().trim() : undefined
 
-  if (beforeMarker) {
-    const beforeParts = beforeMarker.split(/\s+/).filter(Boolean)
-    if (beforeParts.length === 1 && isKnownColor(beforeParts[0])) {
-      colorCandidate = beforeParts[0]
-      if (!cueText && !suffixText) {
-        textSource = ''
-      }
-    }
+  const cueMatch = normalized.match(COLOR_AND_TEXT_CUE_REGEX)
+  const cueText = cueMatch ? cueMatch[1].replace(/^[:\-\s]+/, '').trim() : ''
+  // Remove position from suffix text if present
+  let suffixText = afterMarker.replace(/^[.!?]+|[.!?]+$/g, '').trim()
+  if (positionMatch) {
+    suffixText = suffixText.replace(new RegExp(positionMatch[0], 'i'), '').trim()
+  }
+
+  const stickyPrefix = extractStickyPrefixMeta(beforeMarker)
+  const prefixConsumed = stickyPrefix.count !== null || Boolean(stickyPrefix.color)
+  let textSource = cueText || suffixText || stickyPrefix.remainingText
+  if (!textSource && !prefixConsumed) {
+    textSource = beforeMarker
+  }
+  let colorCandidate = stickyPrefix.color
+
+  if (!cueText && !suffixText && !stickyPrefix.remainingText && prefixConsumed) {
+    textSource = ''
   }
 
   const parsed = extractColorAndText(textSource)
   if (!colorCandidate) {
     colorCandidate = parsed.color
   }
+  if (!colorCandidate) {
+    colorCandidate = extractColorFromPhrase(`${beforeMarker} ${afterMarker}`)
+  }
+
+  const sanitizedParsedText = stripColorInstructionText(parsed.text)
 
   const explicitTexts = parseExplicitStickyTexts(normalized)
   const requestedCount = parseRequestedStickyCount(normalized)
-  const count = explicitTexts.length > 0 ? explicitTexts.length : requestedCount
+  const count =
+    explicitTexts.length > 0
+      ? explicitTexts.length
+      : stickyPrefix.count !== null
+        ? stickyPrefix.count
+        : requestedCount
   const shapeType = inferStickyShapeType(normalized)
 
-  if (!parsed.text && explicitTexts.length === 0) {
+  if (!sanitizedParsedText && explicitTexts.length === 0) {
     return {
-      color: undefined,
+      color: colorCandidate,
       shapeType,
       count,
+      position,
       texts: Array.from({ length: count }, (_, index) =>
         count > 1 ? `Note ${index + 1}` : 'New sticky note',
       ),
@@ -232,15 +369,17 @@ const parseStickyCommand = (command) => {
       color: colorCandidate,
       shapeType,
       count,
+      position,
       texts: explicitTexts,
     }
   }
 
-  const fallbackText = sanitizeText(parsed.text) || 'New sticky note'
+  const fallbackText = sanitizeText(sanitizedParsedText) || 'New sticky note'
   return {
     color: colorCandidate,
     shapeType,
     count,
+    position,
     texts:
       count === 1
         ? [fallbackText]
@@ -492,12 +631,16 @@ const createStickyNote = async (ctx, args) => {
   const zIndex = getNextZIndex(ctx.state)
   const shapeType = normalizeShapeType(args.shapeType || args.type)
   const defaultSize = STICKY_SHAPE_SIZES[shapeType]
+  // Use position string if provided, otherwise use numeric x/y with defaults
+  const pos = args.position
+    ? parsePosition(args.position, 80, 80)
+    : { x: parseNumber(args.x, 80), y: parseNumber(args.y, 80) }
   const sticky = {
     id,
     boardId: ctx.boardId,
     type: 'stickyNote',
     shapeType,
-    position: { x: parseNumber(args.x, 80), y: parseNumber(args.y, 80) },
+    position: { x: pos.x, y: pos.y },
     size: {
       width: parseNumber(args.width, defaultSize.width),
       height: parseNumber(args.height, defaultSize.height),
@@ -524,12 +667,16 @@ const createShape = async (ctx, args) => {
   const zIndex = getNextZIndex(ctx.state)
   const shapeType = normalizeShapeType(args.type || args.shapeType, 'rectangle')
   const defaultSize = STICKY_SHAPE_SIZES[shapeType] || { width: 220, height: 140 }
+  // Use position string if provided, otherwise use numeric x/y with defaults
+  const pos = args.position
+    ? parsePosition(args.position, 200, 200)
+    : { x: parseNumber(args.x, 200), y: parseNumber(args.y, 200) }
   const shape = {
     id,
     boardId: ctx.boardId,
     type: 'shape',
     shapeType,
-    position: { x: parseNumber(args.x, 200), y: parseNumber(args.y, 200) },
+    position: { x: pos.x, y: pos.y },
     size: {
       width: parseNumber(args.width, defaultSize.width),
       height: parseNumber(args.height, defaultSize.height),
@@ -1077,18 +1224,21 @@ const runCommandPlan = async (ctx, command) => {
   const stickyCommand = parseStickyCommand(normalizedCommand)
   if (stickyCommand) {
     const stickyCount = Math.min(10, Math.max(1, stickyCommand.count || stickyCommand.texts.length || 1))
+    const basePosition = stickyCommand.position ? parsePosition(stickyCommand.position, 120, 120) : null
     for (let index = 0; index < stickyCount; index += 1) {
       const stickyArgs = {
         text: stickyCommand.texts[index] || `Note ${index + 1}`,
         color: toColor(stickyCommand.color, '#fde68a'),
         shapeType: stickyCommand.shapeType || 'rectangle',
+        position: stickyCommand.position,
       }
 
       if (stickyCount > 1) {
         await createStickyNote(ctx, {
           ...stickyArgs,
-          x: 120 + (index % 4) * 220,
-          y: 120 + Math.floor(index / 4) * 150,
+          position: undefined,
+          x: (basePosition?.x ?? 120) + (index % 4) * 220,
+          y: (basePosition?.y ?? 120) + Math.floor(index / 4) * 150,
         })
       } else {
         await createStickyNote(ctx, stickyArgs)
@@ -1288,8 +1438,9 @@ const executeViaLLM = async (ctx, command) => {
           text: toolCall.arguments.text || 'New sticky note',
           shapeType: toolCall.arguments.shapeType || 'rectangle',
           color: toColor(toolCall.arguments.color, '#fde68a'),
-          x: parseNumber(toolCall.arguments.x, 120),
-          y: parseNumber(toolCall.arguments.y, 120),
+          position: toolCall.arguments.position,
+          x: toolCall.arguments.x,
+          y: toolCall.arguments.y,
           width: toolCall.arguments.width,
           height: toolCall.arguments.height
         })
@@ -1298,11 +1449,12 @@ const executeViaLLM = async (ctx, command) => {
       case 'createShape':
         await createShape(ctx, {
           type: toolCall.arguments.type || 'rectangle',
-          width: toolCall.arguments.width,
-          height: toolCall.arguments.height,
           color: toColor(toolCall.arguments.color, '#93c5fd'),
-          x: parseNumber(toolCall.arguments.x, 200),
-          y: parseNumber(toolCall.arguments.y, 200)
+          position: toolCall.arguments.position,
+          x: toolCall.arguments.x,
+          y: toolCall.arguments.y,
+          width: toolCall.arguments.width,
+          height: toolCall.arguments.height
         })
         break
 
@@ -1760,6 +1912,7 @@ exports.__test = {
   normalizeCommandForPlan,
   isOrganizeByColorCommand,
   parseStickyCommand,
+  parsePosition,
   normalizeBoardMeta,
   canUserAccessBoard,
   canUserEditBoard,

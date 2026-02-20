@@ -59,23 +59,23 @@ test('Transforms: rotate controls are available and wired to persisted rotation 
   )
   assert.match(
     boardPageSource,
-    /const commitRotationObject = useCallback\(/,
-    'Expected commitRotationObject for persisting rotation',
+    /const calculateRotationAngle = \(centerX: number, centerY: number, mouseX: number, mouseY: number\) =>/,
+    'Expected shared rotation angle helper',
   )
   assert.match(
     boardPageSource,
-    /const boardMouseX = \(pointerPos\.x - viewport\.x\) \/ viewport\.scale/,
-    'Expected rotation drag to convert stage to board coordinates',
-  )
-  assert.match(
-    boardPageSource,
-    /const angleRad = Math\.atan2\(dy, dx\)/,
+    /Math\.atan2\(mouseY - centerY, mouseX - centerX\)/,
     'Expected rotation to use atan2 for angle calculation',
   )
   assert.match(
     boardPageSource,
-    /const rotation = normalizeRotationDegrees\(angleDeg \+ 90\)/,
+    /normalizeRotationDegrees\(degrees \+ 90\)/,
     'Expected rotation to be normalized with handle offset adjustment',
+  )
+  assert.match(
+    boardPageSource,
+    /const finalRotation = localObjectRotations\[boardObject\.id\] \?\? boardObject\.rotation \?\? 0/,
+    'Expected drag rotation to persist via final rotation patch',
   )
 })
 
@@ -98,7 +98,7 @@ test('Connectors: style options support arrow and line rendering', () => {
   )
   assert.match(
     boardPageSource,
-    /<Line[\s\S]*resolvedConnectorStart\.x[\s\S]*resolvedConnectorEnd\.y/s,
+    /<Line[\s\S]*connectorGeometry\.start\.x[\s\S]*connectorGeometry\.end\.y/s,
     'Expected line connector rendering branch',
   )
 })
@@ -111,13 +111,13 @@ test('Connectors: linked endpoints resolve from attached object anchors and mind
   )
   assert.match(
     boardPageSource,
-    /const resolvedConnectorStart =[\s\S]*getAnchorPointForBounds\(/,
-    'Expected connector render geometry to resolve start anchor from linked object',
+    /const fromObject =[\s\S]*boardObject\.fromObjectId[\s\S]*const start =[\s\S]*getAnchorPointForObject\(fromObject, fromAnchor\)/s,
+    'Expected connector bounds to resolve start anchor from linked object',
   )
   assert.match(
     boardPageSource,
-    /const resolvedConnectorEnd =[\s\S]*getAnchorPointForBounds\(/,
-    'Expected connector render geometry to resolve end anchor from linked object',
+    /const toObject =[\s\S]*boardObject\.toObjectId[\s\S]*const end =[\s\S]*getAnchorPointForObject\(toObject, toAnchor\)/s,
+    'Expected connector bounds to resolve end anchor from linked object',
   )
   assert.match(
     boardPageSource,
