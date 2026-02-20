@@ -285,24 +285,6 @@ Purpose: log system decisions, alternatives, rationale, and change history.
 - Consequences: Added new CI/deploy workflows, a Lighthouse budget config + script, and introduced archive indirection for historical task evidence.
 - Revisit Trigger: If workflow runtime or maintenance overhead materially slows delivery versus current manual flow.
 
-### D-031
-- Date: 2026-02-20
-- Status: Accepted
-- Decision: Refactor `BoardPage.tsx` incrementally by extracting pure geometry/util helpers and page-local type declarations into dedicated modules (`app/src/lib/boardGeometry.ts`, `app/src/pages/boardPageTypes.ts`) while preserving behavior-critical inline guards in `BoardPage.tsx`.
-- Alternatives Considered: Single large rewrite/split of `BoardPage.tsx` into multiple components/hooks in one pass.
-- Rationale: Reduces file complexity and reuse friction with lower regression risk under strict source-string guardrail tests.
-- Consequences: `BoardPage.tsx` line count decreases without UI/behavior changes; connector-boundary logic remains local to satisfy current guardrails.
-- Revisit Trigger: After guardrail tests migrate away from strict source-string matching and permit deeper component extraction.
-
-### D-032
-- Date: 2026-02-20
-- Status: Accepted
-- Decision: Continue `BoardPage.tsx` reduction using guardrail-compatible helper modules for unguarded logic (`boardPageViewModels.ts`, `boardSharingHelpers.ts`, `boardActionHelpers.ts`) while keeping tested source markers in `BoardPage.tsx`.
-- Alternatives Considered: Pause refactor until tests are rewritten; move all logic into hooks/components immediately and patch tests afterward.
-- Rationale: Preserves momentum on file-size reduction and modularity without destabilizing the current source-string regression suite.
-- Consequences: Business/view utility logic is more reusable and testable in isolated modules; `BoardPage.tsx` still retains guarded interaction/render paths until guardrail tests are modernized.
-- Revisit Trigger: Once guardrails assert behavior via runtime tests instead of source matching, proceed with deeper component/hook extraction (selection/transforms/canvas split).
-
 ## Change Log
 - 2026-02-16: Initial decision set created.
 - 2026-02-16: Added auth provider, deployment URL strategy, and error recovery UX decisions.
@@ -320,5 +302,3 @@ Purpose: log system decisions, alternatives, rationale, and change history.
 - 2026-02-20: Added two-tier gate policy (fast dev gate + parallel pre-prod full gate).
 - 2026-02-20: Added AI warning-only inline messaging + board access metadata fallback gating decision.
 - 2026-02-20: Added lean sprint-control process decision (TASKS split, E2E-first rule, CI deploy + Lighthouse PR budgets).
-- 2026-02-20: Added incremental BoardPage extraction decision for geometry/helpers + types modules.
-- 2026-02-20: Added guardrail-compatible BoardPage helper-module extraction decision for view-models, sharing flows, and action utilities.

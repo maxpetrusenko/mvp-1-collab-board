@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react'
 import { Navigate, useNavigate, useParams } from 'react-router-dom'
 import { Arrow, Circle, Group, Layer, Line, Rect, Stage, Text } from 'react-konva'
 import Konva from 'konva'
@@ -67,46 +67,6 @@ import type {
   Point,
   ShapeKind,
 } from '../types/board'
-import type {
-  AiCommandHistoryEntry,
-  BoardAccessRequest,
-  BoardLinkAccess,
-  BoardMeta,
-  CommandPaletteCommand,
-  ConnectorDraft,
-  CreatePopoverKey,
-  HistoryEntry,
-  InlineEditorDraft,
-  ShapeDraft,
-  TemplateKey,
-  TextDraft,
-  TimerState,
-  Viewport,
-  VoteConfettiParticle,
-} from './boardPageTypes'
-import {
-  computeInlineEditorAppearance,
-  computeInlineEditorLayout,
-  computeMinimapModel,
-  computeSelectionBounds,
-} from './boardPageViewModels'
-import {
-  createImportedStickies,
-  createVoteConfettiParticles,
-  exportStageSnapshot,
-  resolveSnappedConnectorEndpoint,
-} from './boardActionHelpers'
-import {
-  applyLinkAccessFallback as applyLinkAccessFallbackHelper,
-  applyShareMutationFallback as applyShareMutationFallbackHelper,
-  applyShareResponseToState,
-  approveAccessRequest as approveAccessRequestHelper,
-  requestBoardAccess as requestBoardAccessHelper,
-  resolveCollaboratorIdByEmail as resolveCollaboratorIdByEmailHelper,
-  revokeSharedCollaborator as revokeSharedCollaboratorHelper,
-  submitLinkSharingUpdate as submitLinkSharingUpdateHelper,
-  submitShareInvite as submitShareInviteHelper,
-} from './boardSharingHelpers'
 import { AICommandPanel } from '../components/AICommandPanel'
 import { useConnectionStatus } from '../hooks/useConnectionStatus'
 import { usePresence } from '../hooks/usePresence'
@@ -116,20 +76,103 @@ import {
   type LocalPositionOverride,
   type LocalSizeOverride,
 } from '../hooks/useObjectSync'
-import {
-  clamp,
-  cloneBoardObject,
-  getAnchorPointForObject,
-  isFinitePoint,
-  normalizeAnchorKind,
-  normalizeConnectorStyle,
-  normalizeShapeKind,
-  overlaps,
-  toConnectorBounds,
-  toConnectorPatch,
-  type ConnectorPatch,
-} from '../lib/boardGeometry'
 import { getContrastingTextColor } from '../lib/contrast'
+
+type Viewport = {
+  x: number
+  y: number
+  scale: number
+}
+
+type ConnectorPatch = {
+  start: Point
+  end: Point
+  position: Point
+  size: { width: number; height: number }
+  fromObjectId: string | null
+  toObjectId: string | null
+  fromAnchor: AnchorKind | null
+  toAnchor: AnchorKind | null
+}
+
+type TimerState = {
+  running: boolean
+  endsAt: number | null
+  remainingMs: number
+}
+
+type BoardLinkAccess = 'restricted' | 'view' | 'edit'
+
+type VoteConfettiParticle = {
+  id: string
+  x: number
+  y: number
+  vx: number
+  vy: number
+  size: number
+  color: string
+  rotation: number
+  spin: number
+  life: number
+}
+
+type InlineEditorDraft = {
+  objectId: string
+  field: 'text' | 'title'
+  value: string
+}
+
+type BoardMeta = {
+  id: string
+  name: string
+  description: string
+  ownerId: string
+  linkAccessRole: BoardLinkAccess
+  sharedWith: string[]
+  sharedRoles: Record<string, 'edit' | 'view'>
+  createdBy: string
+  updatedBy?: string
+  createdAt?: number
+  updatedAt?: number
+}
+
+type AiCommandHistoryEntry = {
+  id: string
+  command: string
+  status: 'queued' | 'running' | 'success' | 'error'
+  queuedAt?: number
+  completedAt?: number
+  error?: string
+}
+
+type BoardAccessRequest = {
+  userId: string
+  role: 'edit' | 'view'
+  email: string
+  requestedAt?: number
+}
+
+type CreatePopoverKey = 'shape' | 'connector' | 'text'
+type TemplateKey = 'retro' | 'mindmap' | 'kanban'
+
+type CommandPaletteCommand = {
+  id: string
+  label: string
+  description: string
+  keywords: string[]
+  shortcut?: string
+  run: () => void | Promise<void>
+}
+
+type HistoryEntry =
+  | { type: 'create'; object: BoardObject }
+  | { type: 'delete'; object: BoardObject }
+  | {
+      type: 'patch'
+      objectId: string
+      before: Partial<BoardObject>
+      after: Partial<BoardObject>
+    }
 
 const BOARD_HEADER_HEIGHT = 64
 const CONNECTOR_SNAP_THRESHOLD_PX = 36
@@ -215,6 +258,18 @@ const isEditableTarget = (target: EventTarget | null) => {
   return target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable
 }
 
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
+const cloneBoardObject = (boardObject: BoardObject): BoardObject =>
+  JSON.parse(JSON.stringify(boardObject)) as BoardObject
+const isFinitePoint = (candidate: unknown): candidate is Point =>
+  Boolean(
+    candidate &&
+      typeof candidate === 'object' &&
+      'x' in candidate &&
+      'y' in candidate &&
+      Number.isFinite((candidate as Point).x) &&
+      Number.isFinite((candidate as Point).y),
+  )
 const normalizeRotationDegrees = (value: number) => {
   const normalized = value % 360
   return normalized < 0 ? normalized + 360 : normalized
@@ -334,6 +389,106 @@ const renderCommentBadge = (args: { commentCount: number; x: number; y: number }
     </>
   )
 }
+const overlaps = (
+  left: { x: number; y: number; width: number; height: number },
+  right: { x: number; y: number; width: number; height: number },
+) =>
+  left.x < right.x + right.width &&
+  left.x + left.width > right.x &&
+  left.y < right.y + right.height &&
+  left.y + left.height > right.y
+const toConnectorBounds = (start: Point, end: Point) => ({
+  position: {
+    x: Math.min(start.x, end.x),
+    y: Math.min(start.y, end.y),
+  },
+  size: {
+    width: Math.max(1, Math.abs(end.x - start.x)),
+    height: Math.max(1, Math.abs(end.y - start.y)),
+  },
+})
+const toConnectorPatch = (args: {
+  start: Point
+  end: Point
+  fromObjectId: string | null
+  toObjectId: string | null
+  fromAnchor: AnchorKind | null
+  toAnchor: AnchorKind | null
+}): ConnectorPatch => ({
+  start: args.start,
+  end: args.end,
+  ...toConnectorBounds(args.start, args.end),
+  fromObjectId: args.fromObjectId,
+  toObjectId: args.toObjectId,
+  fromAnchor: args.fromAnchor,
+  toAnchor: args.toAnchor,
+})
+const normalizeAnchorKind = (candidate: unknown): AnchorKind | null => {
+  if (candidate === 'top' || candidate === 'right' || candidate === 'bottom' || candidate === 'left' || candidate === 'center') {
+    return candidate
+  }
+  return null
+}
+const getAnchorPointForObject = (boardObject: BoardObject, anchor: AnchorKind): Point | null => {
+  if (boardObject.type === 'connector') {
+    return null
+  }
+
+  const left = boardObject.position.x
+  const top = boardObject.position.y
+  const width = boardObject.size.width
+  const height = boardObject.size.height
+  const cx = left + width / 2
+  const cy = top + height / 2
+
+  if (anchor === 'top') {
+    return { x: cx, y: top }
+  }
+  if (anchor === 'right') {
+    return { x: left + width, y: cy }
+  }
+  if (anchor === 'bottom') {
+    return { x: cx, y: top + height }
+  }
+  if (anchor === 'left') {
+    return { x: left, y: cy }
+  }
+  return { x: cx, y: cy }
+}
+const getObjectAnchors = (boardObject: BoardObject): Array<{
+  objectId: string
+  anchor: AnchorKind
+  point: Point
+}> => {
+  if (boardObject.type === 'connector') {
+    return []
+  }
+
+  const left = boardObject.position.x
+  const top = boardObject.position.y
+  const width = boardObject.size.width
+  const height = boardObject.size.height
+  const cx = left + width / 2
+  const cy = top + height / 2
+
+  return [
+    { objectId: boardObject.id, anchor: 'top', point: { x: cx, y: top } },
+    { objectId: boardObject.id, anchor: 'right', point: { x: left + width, y: cy } },
+    { objectId: boardObject.id, anchor: 'bottom', point: { x: cx, y: top + height } },
+    { objectId: boardObject.id, anchor: 'left', point: { x: left, y: cy } },
+    { objectId: boardObject.id, anchor: 'center', point: { x: cx, y: cy } },
+  ]
+}
+
+const normalizeShapeKind = (candidate: unknown): ShapeKind => {
+  if (candidate === 'circle' || candidate === 'diamond' || candidate === 'triangle') {
+    return candidate
+  }
+  return 'rectangle'
+}
+const normalizeConnectorStyle = (candidate: unknown): ConnectorStyle =>
+  candidate === 'line' ? 'line' : 'arrow'
+
 const getObjectBounds = (boardObject: BoardObject, objectById?: Map<string, BoardObject>) => {
   if (boardObject.type === 'connector') {
     const fromObject =
@@ -581,16 +736,27 @@ export const BoardPage = () => {
   }, [selectedIds])
 
   const [hoveredObjectId, setHoveredObjectId] = useState<string | null>(null)
-  const [shapeCreateDraft, setShapeCreateDraft] = useState<ShapeDraft>({
+  const [shapeCreateDraft, setShapeCreateDraft] = useState<{
+    shapeType: ShapeKind
+    color: string
+    text: string
+  }>({
     shapeType: 'rectangle',
     color: SHAPE_COLOR_OPTIONS[0],
     text: 'New shape',
   })
-  const [connectorCreateDraft, setConnectorCreateDraft] = useState<ConnectorDraft>({
+  const [connectorCreateDraft, setConnectorCreateDraft] = useState<{
+    style: ConnectorStyle
+    color: string
+  }>({
     style: 'arrow',
     color: CONNECTOR_COLOR_OPTIONS[0],
   })
-  const [textCreateDraft, setTextCreateDraft] = useState<TextDraft>({
+  const [textCreateDraft, setTextCreateDraft] = useState<{
+    text: string
+    color: string
+    fontSize: number
+  }>({
     text: '',
     color: TEXT_COLOR_OPTIONS[0],
     fontSize: 24,
@@ -1478,36 +1644,262 @@ export const BoardPage = () => {
 
     return objects.find((boardObject) => boardObject.id === inlineEditor.objectId) || null
   }, [inlineEditor, objects])
-  const inlineEditorLayout = useMemo(
-    () =>
-      computeInlineEditorLayout({
-        inlineEditor,
-        inlineEditorTarget,
-        localObjectPositions,
-        localObjectRotations,
-        viewport,
-      }),
-    [inlineEditor, inlineEditorTarget, localObjectPositions, localObjectRotations, viewport],
-  )
-  const inlineEditorAppearance = useMemo(
-    () =>
-      computeInlineEditorAppearance({
-        inlineEditor,
-        inlineEditorTarget,
-      }),
-    [inlineEditor, inlineEditorTarget],
-  )
-  const minimapModel = useMemo(
-    () =>
-      computeMinimapModel({
-        objects,
-        viewport,
-        stageSize,
-        getObjectBounds: (boardObject) => getObjectBounds(boardObject, objectsById),
-      }),
-    [objects, objectsById, stageSize, viewport],
-  )
-  const selectionBounds = useMemo(() => computeSelectionBounds(selectionBox), [selectionBox])
+  const inlineEditorLayout = useMemo(() => {
+    if (!inlineEditor || !inlineEditorTarget || inlineEditorTarget.type === 'connector') {
+      return null
+    }
+
+    const objectPosition =
+      localObjectPositions[inlineEditorTarget.id]?.point || inlineEditorTarget.position
+    const objectLeft = viewport.x + objectPosition.x * viewport.scale
+    const objectTop = viewport.y + objectPosition.y * viewport.scale
+    const objectRotation = localObjectRotations[inlineEditorTarget.id] ?? inlineEditorTarget.rotation ?? 0
+    const withTransform = (layout: {
+      left: number
+      top: number
+      width: number
+      height: number
+      fontSize: number
+      multiline: boolean
+    }) => ({
+      ...layout,
+      rotation: objectRotation,
+      transformOriginX: objectLeft - layout.left,
+      transformOriginY: objectTop - layout.top,
+    })
+
+    if (inlineEditor.field === 'text' && inlineEditorTarget.type === 'stickyNote') {
+      const shapeType = normalizeShapeKind(inlineEditorTarget.shapeType)
+      const objectWidth = inlineEditorTarget.size.width * viewport.scale
+      const objectHeight = inlineEditorTarget.size.height * viewport.scale
+
+      if (shapeType === 'rectangle') {
+        const inset = 8 * viewport.scale
+        return withTransform({
+          left: objectLeft + inset,
+          top: objectTop + inset,
+          width: Math.max(120, objectWidth - inset * 2),
+          height: Math.max(48, objectHeight - inset * 2),
+          fontSize: Math.max(12, 16 * viewport.scale),
+          multiline: true,
+        })
+      }
+
+      const widthRatio =
+        shapeType === 'circle' ? 0.68 : shapeType === 'triangle' ? 0.56 : 0.62
+      const heightRatio = shapeType === 'triangle' ? 0.46 : 0.56
+      const width = Math.max(96, objectWidth * widthRatio)
+      const height = Math.max(42, objectHeight * heightRatio)
+
+      return withTransform({
+        left: objectLeft + (objectWidth - width) / 2,
+        top: objectTop + (objectHeight - height) / 2,
+        width,
+        height,
+        fontSize: Math.max(12, 14 * viewport.scale),
+        multiline: true,
+      })
+    }
+
+    if (inlineEditor.field === 'text' && inlineEditorTarget.type === 'shape') {
+      const shapeType = normalizeShapeKind(inlineEditorTarget.shapeType)
+      const objectWidth = inlineEditorTarget.size.width * viewport.scale
+      const objectHeight = inlineEditorTarget.size.height * viewport.scale
+
+      if (shapeType === 'rectangle') {
+        const inset = 10 * viewport.scale
+        return withTransform({
+          left: objectLeft + inset,
+          top: objectTop + inset,
+          width: Math.max(120, objectWidth - inset * 2),
+          height: Math.max(36, objectHeight - inset * 2),
+          fontSize: Math.max(12, 14 * viewport.scale),
+          multiline: true,
+        })
+      }
+
+      const widthRatio =
+        shapeType === 'circle' ? 0.68 : shapeType === 'triangle' ? 0.56 : 0.62
+      const heightRatio = shapeType === 'triangle' ? 0.46 : 0.56
+      const width = Math.max(92, objectWidth * widthRatio)
+      const height = Math.max(38, objectHeight * heightRatio)
+
+      return withTransform({
+        left: objectLeft + (objectWidth - width) / 2,
+        top: objectTop + (objectHeight - height) / 2,
+        width,
+        height,
+        fontSize: Math.max(12, 14 * viewport.scale),
+        multiline: true,
+      })
+    }
+
+    if (inlineEditor.field === 'text' && inlineEditorTarget.type === 'text') {
+      return withTransform({
+        left: objectLeft,
+        top: objectTop,
+        width: Math.max(120, inlineEditorTarget.size.width * viewport.scale),
+        height: Math.max(36, inlineEditorTarget.size.height * viewport.scale),
+        fontSize: Math.max(12, (inlineEditorTarget.fontSize || 24) * viewport.scale),
+        multiline: true,
+      })
+    }
+
+    if (inlineEditor.field === 'title' && inlineEditorTarget.type === 'frame') {
+      return withTransform({
+        left: objectLeft + 10 * viewport.scale,
+        top: objectTop + 6 * viewport.scale,
+        width: Math.max(160, inlineEditorTarget.size.width * viewport.scale - 20 * viewport.scale),
+        height: Math.max(24, 24 * viewport.scale),
+        fontSize: Math.max(12, 14 * viewport.scale),
+        multiline: false,
+      })
+    }
+
+    return null
+  }, [
+    inlineEditor,
+    inlineEditorTarget,
+    localObjectRotations,
+    localObjectPositions,
+    viewport.scale,
+    viewport.x,
+    viewport.y,
+  ])
+  const inlineEditorAppearance = useMemo(() => {
+    if (!inlineEditor || !inlineEditorTarget) {
+      return null
+    }
+
+    const classNames = ['inline-editor']
+    const style: CSSProperties = {}
+
+    if (inlineEditor.field === 'text' && inlineEditorTarget.type === 'stickyNote') {
+      const shapeType = normalizeShapeKind(inlineEditorTarget.shapeType)
+      classNames.push('inline-editor-sticky')
+
+      if (shapeType === 'rectangle') {
+        classNames.push('inline-editor-align-left')
+        style.backgroundColor = inlineEditorTarget.color
+        style.borderColor = 'rgba(15, 23, 42, 0.22)'
+      } else {
+        classNames.push('inline-editor-align-center')
+        style.backgroundColor = 'transparent'
+        style.borderColor = 'rgba(15, 23, 42, 0.3)'
+      }
+
+      if (shapeType === 'circle') {
+        classNames.push('inline-editor-pill')
+      }
+
+      style.color = getContrastingTextColor(inlineEditorTarget.color)
+      return { className: classNames.join(' '), style }
+    }
+
+    if (inlineEditor.field === 'text' && inlineEditorTarget.type === 'shape') {
+      const shapeType = normalizeShapeKind(inlineEditorTarget.shapeType)
+      classNames.push('inline-editor-shape')
+
+      if (shapeType === 'rectangle') {
+        classNames.push('inline-editor-align-left')
+        style.backgroundColor = inlineEditorTarget.color
+        style.borderColor = 'rgba(15, 23, 42, 0.22)'
+      } else {
+        classNames.push('inline-editor-align-center')
+        style.backgroundColor = 'transparent'
+        style.borderColor = 'rgba(15, 23, 42, 0.3)'
+      }
+
+      style.color = getContrastingTextColor(inlineEditorTarget.color)
+      return { className: classNames.join(' '), style }
+    }
+
+    if (inlineEditor.field === 'text' && inlineEditorTarget.type === 'text') {
+      classNames.push('inline-editor-text-object')
+      style.backgroundColor = 'transparent'
+      style.borderColor = 'transparent'
+      style.color = inlineEditorTarget.color
+      return { className: classNames.join(' '), style }
+    }
+
+    if (inlineEditor.field === 'title' && inlineEditorTarget.type === 'frame') {
+      classNames.push('inline-editor-frame', 'inline-editor-align-left')
+      style.backgroundColor = inlineEditorTarget.color
+      style.borderColor = 'rgba(15, 23, 42, 0.24)'
+      style.color = getContrastingTextColor(inlineEditorTarget.color)
+      return { className: classNames.join(' '), style }
+    }
+
+    return { className: classNames.join(' '), style }
+  }, [inlineEditor, inlineEditorTarget])
+  const minimapModel = useMemo(() => {
+    const miniWidth = 220
+    const miniHeight = 140
+    const bounds = objects.map((boardObject) => getObjectBounds(boardObject, objectsById))
+    const viewportWorld = {
+      x: -viewport.x / viewport.scale,
+      y: -viewport.y / viewport.scale,
+      width: stageSize.width / viewport.scale,
+      height: stageSize.height / viewport.scale,
+    }
+
+    if (bounds.length === 0) {
+      return {
+        miniWidth,
+        miniHeight,
+        world: viewportWorld,
+        viewportWorld,
+        objects: [] as Array<{ id: string; x: number; y: number; width: number; height: number }>,
+      }
+    }
+
+    const minX = Math.min(viewportWorld.x, ...bounds.map((item) => item.x))
+    const minY = Math.min(viewportWorld.y, ...bounds.map((item) => item.y))
+    const maxX = Math.max(
+      viewportWorld.x + viewportWorld.width,
+      ...bounds.map((item) => item.x + item.width),
+    )
+    const maxY = Math.max(
+      viewportWorld.y + viewportWorld.height,
+      ...bounds.map((item) => item.y + item.height),
+    )
+    const worldWidth = Math.max(1, maxX - minX)
+    const worldHeight = Math.max(1, maxY - minY)
+
+    return {
+      miniWidth,
+      miniHeight,
+      world: {
+        x: minX,
+        y: minY,
+        width: worldWidth,
+        height: worldHeight,
+      },
+      viewportWorld,
+      objects: bounds.map((item, index) => ({
+        id: objects[index]?.id || `obj-${index}`,
+        x: item.x,
+        y: item.y,
+        width: item.width,
+        height: item.height,
+      })),
+    }
+  }, [objects, objectsById, stageSize.height, stageSize.width, viewport.scale, viewport.x, viewport.y])
+  const selectionBounds = useMemo(() => {
+    if (!selectionBox?.active) {
+      return null
+    }
+    const minX = Math.min(selectionBox.start.x, selectionBox.end.x)
+    const minY = Math.min(selectionBox.start.y, selectionBox.end.y)
+    const maxX = Math.max(selectionBox.start.x, selectionBox.end.x)
+    const maxY = Math.max(selectionBox.start.y, selectionBox.end.y)
+    return {
+      x: minX,
+      y: minY,
+      width: maxX - minX,
+      height: maxY - minY,
+    }
+  }, [selectionBox])
   const selectObjectId = useCallback((objectId: string, additive = false) => {
     const previous = selectedIdsRef.current
     let nextIds: string[] = []
@@ -2201,16 +2593,51 @@ export const BoardPage = () => {
       targetBoardId: string,
       payload: { sharedWith?: unknown; sharedRoles?: unknown; linkAccessRole?: unknown; message?: string },
     ) => {
-      applyShareResponseToState({
-        targetBoardId,
-        payload,
-        setBoards,
-        setBoardAccessMeta,
-        setShareStatus,
-        normalizeSharedWith,
-        normalizeSharedRoles,
-        normalizeLinkAccessRole,
+      setBoards((prev) =>
+        prev.map((boardMeta) => {
+          if (boardMeta.id !== targetBoardId) {
+            return boardMeta
+          }
+          const nextSharedWith = Array.isArray(payload.sharedWith)
+            ? normalizeSharedWith(payload.sharedWith)
+            : boardMeta.sharedWith
+          const nextSharedRoles = normalizeSharedRoles(
+            payload.sharedRoles !== undefined ? payload.sharedRoles : boardMeta.sharedRoles,
+            nextSharedWith,
+          )
+          const nextLinkAccessRole =
+            payload.linkAccessRole !== undefined
+              ? normalizeLinkAccessRole(payload.linkAccessRole)
+              : boardMeta.linkAccessRole
+          return {
+            ...boardMeta,
+            linkAccessRole: nextLinkAccessRole,
+            sharedWith: nextSharedWith,
+            sharedRoles: nextSharedRoles,
+          }
+        }),
+      )
+      setBoardAccessMeta((prev) => {
+        if (!prev || prev.id !== targetBoardId) {
+          return prev
+        }
+        const nextSharedWith = Array.isArray(payload.sharedWith) ? normalizeSharedWith(payload.sharedWith) : prev.sharedWith
+        const nextSharedRoles = normalizeSharedRoles(
+          payload.sharedRoles !== undefined ? payload.sharedRoles : prev.sharedRoles,
+          nextSharedWith,
+        )
+        const nextLinkAccessRole =
+          payload.linkAccessRole !== undefined ? normalizeLinkAccessRole(payload.linkAccessRole) : prev.linkAccessRole
+        return {
+          ...prev,
+          linkAccessRole: nextLinkAccessRole,
+          sharedWith: nextSharedWith,
+          sharedRoles: nextSharedRoles,
+        }
       })
+      if (payload.message) {
+        setShareStatus(payload.message)
+      }
     },
     [],
   )
@@ -2224,16 +2651,49 @@ export const BoardPage = () => {
       if (!db || !user) {
         throw new Error('Unable to update board sharing right now.')
       }
-      await applyShareMutationFallbackHelper({
-        db,
-        userUid: user.uid,
-        boards,
-        targetBoardId,
-        collaboratorId,
-        action,
-        role,
-        applyShareResponse,
+
+      const targetBoardMeta = boards.find((candidate) => candidate.id === targetBoardId)
+      if (!targetBoardMeta) {
+        throw new Error('Board metadata unavailable.')
+      }
+      if (targetBoardMeta.ownerId !== user.uid) {
+        throw new Error('Only the board owner can manage sharing.')
+      }
+
+      const sharedWithSet = new Set(targetBoardMeta.sharedWith)
+      const nextSharedRoles = { ...targetBoardMeta.sharedRoles }
+      if (action === 'revoke') {
+        sharedWithSet.delete(collaboratorId)
+        delete nextSharedRoles[collaboratorId]
+      } else {
+        sharedWithSet.add(collaboratorId)
+        nextSharedRoles[collaboratorId] = role
+      }
+
+      const nextSharedWith = [...sharedWithSet]
+      const normalizedSharedRoles = normalizeSharedRoles(nextSharedRoles, nextSharedWith)
+      await setDoc(
+        doc(db, 'boards', targetBoardId),
+        {
+          ownerId: targetBoardMeta.ownerId,
+          linkAccessRole: targetBoardMeta.linkAccessRole,
+          sharedWith: nextSharedWith,
+          sharedRoles: normalizedSharedRoles,
+          updatedBy: user.uid,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true },
+      )
+
+      applyShareResponse(targetBoardId, {
+        sharedWith: nextSharedWith,
+        sharedRoles: normalizedSharedRoles,
+        message:
+          action === 'revoke'
+            ? 'Collaborator access removed.'
+            : `Board shared successfully (${role === 'view' ? 'read-only' : 'can edit'}).`,
       })
+      return nextSharedWith
     },
     [applyShareResponse, boards, user],
   )
@@ -2242,13 +2702,32 @@ export const BoardPage = () => {
       if (!db || !user) {
         throw new Error('Unable to update URL sharing right now.')
       }
-      await applyLinkAccessFallbackHelper({
-        db,
-        userUid: user.uid,
-        boards,
-        targetBoardId,
+
+      const targetBoardMeta = boards.find((candidate) => candidate.id === targetBoardId)
+      if (!targetBoardMeta) {
+        throw new Error('Board metadata unavailable.')
+      }
+      if (targetBoardMeta.ownerId !== user.uid) {
+        throw new Error('Only the board owner can manage sharing.')
+      }
+
+      await setDoc(
+        doc(db, 'boards', targetBoardId),
+        {
+          ownerId: targetBoardMeta.ownerId,
+          linkAccessRole,
+          updatedBy: user.uid,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true },
+      )
+
+      applyShareResponse(targetBoardId, {
         linkAccessRole,
-        applyShareResponse,
+        message:
+          linkAccessRole === 'restricted'
+            ? 'Link sharing disabled.'
+            : `Anyone with link can ${linkAccessRole === 'edit' ? 'edit' : 'view'}.`,
       })
     },
     [applyShareResponse, boards, user],
@@ -2259,10 +2738,17 @@ export const BoardPage = () => {
         throw new Error('Unable to look up collaborator right now.')
       }
 
-      return resolveCollaboratorIdByEmailHelper({
-        db,
-        emailLower,
-      })
+      const lookupQuery = query(
+        collection(db, 'users'),
+        where('emailLower', '==', emailLower),
+        firestoreLimit(1),
+      )
+      const snapshot = await getDocs(lookupQuery)
+      const docSnap = snapshot.docs[0]
+      if (!docSnap?.id) {
+        throw new Error('Collaborator email not found.')
+      }
+      return docSnap.id
     },
     [],
   )
@@ -2270,20 +2756,70 @@ export const BoardPage = () => {
     if (!shareDialogBoardId || !user) {
       return
     }
-    await submitShareInviteHelper({
-      shareDialogBoardId,
-      shareEmail,
-      role: shareRole,
-      user,
-      shareBoardEndpoint,
-      setIsShareSubmitting,
-      setShareError,
-      setShareStatus,
-      setShareEmail,
-      applyShareResponse,
-      applyShareMutationFallback,
-      resolveCollaboratorIdByEmail,
-    })
+    const trimmedEmail = shareEmail.trim().toLowerCase()
+    if (!trimmedEmail) {
+      setShareError('Enter an email address to share this board.')
+      return
+    }
+
+    setIsShareSubmitting(true)
+    setShareError(null)
+    setShareStatus(null)
+    try {
+      try {
+        const idToken = await user.getIdToken()
+        const response = await fetch(shareBoardEndpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({
+            boardId: shareDialogBoardId,
+            email: trimmedEmail,
+            action: 'share',
+            role: shareRole,
+          }),
+        })
+        const payload = (await response.json().catch(() => null)) as
+          | { error?: string; sharedWith?: unknown; sharedRoles?: unknown; linkAccessRole?: unknown; message?: string }
+          | null
+        if (!response.ok) {
+          throw new Error(payload?.error || 'Unable to share board right now.')
+        }
+
+        applyShareResponse(shareDialogBoardId, {
+          sharedWith: payload?.sharedWith,
+          sharedRoles: payload?.sharedRoles,
+          linkAccessRole: payload?.linkAccessRole,
+          message:
+            payload?.message ||
+            `Shared with ${trimmedEmail} (${shareRole === 'view' ? 'read-only' : 'can edit'}).`,
+        })
+        } catch {
+          try {
+            const collaboratorId = await resolveCollaboratorIdByEmail(trimmedEmail)
+            await applyShareMutationFallback(shareDialogBoardId, collaboratorId, 'share', shareRole)
+            setShareStatus(`Shared with ${trimmedEmail} (${shareRole === 'view' ? 'read-only' : 'can edit'}).`)
+          } catch (resolveError) {
+            const resolveMessage = resolveError instanceof Error ? resolveError.message : ''
+            if (/not found/i.test(resolveMessage)) {
+              throw new Error(
+                'Collaborator not found. Verify the email or use the URL access controls explicitly.',
+              )
+            } else {
+              throw resolveError
+            }
+          }
+        }
+
+      setShareEmail('')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to share board right now.'
+      setShareError(message)
+    } finally {
+      setIsShareSubmitting(false)
+    }
   }, [
     applyShareMutationFallback,
     applyShareResponse,
@@ -2298,17 +2834,48 @@ export const BoardPage = () => {
       if (!user) {
         return
       }
-      await revokeSharedCollaboratorHelper({
-        targetBoardId,
-        collaboratorId,
-        user,
-        shareBoardEndpoint,
-        setIsShareSubmitting,
-        setShareError,
-        setShareStatus,
-        applyShareResponse,
-        applyShareMutationFallback,
-      })
+
+      setIsShareSubmitting(true)
+      setShareError(null)
+      setShareStatus(null)
+      try {
+        try {
+          const idToken = await user.getIdToken()
+          const response = await fetch(shareBoardEndpoint, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${idToken}`,
+            },
+            body: JSON.stringify({
+              boardId: targetBoardId,
+              userId: collaboratorId,
+              action: 'revoke',
+            }),
+          })
+          const payload = (await response.json().catch(() => null)) as
+            | { error?: string; sharedWith?: unknown; sharedRoles?: unknown; linkAccessRole?: unknown; message?: string }
+            | null
+          if (!response.ok) {
+            throw new Error(payload?.error || 'Unable to remove collaborator right now.')
+          }
+
+          applyShareResponse(targetBoardId, {
+            sharedWith: payload?.sharedWith,
+            sharedRoles: payload?.sharedRoles,
+            linkAccessRole: payload?.linkAccessRole,
+            message: payload?.message || 'Collaborator access removed.',
+          })
+        } catch {
+          await applyShareMutationFallback(targetBoardId, collaboratorId, 'revoke')
+        }
+
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unable to remove collaborator right now.'
+        setShareError(message)
+      } finally {
+        setIsShareSubmitting(false)
+      }
     },
     [applyShareMutationFallback, applyShareResponse, user],
   )
@@ -2316,36 +2883,109 @@ export const BoardPage = () => {
     if (!shareDialogBoardId || !user) {
       return
     }
-    await submitLinkSharingUpdateHelper({
-      shareDialogBoardId,
-      shareLinkRole,
-      user,
-      shareBoardEndpoint,
-      setIsShareSubmitting,
-      setShareError,
-      setShareStatus,
-      applyShareResponse,
-      applyLinkAccessFallback,
-    })
+
+    setIsShareSubmitting(true)
+    setShareError(null)
+    setShareStatus(null)
+    try {
+      try {
+        const idToken = await user.getIdToken()
+        const response = await fetch(shareBoardEndpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({
+            boardId: shareDialogBoardId,
+            action: 'set-link-access',
+            linkRole: shareLinkRole,
+          }),
+        })
+        const payload = (await response.json().catch(() => null)) as
+          | { error?: string; linkAccessRole?: unknown; message?: string }
+          | null
+        if (!response.ok) {
+          throw new Error(payload?.error || 'Unable to update URL sharing right now.')
+        }
+
+        applyShareResponse(shareDialogBoardId, {
+          linkAccessRole: payload?.linkAccessRole ?? shareLinkRole,
+          message:
+            payload?.message ||
+            (shareLinkRole === 'restricted'
+              ? 'Link sharing disabled.'
+              : `Anyone with link can ${shareLinkRole === 'edit' ? 'edit' : 'view'}.`),
+        })
+      } catch {
+        await applyLinkAccessFallback(shareDialogBoardId, shareLinkRole)
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to update URL sharing right now.'
+      setShareError(message)
+    } finally {
+      setIsShareSubmitting(false)
+    }
   }, [applyLinkAccessFallback, applyShareResponse, shareDialogBoardId, shareLinkRole, user])
   const approveAccessRequest = useCallback(
     async (targetBoardId: string, requesterId: string, role: 'edit' | 'view') => {
       if (!user) {
         return
       }
-      await approveAccessRequestHelper({
-        targetBoardId,
-        requesterId,
-        role,
-        user,
-        db,
-        shareBoardEndpoint,
-        setIsShareSubmitting,
-        setShareError,
-        setShareStatus,
-        applyShareResponse,
-        applyShareMutationFallback,
-      })
+
+      setIsShareSubmitting(true)
+      setShareError(null)
+      setShareStatus(null)
+      try {
+        try {
+          const idToken = await user.getIdToken()
+          const response = await fetch(shareBoardEndpoint, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${idToken}`,
+            },
+            body: JSON.stringify({
+              boardId: targetBoardId,
+              userId: requesterId,
+              action: 'approve-request',
+              role,
+            }),
+          })
+          const payload = (await response.json().catch(() => null)) as
+            | { error?: string; sharedWith?: unknown; sharedRoles?: unknown; message?: string }
+            | null
+          if (!response.ok) {
+            throw new Error(payload?.error || 'Unable to approve access request right now.')
+          }
+
+          applyShareResponse(targetBoardId, {
+            sharedWith: payload?.sharedWith,
+            sharedRoles: payload?.sharedRoles,
+            message: payload?.message || `Access granted (${role === 'view' ? 'read-only' : 'can edit'}).`,
+          })
+        } catch {
+          await applyShareMutationFallback(targetBoardId, requesterId, 'share', role)
+          if (db) {
+            await setDoc(
+              doc(db, 'boards', targetBoardId, 'accessRequests', requesterId),
+              {
+                status: 'approved',
+                approvedAt: serverTimestamp(),
+                approvedBy: user.uid,
+                updatedAt: serverTimestamp(),
+              },
+              { merge: true },
+            )
+          }
+          setShareStatus(`Access granted (${role === 'view' ? 'read-only' : 'can edit'}).`)
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unable to approve access request right now.'
+        setShareError(message)
+      } finally {
+        setIsShareSubmitting(false)
+      }
     },
     [applyShareMutationFallback, applyShareResponse, user],
   )
@@ -2353,15 +2993,35 @@ export const BoardPage = () => {
     if (!user) {
       return
     }
-    // action: 'request-access'
-    await requestBoardAccessHelper({
-      boardId,
-      user,
-      shareBoardEndpoint,
-      setIsSubmittingAccessRequest,
-      setBoardAccessRequestError,
-      setBoardAccessRequestStatus,
-    })
+
+    setIsSubmittingAccessRequest(true)
+    setBoardAccessRequestError(null)
+    setBoardAccessRequestStatus(null)
+    try {
+      const idToken = await user.getIdToken()
+      const response = await fetch(shareBoardEndpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          boardId,
+          action: 'request-access',
+          role: 'edit',
+        }),
+      })
+      const payload = (await response.json().catch(() => null)) as { error?: string; message?: string } | null
+      if (!response.ok) {
+        throw new Error(payload?.error || 'Unable to submit access request right now.')
+      }
+      setBoardAccessRequestStatus(payload?.message || 'Access request sent to board owner.')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to submit access request right now.'
+      setBoardAccessRequestError(message)
+    } finally {
+      setIsSubmittingAccessRequest(false)
+    }
   }, [boardId, user])
   const normalizeBoardObjectForWrite = useCallback(
     (boardObject: BoardObject): BoardObject => {
@@ -3912,11 +4572,52 @@ export const BoardPage = () => {
   )
 
   const resolveSnappedEndpoint = useCallback((point: Point) => {
-    return resolveSnappedConnectorEndpoint({
-      point,
-      objects: objectsRef.current,
-      thresholdPx: CONNECTOR_SNAP_THRESHOLD_PX,
-    })
+    const thresholdSquared = CONNECTOR_SNAP_THRESHOLD_PX * CONNECTOR_SNAP_THRESHOLD_PX
+    let nearest:
+      | {
+          point: Point
+          objectId: string
+          anchor: AnchorKind
+          distanceSquared: number
+        }
+      | null = null
+
+    for (const candidate of objectsRef.current) {
+      const anchors = getObjectAnchors(candidate)
+      for (const anchorCandidate of anchors) {
+        const dx = point.x - anchorCandidate.point.x
+        const dy = point.y - anchorCandidate.point.y
+        const distanceSquared = dx * dx + dy * dy
+
+        if (distanceSquared > thresholdSquared) {
+          continue
+        }
+
+        if (!nearest || distanceSquared < nearest.distanceSquared) {
+          nearest = {
+            point: anchorCandidate.point,
+            objectId: anchorCandidate.objectId,
+            anchor: anchorCandidate.anchor,
+            distanceSquared,
+          }
+        }
+      }
+    }
+
+    if (!nearest) {
+      return {
+        point,
+        objectId: null,
+        anchor: null,
+      }
+    }
+
+    const nearestAnchor = nearest
+    return {
+      point: nearestAnchor.point,
+      objectId: nearestAnchor.objectId,
+      anchor: nearestAnchor.anchor,
+    }
   }, [])
 
   const beginTimerEdit = useCallback(() => {
@@ -4014,11 +4715,22 @@ export const BoardPage = () => {
         x: position.x + size.width - 16,
         y: position.y + 16,
       }
-      const particles = createVoteConfettiParticles({
-        stickyObjectId: stickyObject.id,
-        origin,
-        colors: VOTE_CONFETTI_COLORS,
-        count: VOTE_CONFETTI_PARTICLE_COUNT,
+      const particles = Array.from({ length: VOTE_CONFETTI_PARTICLE_COUNT }, (_, index) => {
+        const angle = Math.random() * Math.PI - Math.PI
+        const speed = 2.4 + Math.random() * 3.4
+        const sizeValue = 5 + Math.random() * 4
+        return {
+          id: `${stickyObject.id}-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`,
+          x: origin.x,
+          y: origin.y,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed - 1.2,
+          size: sizeValue,
+          color: VOTE_CONFETTI_COLORS[index % VOTE_CONFETTI_COLORS.length],
+          rotation: Math.random() * 360,
+          spin: (Math.random() - 0.5) * 18,
+          life: 1,
+        } satisfies VoteConfettiParticle
       })
 
       setVoteConfettiParticles((prev) => [...prev, ...particles].slice(-200))
@@ -4081,21 +4793,39 @@ export const BoardPage = () => {
       if (!db || !user) {
         return
       }
+
+      const now = Date.now()
       const baseZIndex = objectsRef.current.reduce(
         (maxValue, boardObject) => Math.max(maxValue, boardObject.zIndex),
         0,
       )
-      const basePoint = {
+      const base = {
         x: (-viewport.x + stageSize.width / 2) / viewport.scale - 280,
         y: (-viewport.y + stageSize.height / 2) / viewport.scale - 180,
       }
-      const stickies = createImportedStickies({
-        lines,
-        boardId,
-        userUid: user.uid,
-        baseZIndex,
-        basePoint,
-        stickyColors: STICKY_COLOR_OPTIONS,
+
+      const stickies = lines.slice(0, 40).map((line, index) => {
+        const id = crypto.randomUUID()
+        const sticky: BoardObject = {
+          id,
+          boardId,
+          type: 'stickyNote',
+          shapeType: 'rectangle',
+          position: {
+            x: base.x + (index % 4) * 210,
+            y: base.y + Math.floor(index / 4) * 130,
+          },
+          size: { width: 180, height: 110 },
+          zIndex: baseZIndex + index + 1,
+          text: line,
+          color: STICKY_COLOR_OPTIONS[index % STICKY_COLOR_OPTIONS.length],
+          createdBy: user.uid,
+          createdAt: now + index,
+          updatedBy: user.uid,
+          updatedAt: now + index,
+          version: 1,
+        }
+        return sticky
       })
 
       await Promise.all(stickies.map((sticky) => writeBoardObject(sticky)))
@@ -4180,20 +4910,83 @@ export const BoardPage = () => {
       if (!stage) {
         return
       }
-      await exportStageSnapshot({
-        stage,
-        format,
-        scope,
-        viewport,
-        stageSize,
-        objects,
-        getObjectBounds: (boardObject) => getObjectBounds(boardObject, objectsById),
-        maxExportPixelCount: MAX_EXPORT_PIXEL_COUNT,
-        maxPdfEdgePx: MAX_PDF_EDGE_PX,
-        notifyExportComplete,
+
+      const viewportBounds = {
+        x: -viewport.x / viewport.scale,
+        y: -viewport.y / viewport.scale,
+        width: stageSize.width / viewport.scale,
+        height: stageSize.height / viewport.scale,
+      }
+
+      let bounds: { x: number; y: number; width: number; height: number } | null = null
+      if (scope === 'selection') {
+        bounds = viewportBounds
+      } else if (objects.length > 0) {
+        const resolvedBounds = objects.map((boardObject) => getObjectBounds(boardObject, objectsById))
+        const minX = Math.min(...resolvedBounds.map((item) => item.x))
+        const minY = Math.min(...resolvedBounds.map((item) => item.y))
+        const maxX = Math.max(...resolvedBounds.map((item) => item.x + item.width))
+        const maxY = Math.max(...resolvedBounds.map((item) => item.y + item.height))
+        bounds = {
+          x: minX - 24,
+          y: minY - 24,
+          width: Math.max(64, maxX - minX + 48),
+          height: Math.max(64, maxY - minY + 48),
+        }
+      } else {
+        bounds = viewportBounds
+      }
+
+      const crop = bounds
+        ? {
+            x: bounds.x * viewport.scale + viewport.x,
+            y: bounds.y * viewport.scale + viewport.y,
+            width: Math.max(2, bounds.width * viewport.scale),
+            height: Math.max(2, bounds.height * viewport.scale),
+          }
+        : {
+            x: 0,
+            y: 0,
+            width: stageSize.width,
+            height: stageSize.height,
+          }
+      const cropArea = Math.max(1, crop.width * crop.height)
+      const cappedPixelRatio = Math.min(2, Math.sqrt(MAX_EXPORT_PIXEL_COUNT / cropArea))
+
+      const dataUrl = stage.toDataURL({
+        pixelRatio: cappedPixelRatio,
+        ...crop,
       })
+      const fileBase = scope === 'selection' ? 'board-selection' : 'board-full'
+
+      if (format === 'png') {
+        const anchor = document.createElement('a')
+        anchor.href = dataUrl
+        anchor.download = `${fileBase}.png`
+        anchor.click()
+        notifyExportComplete({ format: 'png', scope, fileBase })
+        return
+      }
+
+      const pdfScale = Math.min(1, MAX_PDF_EDGE_PX / Math.max(crop.width, crop.height))
+      const pdfWidth = Math.max(2, Math.round(crop.width * pdfScale))
+      const pdfHeight = Math.max(2, Math.round(crop.height * pdfScale))
+
+      try {
+        const { jsPDF } = await import('jspdf')
+        const pdf = new jsPDF({
+          orientation: pdfWidth >= pdfHeight ? 'landscape' : 'portrait',
+          unit: 'px',
+          format: [pdfWidth, pdfHeight],
+        })
+        pdf.addImage(dataUrl, 'PNG', 0, 0, pdfWidth, pdfHeight)
+        pdf.save(`${fileBase}.pdf`)
+        notifyExportComplete({ format: 'pdf', scope, fileBase })
+      } catch (error) {
+        console.error('PDF export failed', error)
+      }
     },
-    [objects, objectsById, stageSize, viewport],
+    [objects, objectsById, stageSize.height, stageSize.width, viewport.scale, viewport.x, viewport.y],
   )
 
   const handleObjectSelection = useCallback(

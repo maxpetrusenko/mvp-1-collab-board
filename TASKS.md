@@ -1,7 +1,7 @@
 # TASKS.md
 
 Date initialized: 2026-02-16
-Last updated: 2026-02-20 (process + BoardPage refactor slices from `Refactoring - Process Inefficiencies: O2 to Long-Term.ini`)
+Last updated: 2026-02-20 (process refactor from `Refactoring - Process Inefficiencies: O2 to Long-Term.ini`)
 Cadence: half-day sprint checkpoints
 Source: `AGENTS.md` + `G4 Week 1 - CollabBoard-requirements.pdf`
 
@@ -15,8 +15,6 @@ Source: `AGENTS.md` + `G4 Week 1 - CollabBoard-requirements.pdf`
 | T-131 | D | Add explicit Golden Rule: E2E-first (hot-fix exception documented) to `AGENTS.md` | Done | 2026-02-20 |
 | T-132 | D | Add GitHub Actions deploy workflow for `main` and CI quality gate | Done | 2026-02-20 |
 | T-133 | D | Add Lighthouse performance budget enforcement in PR CI checks | Done | 2026-02-20 |
-| T-134 | E | Refactor `BoardPage.tsx` by extracting shared geometry helpers and page-local type declarations into dedicated modules | Done | 2026-02-20 |
-| T-135 | E | Continue incremental `BoardPage.tsx` breakdown by extracting view-model and share/action helper logic into dedicated modules while preserving guardrail-tested source markers | Done | 2026-02-20 |
 
 ## BACKLOG (Prioritized)
 
