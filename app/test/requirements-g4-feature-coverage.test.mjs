@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 const boardPageSource = readFileSync(new URL('../src/pages/BoardPage.tsx', import.meta.url), 'utf8')
+const rotationHandleSource = readFileSync(new URL('../src/components/board/RotationHandle.tsx', import.meta.url), 'utf8')
 const aiPanelSource = readFileSync(new URL('../src/components/AICommandPanel.tsx', import.meta.url), 'utf8')
 const boardEntrySource = readFileSync(new URL('../src/pages/BoardEntryPage.tsx', import.meta.url), 'utf8')
 const appSource = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
@@ -347,11 +348,11 @@ test('G4-ROTATION-001: Miro-style drag-to-rotate handle is present', () => {
 
   // Rotation handle UI (Circle at top of object with drag handlers)
   assert.equal(boardPageSource.includes('data-testid={`rotation-handle-${boardObject.id}`}'), true)
-  assert.equal(boardPageSource.includes('cursor="grab"'), true)
+  assert.equal(rotationHandleSource.includes('cursor="grab"'), true)
 
   // Rotation handle has Line stem and Circle handle
-  assert.equal(boardPageSource.includes('y2={-ROTATION_HANDLE_OFFSET}'), true)
-  assert.equal(boardPageSource.includes('radius={ROTATION_HANDLE_SIZE / 2}'), true)
+  assert.equal(rotationHandleSource.includes('y2={-handleOffset}'), true)
+  assert.equal(rotationHandleSource.includes('radius={handleSize / 2}'), true)
 
   // Drag handlers calculate angle from mouse position and normalize it
   assert.equal(boardPageSource.includes('Math.atan2(mouseY - centerY, mouseX - centerX)'), true)
@@ -359,7 +360,11 @@ test('G4-ROTATION-001: Miro-style drag-to-rotate handle is present', () => {
 
   // Uses local rotation state during drag and persists final value
   assert.equal(
-    boardPageSource.includes('calculateRotationFromHandleTarget(event.target'),
+    boardPageSource.includes('resolveRotationFromTarget={calculateRotationFromHandleTarget}'),
+    true,
+  )
+  assert.equal(
+    rotationHandleSource.includes('resolveRotationFromTarget(event.target, objectWidth, objectHeight)'),
     true,
   )
   assert.equal(
@@ -368,7 +373,8 @@ test('G4-ROTATION-001: Miro-style drag-to-rotate handle is present', () => {
   )
   assert.equal(
     boardPageSource.includes('{ rotation: resolvedRotation }') ||
-      boardPageSource.includes('{ rotation: finalRotation }'),
+      boardPageSource.includes('{ rotation: finalRotation }') ||
+      boardPageSource.includes('{ rotation },'),
     true,
   )
 })

@@ -5,6 +5,8 @@ import path from 'node:path'
 
 const boardPagePath = path.resolve(process.cwd(), 'src/pages/BoardPage.tsx')
 const boardPageSource = readFileSync(boardPagePath, 'utf8')
+const rotationHandlePath = path.resolve(process.cwd(), 'src/components/board/RotationHandle.tsx')
+const rotationHandleSource = readFileSync(rotationHandlePath, 'utf8')
 
 test('FR-8: standalone text objects are supported in board object creation and UI', () => {
   assert.match(
@@ -43,7 +45,7 @@ test('Transforms: rotate controls are available and wired to persisted rotation 
     'Expected rotation handle data-testid attribute',
   )
   assert.match(
-    boardPageSource,
+    rotationHandleSource,
     /cursor="grab"/,
     'Expected rotation handle to have grab cursor',
   )
@@ -74,8 +76,13 @@ test('Transforms: rotate controls are available and wired to persisted rotation 
   )
   assert.match(
     boardPageSource,
-    /calculateRotationFromHandleTarget\(event\.target,/,
-    'Expected drag rotation to derive angle from handle drag position',
+    /resolveRotationFromTarget=\{calculateRotationFromHandleTarget\}/,
+    'Expected board layer to inject shared rotation resolver',
+  )
+  assert.match(
+    rotationHandleSource,
+    /resolveRotationFromTarget\(event\.target, objectWidth, objectHeight\)/,
+    'Expected drag rotation component to resolve angle from handle drag position',
   )
   assert.match(
     boardPageSource,

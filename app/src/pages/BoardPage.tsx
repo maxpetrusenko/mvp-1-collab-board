@@ -67,6 +67,8 @@ import type {
   ShapeKind,
 } from '../types/board'
 import { AICommandPanel } from '../components/AICommandPanel'
+import { ResizeHandle } from '../components/board/ResizeHandle'
+import { RotationHandle } from '../components/board/RotationHandle'
 import { useConnectionStatus } from '../hooks/useConnectionStatus'
 import { usePresence } from '../hooks/usePresence'
 import {
@@ -5990,100 +5992,53 @@ export const BoardPage = () => {
                         />
                       ) : null}
                       {selected && canEditBoard ? (
-                        <Rect
+                        <ResizeHandle
                           x={size.width - RESIZE_HANDLE_SIZE}
                           y={size.height - RESIZE_HANDLE_SIZE}
-                          width={RESIZE_HANDLE_SIZE}
-                          height={RESIZE_HANDLE_SIZE}
-                          fill="#ffffff"
-                          stroke="#1d4ed8"
-                          strokeWidth={2}
-                          cornerRadius={3}
-                          draggable
-                          onMouseDown={(event) => {
-                            event.cancelBubble = true
-                          }}
-                          onDragStart={(event) => {
+                          handleSize={RESIZE_HANDLE_SIZE}
+                          minWidth={MIN_OBJECT_WIDTH}
+                          minHeight={MIN_OBJECT_HEIGHT}
+                          onResizeStart={() => {
                             setResizingObjectId(boardObject.id)
-                            event.cancelBubble = true
                           }}
-                          onDragMove={(event) => {
-                            const nextSize = {
-                              width: Math.max(MIN_OBJECT_WIDTH, event.target.x() + RESIZE_HANDLE_SIZE),
-                              height: Math.max(MIN_OBJECT_HEIGHT, event.target.y() + RESIZE_HANDLE_SIZE),
-                            }
+                          onResizePreview={(nextSize) => {
                             resizeObjectLocal(boardObject, nextSize)
-                            event.cancelBubble = true
                           }}
-                          onDragEnd={(event) => {
-                            const nextSize = {
-                              width: Math.max(MIN_OBJECT_WIDTH, event.target.x() + RESIZE_HANDLE_SIZE),
-                              height: Math.max(MIN_OBJECT_HEIGHT, event.target.y() + RESIZE_HANDLE_SIZE),
-                            }
+                          onResizeCommit={(nextSize) => {
                             void commitResizeObject(boardObject, nextSize)
-                            event.cancelBubble = true
                           }}
                           data-testid={`resize-handle-${boardObject.id}`}
                         />
                       ) : null}
                       {selected && canEditBoard ? (
-                        <>
-                          <Line
-                            x1={size.width / 2}
-                            y1={0}
-                            x2={size.width / 2}
-                            y2={-ROTATION_HANDLE_OFFSET}
-                            stroke="#1d4ed8"
-                            strokeWidth={1.5}
-                            listening={false}
-                          />
-                          <Circle
-                            x={size.width / 2}
-                            y={-ROTATION_HANDLE_OFFSET}
-                            radius={ROTATION_HANDLE_SIZE / 2}
-                            fill="#ffffff"
-                            stroke="#1d4ed8"
-                            strokeWidth={2}
-                            cursor="grab"
-                            draggable
-                            onMouseDown={(event) => {
-                              event.cancelBubble = true
-                            }}
-                            onDragStart={(event) => {
-                              setRotatingObjectId(boardObject.id)
-                              event.cancelBubble = true
-                            }}
-                            onDragMove={(event) => {
-                              const newRotation = calculateRotationFromHandleTarget(
-                                event.target,
-                                size.width,
-                                size.height,
-                              )
-                              if (newRotation === null) {
-                                return
-                              }
-
-                              setLocalRotation(boardObject.id, newRotation)
-                              event.cancelBubble = true
-                            }}
-                            onDragEnd={(event) => {
-                              const resolvedRotation =
-                                calculateRotationFromHandleTarget(event.target, size.width, size.height) ??
-                                localObjectRotationsRef.current[boardObject.id] ??
-                                boardObject.rotation ??
-                                0
-                              void patchObject(
-                                boardObject.id,
-                                { rotation: resolvedRotation },
-                                { actionLabel: `rotated ${boardObject.type}` },
-                              )
-                              clearLocalRotation(boardObject.id)
-                              setRotatingObjectId(null)
-                              event.cancelBubble = true
-                            }}
-                            data-testid={`rotation-handle-${boardObject.id}`}
-                          />
-                        </>
+                        <RotationHandle
+                          centerX={size.width / 2}
+                          handleOffset={ROTATION_HANDLE_OFFSET}
+                          handleSize={ROTATION_HANDLE_SIZE}
+                          objectId={boardObject.id}
+                          objectWidth={size.width}
+                          objectHeight={size.height}
+                          fallbackRotation={
+                            localObjectRotationsRef.current[boardObject.id] ?? boardObject.rotation ?? 0
+                          }
+                          resolveRotationFromTarget={calculateRotationFromHandleTarget}
+                          onRotateStart={(objectId) => {
+                            setRotatingObjectId(objectId)
+                          }}
+                          onRotatePreview={setLocalRotation}
+                          onRotateCommit={(objectId, rotation) => {
+                            void patchObject(
+                              objectId,
+                              { rotation },
+                              { actionLabel: `rotated ${boardObject.type}` },
+                            )
+                          }}
+                          onRotateEnd={(objectId) => {
+                            clearLocalRotation(objectId)
+                            setRotatingObjectId(null)
+                          }}
+                          data-testid={`rotation-handle-${boardObject.id}`}
+                        />
                       ) : null}
                     </Group>
                   )
@@ -6244,102 +6199,53 @@ export const BoardPage = () => {
                         />
                       ) : null}
                       {selected && canEditBoard ? (
-                        <Rect
+                        <ResizeHandle
                           x={size.width - RESIZE_HANDLE_SIZE}
                           y={size.height - RESIZE_HANDLE_SIZE}
-                          width={RESIZE_HANDLE_SIZE}
-                          height={RESIZE_HANDLE_SIZE}
-                          fill="#ffffff"
-                          stroke="#1d4ed8"
-                          strokeWidth={2}
-                          cornerRadius={3}
-                          draggable
-                          onMouseDown={(event) => {
-                            event.cancelBubble = true
-                          }}
-                          onDragStart={(event) => {
+                          handleSize={RESIZE_HANDLE_SIZE}
+                          minWidth={MIN_OBJECT_WIDTH}
+                          minHeight={MIN_OBJECT_HEIGHT}
+                          onResizeStart={() => {
                             setResizingObjectId(boardObject.id)
-                            event.cancelBubble = true
                           }}
-                          onDragMove={(event) => {
-                            const nextSize = {
-                              width: Math.max(MIN_OBJECT_WIDTH, event.target.x() + RESIZE_HANDLE_SIZE),
-                              height: Math.max(MIN_OBJECT_HEIGHT, event.target.y() + RESIZE_HANDLE_SIZE),
-                            }
+                          onResizePreview={(nextSize) => {
                             resizeObjectLocal(boardObject, nextSize)
-                            event.cancelBubble = true
                           }}
-                          onDragEnd={(event) => {
-                            const nextSize = {
-                              width: Math.max(MIN_OBJECT_WIDTH, event.target.x() + RESIZE_HANDLE_SIZE),
-                              height: Math.max(MIN_OBJECT_HEIGHT, event.target.y() + RESIZE_HANDLE_SIZE),
-                            }
+                          onResizeCommit={(nextSize) => {
                             void commitResizeObject(boardObject, nextSize)
-                            event.cancelBubble = true
                           }}
                           data-testid={`resize-handle-${boardObject.id}`}
                         />
                       ) : null}
                       {selected && canEditBoard ? (
-                        <>
-                          {/* Rotation handle line */}
-                          <Line
-                            x1={size.width / 2}
-                            y1={0}
-                            x2={size.width / 2}
-                            y2={-ROTATION_HANDLE_OFFSET}
-                            stroke="#1d4ed8"
-                            strokeWidth={1.5}
-                            listening={false}
-                          />
-                          {/* Rotation handle circle */}
-                          <Circle
-                            x={size.width / 2}
-                            y={-ROTATION_HANDLE_OFFSET}
-                            radius={ROTATION_HANDLE_SIZE / 2}
-                            fill="#ffffff"
-                            stroke="#1d4ed8"
-                            strokeWidth={2}
-                            cursor="grab"
-                            draggable
-                            onMouseDown={(event) => {
-                              event.cancelBubble = true
-                            }}
-                            onDragStart={(event) => {
-                              setRotatingObjectId(boardObject.id)
-                              event.cancelBubble = true
-                            }}
-                            onDragMove={(event) => {
-                              const newRotation = calculateRotationFromHandleTarget(
-                                event.target,
-                                size.width,
-                                size.height,
-                              )
-                              if (newRotation === null) {
-                                return
-                              }
-
-                              setLocalRotation(boardObject.id, newRotation)
-                              event.cancelBubble = true
-                            }}
-                            onDragEnd={(event) => {
-                              const finalRotation =
-                                calculateRotationFromHandleTarget(event.target, size.width, size.height) ??
-                                localObjectRotationsRef.current[boardObject.id] ??
-                                boardObject.rotation ??
-                                0
-                              void patchObject(
-                                boardObject.id,
-                                { rotation: finalRotation },
-                                { actionLabel: `rotated ${boardObject.type}` },
-                              )
-                              clearLocalRotation(boardObject.id)
-                              setRotatingObjectId(null)
-                              event.cancelBubble = true
-                            }}
-                            data-testid={`rotation-handle-${boardObject.id}`}
-                          />
-                        </>
+                        <RotationHandle
+                          centerX={size.width / 2}
+                          handleOffset={ROTATION_HANDLE_OFFSET}
+                          handleSize={ROTATION_HANDLE_SIZE}
+                          objectId={boardObject.id}
+                          objectWidth={size.width}
+                          objectHeight={size.height}
+                          fallbackRotation={
+                            localObjectRotationsRef.current[boardObject.id] ?? boardObject.rotation ?? 0
+                          }
+                          resolveRotationFromTarget={calculateRotationFromHandleTarget}
+                          onRotateStart={(objectId) => {
+                            setRotatingObjectId(objectId)
+                          }}
+                          onRotatePreview={setLocalRotation}
+                          onRotateCommit={(objectId, rotation) => {
+                            void patchObject(
+                              objectId,
+                              { rotation },
+                              { actionLabel: `rotated ${boardObject.type}` },
+                            )
+                          }}
+                          onRotateEnd={(objectId) => {
+                            clearLocalRotation(objectId)
+                            setRotatingObjectId(null)
+                          }}
+                          data-testid={`rotation-handle-${boardObject.id}`}
+                        />
                       ) : null}
                     </Group>
                   )
@@ -6697,102 +6603,53 @@ export const BoardPage = () => {
                         />
                       ) : null}
                       {selected && canEditBoard ? (
-                        <Rect
+                        <ResizeHandle
                           x={size.width - RESIZE_HANDLE_SIZE}
                           y={size.height - RESIZE_HANDLE_SIZE}
-                          width={RESIZE_HANDLE_SIZE}
-                          height={RESIZE_HANDLE_SIZE}
-                          fill="#ffffff"
-                          stroke="#1d4ed8"
-                          strokeWidth={2}
-                          cornerRadius={3}
-                          draggable
-                          onMouseDown={(event) => {
-                            event.cancelBubble = true
-                          }}
-                          onDragStart={(event) => {
+                          handleSize={RESIZE_HANDLE_SIZE}
+                          minWidth={MIN_OBJECT_WIDTH}
+                          minHeight={MIN_OBJECT_HEIGHT}
+                          onResizeStart={() => {
                             setResizingObjectId(boardObject.id)
-                            event.cancelBubble = true
                           }}
-                          onDragMove={(event) => {
-                            const nextSize = {
-                              width: Math.max(MIN_OBJECT_WIDTH, event.target.x() + RESIZE_HANDLE_SIZE),
-                              height: Math.max(MIN_OBJECT_HEIGHT, event.target.y() + RESIZE_HANDLE_SIZE),
-                            }
+                          onResizePreview={(nextSize) => {
                             resizeObjectLocal(boardObject, nextSize)
-                            event.cancelBubble = true
                           }}
-                          onDragEnd={(event) => {
-                            const nextSize = {
-                              width: Math.max(MIN_OBJECT_WIDTH, event.target.x() + RESIZE_HANDLE_SIZE),
-                              height: Math.max(MIN_OBJECT_HEIGHT, event.target.y() + RESIZE_HANDLE_SIZE),
-                            }
+                          onResizeCommit={(nextSize) => {
                             void commitResizeObject(boardObject, nextSize)
-                            event.cancelBubble = true
                           }}
                           data-testid={`resize-handle-${boardObject.id}`}
                         />
                       ) : null}
                       {selected && canEditBoard ? (
-                        <>
-                          {/* Rotation handle line */}
-                          <Line
-                            x1={size.width / 2}
-                            y1={0}
-                            x2={size.width / 2}
-                            y2={-ROTATION_HANDLE_OFFSET}
-                            stroke="#1d4ed8"
-                            strokeWidth={1.5}
-                            listening={false}
-                          />
-                          {/* Rotation handle circle */}
-                          <Circle
-                            x={size.width / 2}
-                            y={-ROTATION_HANDLE_OFFSET}
-                            radius={ROTATION_HANDLE_SIZE / 2}
-                            fill="#ffffff"
-                            stroke="#1d4ed8"
-                            strokeWidth={2}
-                            cursor="grab"
-                            draggable
-                            onMouseDown={(event) => {
-                              event.cancelBubble = true
-                            }}
-                            onDragStart={(event) => {
-                              setRotatingObjectId(boardObject.id)
-                              event.cancelBubble = true
-                            }}
-                            onDragMove={(event) => {
-                              const newRotation = calculateRotationFromHandleTarget(
-                                event.target,
-                                size.width,
-                                size.height,
-                              )
-                              if (newRotation === null) {
-                                return
-                              }
-
-                              setLocalRotation(boardObject.id, newRotation)
-                              event.cancelBubble = true
-                            }}
-                            onDragEnd={(event) => {
-                              const finalRotation =
-                                calculateRotationFromHandleTarget(event.target, size.width, size.height) ??
-                                localObjectRotationsRef.current[boardObject.id] ??
-                                boardObject.rotation ??
-                                0
-                              void patchObject(
-                                boardObject.id,
-                                { rotation: finalRotation },
-                                { actionLabel: `rotated ${boardObject.type}` },
-                              )
-                              clearLocalRotation(boardObject.id)
-                              setRotatingObjectId(null)
-                              event.cancelBubble = true
-                            }}
-                            data-testid={`rotation-handle-${boardObject.id}`}
-                          />
-                        </>
+                        <RotationHandle
+                          centerX={size.width / 2}
+                          handleOffset={ROTATION_HANDLE_OFFSET}
+                          handleSize={ROTATION_HANDLE_SIZE}
+                          objectId={boardObject.id}
+                          objectWidth={size.width}
+                          objectHeight={size.height}
+                          fallbackRotation={
+                            localObjectRotationsRef.current[boardObject.id] ?? boardObject.rotation ?? 0
+                          }
+                          resolveRotationFromTarget={calculateRotationFromHandleTarget}
+                          onRotateStart={(objectId) => {
+                            setRotatingObjectId(objectId)
+                          }}
+                          onRotatePreview={setLocalRotation}
+                          onRotateCommit={(objectId, rotation) => {
+                            void patchObject(
+                              objectId,
+                              { rotation },
+                              { actionLabel: `rotated ${boardObject.type}` },
+                            )
+                          }}
+                          onRotateEnd={(objectId) => {
+                            clearLocalRotation(objectId)
+                            setRotatingObjectId(null)
+                          }}
+                          data-testid={`rotation-handle-${boardObject.id}`}
+                        />
                       ) : null}
                     </Group>
                   )
@@ -6874,106 +6731,53 @@ export const BoardPage = () => {
                         />
                       ) : null}
                       {selected && canEditBoard ? (
-                        <Rect
+                        <ResizeHandle
                           x={Math.max(80, size.width) - RESIZE_HANDLE_SIZE}
                           y={Math.max(28, size.height) - RESIZE_HANDLE_SIZE}
-                          width={RESIZE_HANDLE_SIZE}
-                          height={RESIZE_HANDLE_SIZE}
-                          fill="#ffffff"
-                          stroke="#1d4ed8"
-                          strokeWidth={2}
-                          cornerRadius={3}
-                          draggable
-                          onMouseDown={(event) => {
-                            event.cancelBubble = true
-                          }}
-                          onDragStart={(event) => {
+                          handleSize={RESIZE_HANDLE_SIZE}
+                          minWidth={80}
+                          minHeight={28}
+                          onResizeStart={() => {
                             setResizingObjectId(boardObject.id)
-                            event.cancelBubble = true
                           }}
-                          onDragMove={(event) => {
-                            const nextSize = {
-                              width: Math.max(80, event.target.x() + RESIZE_HANDLE_SIZE),
-                              height: Math.max(28, event.target.y() + RESIZE_HANDLE_SIZE),
-                            }
+                          onResizePreview={(nextSize) => {
                             resizeObjectLocal(boardObject, nextSize)
-                            event.cancelBubble = true
                           }}
-                          onDragEnd={(event) => {
-                            const nextSize = {
-                              width: Math.max(80, event.target.x() + RESIZE_HANDLE_SIZE),
-                              height: Math.max(28, event.target.y() + RESIZE_HANDLE_SIZE),
-                            }
+                          onResizeCommit={(nextSize) => {
                             void commitResizeObject(boardObject, nextSize)
-                            event.cancelBubble = true
                           }}
                           data-testid={`resize-handle-${boardObject.id}`}
                         />
                       ) : null}
                       {selected && canEditBoard ? (
-                        <>
-                          {/* Rotation handle line */}
-                          <Line
-                            x1={Math.max(80, size.width) / 2}
-                            y1={0}
-                            x2={Math.max(80, size.width) / 2}
-                            y2={-ROTATION_HANDLE_OFFSET}
-                            stroke="#1d4ed8"
-                            strokeWidth={1.5}
-                            listening={false}
-                          />
-                          {/* Rotation handle circle */}
-                          <Circle
-                            x={Math.max(80, size.width) / 2}
-                            y={-ROTATION_HANDLE_OFFSET}
-                            radius={ROTATION_HANDLE_SIZE / 2}
-                            fill="#ffffff"
-                            stroke="#1d4ed8"
-                            strokeWidth={2}
-                            cursor="grab"
-                            draggable
-                            onMouseDown={(event) => {
-                              event.cancelBubble = true
-                            }}
-                            onDragStart={(event) => {
-                              setRotatingObjectId(boardObject.id)
-                              event.cancelBubble = true
-                            }}
-                            onDragMove={(event) => {
-                              const objectWidth = Math.max(80, size.width)
-                              const objectHeight = Math.max(28, size.height)
-                              const newRotation = calculateRotationFromHandleTarget(
-                                event.target,
-                                objectWidth,
-                                objectHeight,
-                              )
-                              if (newRotation === null) {
-                                return
-                              }
-
-                              setLocalRotation(boardObject.id, newRotation)
-                              event.cancelBubble = true
-                            }}
-                            onDragEnd={(event) => {
-                              const objectWidth = Math.max(80, size.width)
-                              const objectHeight = Math.max(28, size.height)
-                              const finalRotation =
-                                calculateRotationFromHandleTarget(event.target, objectWidth, objectHeight) ??
-                                localObjectRotationsRef.current[boardObject.id] ??
-                                boardObject.rotation ??
-                                0
-                              void patchObject(
-                                boardObject.id,
-                                { rotation: finalRotation },
-                                { actionLabel: `rotated ${boardObject.type}` },
-                              )
-                              clearLocalRotation(boardObject.id)
-                              setRotatingObjectId(null)
-                              event.cancelBubble = true
-                            }}
-                            data-testid={`rotation-handle-${boardObject.id}`}
-                          />
-                        </>
+                        <RotationHandle
+                          centerX={Math.max(80, size.width) / 2}
+                          handleOffset={ROTATION_HANDLE_OFFSET}
+                          handleSize={ROTATION_HANDLE_SIZE}
+                          objectId={boardObject.id}
+                          objectWidth={Math.max(80, size.width)}
+                          objectHeight={Math.max(28, size.height)}
+                          fallbackRotation={
+                            localObjectRotationsRef.current[boardObject.id] ?? boardObject.rotation ?? 0
+                          }
+                          resolveRotationFromTarget={calculateRotationFromHandleTarget}
+                          onRotateStart={(objectId) => {
+                            setRotatingObjectId(objectId)
+                          }}
+                          onRotatePreview={setLocalRotation}
+                          onRotateCommit={(objectId, rotation) => {
+                            void patchObject(
+                              objectId,
+                              { rotation },
+                              { actionLabel: `rotated ${boardObject.type}` },
+                            )
+                          }}
+                          onRotateEnd={(objectId) => {
+                            clearLocalRotation(objectId)
+                            setRotatingObjectId(null)
+                          }}
+                          data-testid={`rotation-handle-${boardObject.id}`}
+                        />
                       ) : null}
                     </Group>
                   )
