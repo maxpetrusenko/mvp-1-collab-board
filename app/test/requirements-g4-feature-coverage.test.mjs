@@ -221,6 +221,11 @@ test('TS-051 / FR-22: share dialog exposes role selection, defaults to edit, and
   assert.equal(boardEntrySource.includes('const normalizeSharedRoles = ('), true)
   assert.equal(boardEntrySource.includes('sharedRoles: {},'), true)
   assert.equal(boardEntrySource.includes("Record<string, 'edit' | 'view'>"), true)
+  assert.equal(boardPageSource.includes("const [shareRole, setShareRole] = useState<'edit' | 'view'>('edit')"), true)
+  assert.equal(boardPageSource.includes('data-testid="share-role-select"'), true)
+  assert.equal(boardPageSource.includes('data-testid={`share-collaborator-role-${collaboratorId}`}'), true)
+  assert.equal(boardPageSource.includes('role: shareRole'), true)
+  assert.equal(boardPageSource.includes('disabled={!roleCanEditBoard}'), true)
 })
 
 test('TS-052 / FR-16: local AI sticky parser accepts note alias to keep simple commands fast', () => {
