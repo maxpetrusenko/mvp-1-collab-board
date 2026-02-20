@@ -18,6 +18,13 @@ type FirestoreDocument = {
 export type BoardObject = {
   id: string
   type: string
+  comments?: Array<{
+    id?: string
+    text?: string
+    createdBy?: string
+    createdByName?: string
+    createdAt?: number
+  }>
   text?: string
   title?: string
   color?: string
@@ -110,6 +117,17 @@ const toBoardObject = (doc: FirestoreDocument): BoardObject => {
       mapped.votesByUser && typeof mapped.votesByUser === 'object' && !Array.isArray(mapped.votesByUser)
         ? (mapped.votesByUser as Record<string, boolean>)
         : undefined,
+    comments: Array.isArray(mapped.comments)
+      ? mapped.comments
+          .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === 'object')
+          .map((entry) => ({
+            id: typeof entry.id === 'string' ? entry.id : undefined,
+            text: typeof entry.text === 'string' ? entry.text : undefined,
+            createdBy: typeof entry.createdBy === 'string' ? entry.createdBy : undefined,
+            createdByName: typeof entry.createdByName === 'string' ? entry.createdByName : undefined,
+            createdAt: typeof entry.createdAt === 'number' ? entry.createdAt : undefined,
+          }))
+      : undefined,
     position: mapped.position as BoardObject['position'],
     size: mapped.size as BoardObject['size'],
     createdAt: typeof mapped.createdAt === 'number' ? mapped.createdAt : undefined,

@@ -23,7 +23,12 @@ test.describe('Requirements: reconnect UX', () => {
       await page.context().setOffline(false)
       await page.evaluate(() => window.dispatchEvent(new Event('online')))
       await expect(page.getByTestId('connection-status-pill')).toHaveText(/syncing/i, { timeout: 4_000 })
-      await expect(page.getByTestId('connection-status-pill')).toHaveText(/connected/i, { timeout: 6_000 })
+      await expect
+        .poll(async () => page.getByTestId('connection-status-pill').count(), {
+          timeout: 6_000,
+          message: 'status pill should hide after sync settles',
+        })
+        .toBe(0)
     } finally {
       await page.context().setOffline(false).catch(() => undefined)
       await deleteTempUser(user.idToken)

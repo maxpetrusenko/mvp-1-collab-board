@@ -699,6 +699,37 @@ select:focus-visible,
   text-overflow: ellipsis;
 }
 
+.board-name-pill-editable {
+  cursor: text;
+}
+
+.board-name-pill-editable:hover {
+  border-color: var(--color-accent);
+  color: var(--color-text-primary);
+}
+
+.board-name-pill-input {
+  width: min(280px, 40vw);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-full);
+  background: var(--color-surface-elevated);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 6px 10px;
+}
+
+.board-name-pill-input:focus {
+  outline: 2px solid transparent;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px rgba(78, 205, 196, 0.16);
+}
+
+.board-name-rename-error {
+  font-size: 0.72rem;
+}
+
 .board-header p {
   margin: 0;
   font-size: 0.8rem;

@@ -65,4 +65,50 @@ test.describe('Board polish tasks', () => {
       await deleteTempUser(user.idToken)
     }
   })
+
+  test('T-113: current board name supports inline rename from main board header', async ({ page }) => {
+    const user = await createTempUser()
+    const boardId = `pw-header-rename-${Date.now()}`
+    const renamedTitle = `Header Renamed ${Date.now()}`
+
+    try {
+      await loginWithEmail(page, APP_URL, user.email, user.password)
+      await page.goto(`${APP_URL}/b/${boardId}`)
+      await expect(page.locator('.board-stage')).toBeVisible()
+
+      await page.getByTestId('current-board-name').dblclick()
+      const renameInput = page.getByTestId('current-board-name-input')
+      await expect(renameInput).toBeVisible()
+      await renameInput.fill(renamedTitle)
+      await renameInput.press('Enter')
+
+      await expect(page.getByTestId('current-board-name')).toHaveText(renamedTitle)
+      await page.getByTestId('open-boards-panel').click()
+      await expect(page.getByTestId(`board-name-${boardId}`)).toHaveText(renamedTitle)
+    } finally {
+      await deleteTempUser(user.idToken)
+    }
+  })
+
+  test('T-114: header no longer shows Firebase LWW or Connected labels', async ({ page }) => {
+    const user = await createTempUser()
+    const boardId = `pw-header-labels-${Date.now()}`
+
+    try {
+      await loginWithEmail(page, APP_URL, user.email, user.password)
+      await page.goto(`${APP_URL}/b/${boardId}`)
+      await expect(page.locator('.board-stage')).toBeVisible()
+
+      await expect(page.locator('.board-header').getByText('Firebase LWW', { exact: true })).toHaveCount(0)
+      await expect(page.locator('.board-header').getByText('Connected', { exact: true })).toHaveCount(0)
+      await expect
+        .poll(async () => page.getByTestId('connection-status-pill').count(), {
+          timeout: 10_000,
+          message: 'connection status pill should disappear once synced',
+        })
+        .toBe(0)
+    } finally {
+      await deleteTempUser(user.idToken)
+    }
+  })
 })

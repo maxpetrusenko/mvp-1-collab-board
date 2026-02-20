@@ -1,224 +1,127 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 
 import { createTempUser, deleteTempUser, loginWithEmail } from './helpers/auth'
-import { countByType, fetchBoardObjects } from './helpers/firestore'
+import { fetchBoardObjects, newestObjectByType } from './helpers/firestore'
 
 const APP_URL = process.env.PLAYWRIGHT_BASE_URL || 'https://mvp-1-collab-board.web.app'
+const duplicateShortcut = process.platform === 'darwin' ? 'Meta+D' : 'Control+D'
 
-/**
- * E2E tests for object duplication behavior.
- *
- * Addresses T-095: Duplicating objects should NOT copy collaborative metadata
- * (comments, votes) - only visual properties should duplicate.
- */
-test.describe('Object Duplication', () => {
-  test.setTimeout(60_000)
+const clickBoardCenter = async (page: Page) => {
+  const canvasBox = await page.locator('.board-stage canvas').first().boundingBox()
+  if (!canvasBox) {
+    throw new Error('Canvas bounds unavailable')
+  }
 
-  test('duplicate does not copy votes from original object', async ({ page }) => {
+  await page.mouse.click(canvasBox.x + canvasBox.width / 2, canvasBox.y + canvasBox.height / 2)
+}
+
+const fitBoardViewport = async (page: Page) => {
+  await page.getByRole('button', { name: 'Fit all objects' }).click()
+  await page.waitForTimeout(250)
+}
+
+const waitForSticky = async (boardId: string, idToken: string) => {
+  const sticky = newestObjectByType(await fetchBoardObjects(boardId, idToken), 'stickyNote')
+  if (!sticky) {
+    throw new Error('Sticky note unavailable')
+  }
+  return sticky
+}
+
+test.describe('Object duplication metadata isolation', () => {
+  test.setTimeout(180_000)
+
+  test('DUPLICATE-E2E-001: duplicate keeps visual style but strips votes/comments', async ({ page }) => {
     const user = await createTempUser()
-    const boardId = `pw-dup-votes-${Date.now()}`
+    const boardId = `pw-dup-meta-${Date.now()}`
 
     try {
+      await page.addInitScript(() => {
+        window.localStorage.clear()
+      })
       await loginWithEmail(page, APP_URL, user.email, user.password)
       await page.goto(`${APP_URL}/b/${boardId}`)
-
       await expect(page.locator('.board-stage')).toBeVisible()
 
-      // Create a sticky note
       await page.locator('button[title="Add sticky note (S)"]').click()
 
-      // Wait for sticky to appear
-      await page.waitForTimeout(500)
-      const initialObjects = await fetchBoardObjects(boardId, user.idToken)
-      const initialStickyCount = countByType(initialObjects, 'stickyNote')
-      expect(initialStickyCount).toBe(1)
+      await expect
+        .poll(async () => {
+          const objects = await fetchBoardObjects(boardId, user.idToken)
+          return objects.filter((entry) => entry.type === 'stickyNote').length
+        })
+        .toBe(1)
 
-      // Click on the sticky to select it
-      const firstSticky = page.locator('[data-testid^="sticky-"]').first()
-      await expect(firstSticky).toBeVisible()
-      await firstSticky.click()
+      const sourceSticky = await waitForSticky(boardId, user.idToken)
+      await fitBoardViewport(page)
+      await clickBoardCenter(page)
 
-      // Vote on the sticky note
-      const voteButton = page.locator('[data-testid="vote-button"]').first()
-      await expect(voteButton).toBeVisible()
-      await voteButton.click()
+      await page.locator('button[title="Set shape to Circle"]').click()
+      await page.locator('button[title="Set color to blue"]').click()
 
-      // Verify vote was cast
-      await page.waitForTimeout(300)
+      await expect
+        .poll(async () => {
+          const refreshed = await fetchBoardObjects(boardId, user.idToken)
+          const updated = refreshed.find((entry) => entry.id === sourceSticky.id)
+          return `${updated?.shapeType || ''}:${updated?.color || ''}`
+        })
+        .toBe('circle:#93c5fd')
 
-      // Duplicate using keyboard shortcut (Ctrl+D / Cmd+D)
-      await page.keyboard.press((process.platform === 'darwin' ? 'Meta' : 'Control') + '+d')
+      await page.locator('button[aria-label="Toggle voting mode"]').click()
+      await clickBoardCenter(page)
+      await page.locator('button[aria-label="Toggle voting mode"]').click()
+      await expect
+        .poll(async () => {
+          const refreshed = await fetchBoardObjects(boardId, user.idToken)
+          const updated = refreshed.find((entry) => entry.id === sourceSticky.id)
+          return Object.keys(updated?.votesByUser || {}).length
+        })
+        .toBe(1)
 
-      // Wait for duplicate to appear
-      await page.waitForTimeout(500)
+      await page.getByRole('button', { name: 'Comments' }).click()
+      await page.locator('textarea.comment-input').fill('Duplicate metadata isolation comment')
+      await page.getByRole('button', { name: 'Add Comment' }).click()
 
-      const afterObjects = await fetchBoardObjects(boardId, user.idToken)
-      const afterStickyCount = countByType(afterObjects, 'stickyNote')
-      expect(afterStickyCount).toBe(2)
+      await expect
+        .poll(async () => {
+          const refreshed = await fetchBoardObjects(boardId, user.idToken)
+          const updated = refreshed.find((entry) => entry.id === sourceSticky.id)
+          return updated?.comments?.length || 0
+        })
+        .toBe(1)
 
-      // Check that the duplicate has no votes
-      const duplicatedStickies = afterObjects.filter((o) => o.type === 'stickyNote')
+      await page.keyboard.press(duplicateShortcut)
 
-      // One should have votes, one shouldn't
-      const withVotes = duplicatedStickies.filter((o) => o.votesByUser && Object.keys(o.votesByUser).length > 0)
-      const withoutVotes = duplicatedStickies.filter((o) => !o.votesByUser || Object.keys(o.votesByUser).length === 0)
+      await expect
+        .poll(async () => {
+          const objects = await fetchBoardObjects(boardId, user.idToken)
+          return objects.filter((entry) => entry.type === 'stickyNote').length
+        })
+        .toBe(2)
 
-      expect(withVotes.length).toBe(1)
-      expect(withoutVotes.length).toBe(1)
-    } finally {
-      await deleteTempUser(user)
-    }
-  })
+      const allStickies = (await fetchBoardObjects(boardId, user.idToken))
+        .filter((entry) => entry.type === 'stickyNote')
+        .sort((left, right) => (left.createdAt || 0) - (right.createdAt || 0))
 
-  test('duplicate does not copy comments from original object', async ({ page }) => {
-    const user = await createTempUser()
-    const boardId = `pw-dup-comments-${Date.now()}`
-
-    try {
-      await loginWithEmail(page, APP_URL, user.email, user.password)
-      await page.goto(`${APP_URL}/b/${boardId}`)
-
-      await expect(page.locator('.board-stage')).toBeVisible()
-
-      // Create a sticky note
-      await page.locator('button[title="Add sticky note (S)"]').click()
-      await page.waitForTimeout(500)
-
-      // Select the sticky
-      const firstSticky = page.locator('[data-testid^="sticky-"]').first()
-      await expect(firstSticky).toBeVisible()
-      await firstSticky.click()
-
-      // Open comments panel
-      const commentsTab = page.locator('text=Comments')
-      await expect(commentsTab).toBeVisible()
-      await commentsTab.click()
-
-      // Add a comment
-      const commentInput = page.locator('textarea[placeholder*="comment"], textarea[placeholder*="Comment"]')
-      await expect(commentInput).toBeVisible()
-      await commentInput.fill('This is a test comment')
-
-      const submitButton = page.locator('button:has-text("Send"), button:has-text("Post")').first()
-      await expect(submitButton).toBeVisible()
-      await submitButton.click()
-
-      // Verify comment appears in Firestore
-      await page.waitForTimeout(500)
-      const initialObjects = await fetchBoardObjects(boardId, user.idToken)
-      const originalSticky = initialObjects.find((o: any) => o.type === 'stickyNote')!
-      expect(originalSticky.comments?.length).toBeGreaterThan(0)
-
-      // Duplicate using keyboard shortcut
-      await page.keyboard.press((process.platform === 'darwin' ? 'Meta' : 'Control') + '+d')
-
-      // Wait for duplicate to appear
-      await page.waitForTimeout(500)
-
-      const afterObjects = await fetchBoardObjects(boardId, user.idToken)
-      const duplicatedStickies = afterObjects.filter((o) => o.type === 'stickyNote')
-
-      // One should have comments, one shouldn't
-      const withComments = duplicatedStickies.filter((o) => o.comments && o.comments.length > 0)
-      const withoutComments = duplicatedStickies.filter((o) => !o.comments || o.comments.length === 0)
-
-      expect(withComments.length).toBe(1)
-      expect(withoutComments.length).toBe(1)
-    } finally {
-      await deleteTempUser(user)
-    }
-  })
-
-  test('duplicate copies visual properties (text, color)', async ({ page }) => {
-    const user = await createTempUser()
-    const boardId = `pw-dup-visual-${Date.now()}`
-
-    try {
-      await loginWithEmail(page, APP_URL, user.email, user.password)
-      await page.goto(`${APP_URL}/b/${boardId}`)
-
-      await expect(page.locator('.board-stage')).toBeVisible()
-
-      // Create a sticky note
-      await page.locator('button[title="Add sticky note (S)"]').click()
-      await page.waitForTimeout(500)
-
-      // Get the first sticky note
-      const firstSticky = page.locator('[data-testid^="sticky-"]').first()
-      await expect(firstSticky).toBeVisible()
-
-      // Change its text
-      await firstSticky.dblclick()
-      const textArea = page.locator('textarea').first()
-      await textArea.fill('Test content')
-      await page.keyboard.press('Enter')
-
-      // Change its color to red
-      await firstSticky.click()
-      const colorRed = page.locator('[data-color="red"]')
-      await colorRed.click()
-
-      // Get initial object state
-      const initialObjects = await fetchBoardObjects(boardId, user.idToken)
-      const originalSticky = initialObjects.find((o) => o.type === 'stickyNote')!
-      expect(originalSticky.text).toBe('Test content')
-      expect(originalSticky.color).toBe('red')
-
-      // Duplicate using keyboard shortcut
-      await page.keyboard.press((process.platform === 'darwin' ? 'Meta' : 'Control') + '+d')
-
-      // Wait for duplicate to appear
-      await page.waitForTimeout(500)
-
-      const afterObjects = await fetchBoardObjects(boardId, user.idToken)
-      const duplicatedStickies = afterObjects.filter((o) => o.type === 'stickyNote')
-
-      // Both should have the same text and color
-      expect(duplicatedStickies).toHaveLength(2)
-
-      for (const sticky of duplicatedStickies) {
-        expect(sticky.text).toBe('Test content')
-        expect(sticky.color).toBe('red')
+      const source = allStickies[0]
+      const duplicate = allStickies[1]
+      if (!source || !duplicate || !source.position || !duplicate.position) {
+        throw new Error('Unable to resolve source and duplicate stickies')
       }
+
+      expect(source.id).not.toBe(duplicate.id)
+      expect(source.shapeType).toBe(duplicate.shapeType)
+      expect(source.color).toBe(duplicate.color)
+      expect(source.text).toBe(duplicate.text)
+      expect(duplicate.position.x - source.position.x).toBe(24)
+      expect(duplicate.position.y - source.position.y).toBe(24)
+
+      expect(source.comments?.length || 0).toBeGreaterThan(0)
+      expect(Object.keys(source.votesByUser || {}).length).toBeGreaterThan(0)
+      expect(duplicate.comments?.length || 0).toBe(0)
+      expect(Object.keys(duplicate.votesByUser || {}).length).toBe(0)
     } finally {
-      await deleteTempUser(user)
-    }
-  })
-
-  test('duplicate offsets position by 24px', async ({ page }) => {
-    const user = await createTempUser()
-    const boardId = `pw-dup-offset-${Date.now()}`
-
-    try {
-      await loginWithEmail(page, APP_URL, user.email, user.password)
-      await page.goto(`${APP_URL}/b/${boardId}`)
-
-      await expect(page.locator('.board-stage')).toBeVisible()
-
-      // Create a sticky note
-      await page.locator('button[title="Add sticky note (S)"]').click()
-      await page.waitForTimeout(500)
-
-      // Get initial object state
-      const initialObjects = await fetchBoardObjects(boardId, user.idToken)
-      const originalSticky = initialObjects.find((o) => o.type === 'stickyNote')!
-      const originalPos = originalSticky.position
-
-      // Duplicate using keyboard shortcut
-      await page.keyboard.press((process.platform === 'darwin' ? 'Meta' : 'Control') + '+d')
-
-      // Wait for duplicate to appear
-      await page.waitForTimeout(500)
-
-      const afterObjects = await fetchBoardObjects(boardId, user.idToken)
-      const duplicatedStickies = afterObjects.filter((o) => o.type === 'stickyNote')
-
-      // Find the duplicate (different id, same text)
-      const duplicate = duplicatedStickies.find((o) => o.id !== originalSticky.id)!
-      expect(duplicate.position.x).toBe(originalPos.x + 24)
-      expect(duplicate.position.y).toBe(originalPos.y + 24)
-    } finally {
-      await deleteTempUser(user)
+      await deleteTempUser(user.idToken)
     }
   })
 })

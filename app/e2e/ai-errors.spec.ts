@@ -13,7 +13,7 @@ const submitAiCommand = async (page: Page, command: string) => {
   await page.locator(AI_PANEL).getByRole('button', { name: 'Send Command' }).click()
 }
 
-test.describe('AI errors', () => {
+test.describe('AI conversational responses', () => {
   test.setTimeout(180_000)
   let user: Awaited<ReturnType<typeof createOrReuseTestUser>> | null = null
 
@@ -25,20 +25,20 @@ test.describe('AI errors', () => {
     await cleanupTestUser(user)
   })
 
-  test('shows unsupported-command error for unrecognized request', async ({ page }) => {
+  test('returns an AI text response for non-board prompts without mutating the board', async ({ page }) => {
     if (!user) {
       throw new Error('Shared test user unavailable')
     }
-    const boardId = `pw-ai-error-unsupported-${Date.now()}`
+    const boardId = `pw-ai-conversation-${Date.now()}`
 
     await loginWithEmail(page, APP_URL, user.email, user.password)
     await page.goto(`${APP_URL}/b/${boardId}`)
     await expect(page.locator('.board-stage')).toBeVisible()
 
-    await submitAiCommand(page, 'turn this board into a quantum spreadsheet')
-    const errorMessage = page.locator(`${AI_PANEL} .ai-message.error`)
-    await expect(errorMessage).toBeVisible()
-    await expect(errorMessage).toContainText('Unsupported command')
+    await submitAiCommand(page, '2+2')
+    const successMessage = page.locator(`${AI_PANEL} .ai-message.success`)
+    await expect(successMessage).toBeVisible()
+    await expect(successMessage).toContainText(/4|temporarily unavailable/i)
 
     await expect
       .poll(async () => {
@@ -48,43 +48,20 @@ test.describe('AI errors', () => {
       .toBe(0)
   })
 
-  test('shows error for malformed AI command syntax', async ({ page }) => {
+  test('keeps working for board mutations after a conversational response', async ({ page }) => {
     if (!user) {
       throw new Error('Shared test user unavailable')
     }
-    const boardId = `pw-ai-error-malformed-${Date.now()}`
+    const boardId = `pw-ai-conversation-then-board-${Date.now()}`
 
     await loginWithEmail(page, APP_URL, user.email, user.password)
     await page.goto(`${APP_URL}/b/${boardId}`)
     await expect(page.locator('.board-stage')).toBeVisible()
 
-    await submitAiCommand(page, 'create a blue octagon at position 40,40')
-    const errorMessage = page.locator(`${AI_PANEL} .ai-message.error`)
-    await expect(errorMessage).toBeVisible()
-    await expect(errorMessage).toContainText('Unsupported command')
+    await submitAiCommand(page, 'What is 3 + 5?')
+    await expect(page.locator(`${AI_PANEL} .ai-message.success`)).toBeVisible()
 
-    await expect
-      .poll(async () => {
-        const objects = await fetchBoardObjects(boardId, user.idToken)
-        return objects.length
-      })
-      .toBe(0)
-  })
-
-  test('recovers from error and succeeds on valid retry command', async ({ page }) => {
-    if (!user) {
-      throw new Error('Shared test user unavailable')
-    }
-    const boardId = `pw-ai-error-recovery-${Date.now()}`
-
-    await loginWithEmail(page, APP_URL, user.email, user.password)
-    await page.goto(`${APP_URL}/b/${boardId}`)
-    await expect(page.locator('.board-stage')).toBeVisible()
-
-    await submitAiCommand(page, 'make all my ideas perfect instantly')
-    await expect(page.locator(`${AI_PANEL} .ai-message.error`)).toBeVisible()
-
-    const recoveryToken = `ai-recovery-${Date.now()}`
+    const recoveryToken = `ai-conversation-recovery-${Date.now()}`
     await submitAiCommand(page, `add green sticky note saying ${recoveryToken}`)
     await expect(page.locator(`${AI_PANEL} .ai-message.success`)).toBeVisible()
 
