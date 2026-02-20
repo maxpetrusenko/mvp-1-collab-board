@@ -30,7 +30,8 @@ mvp-1-collab-board/
 **Root files**:
 - `README.md` — this file
 - `AGENTS.md` — Agent protocol and workflow instructions
-- `TASKS.md` — Active task tracking
+- `TASKS.md` — Active sprint and backlog tracking
+- `ARCHIVE.md` — Historical task ledger and prior evidence snapshots
 
 ## Local Development
 

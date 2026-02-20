@@ -24,6 +24,11 @@
 - **Reuse**: Pre-built solutions over scratch builds
 - **Reusability**: build modular reusable components ( code ui and back end too ) that we can reuse for multiple items
 
+### Golden Rule: E2E First
+- Always write a failing Playwright E2E test before implementation.
+- Exception: hot-fixes may ship immediately, but must include the regression E2E test in the same commit.
+- Do not rewrite tests just to force a passing result.
+
 ### Tools & Agents
 - **Review**: Thinking Claude, Speed Cursor, Clarity Codex
 - **Decisions**: Track in `DECISIONS.md` — defend every change

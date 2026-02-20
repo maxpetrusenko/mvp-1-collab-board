@@ -276,6 +276,15 @@ Purpose: log system decisions, alternatives, rationale, and change history.
 - Consequences: Added warning-level AI result plumbing (`level: 'warning'`) across functions/web, and introduced `boardAccessMeta` fallback in board permission/role derivation.
 - Revisit Trigger: If users request richer conversational replies inside the panel or if access-role state can be made strictly server-authoritative in a single stream.
 
+### D-030
+- Date: 2026-02-20
+- Status: Accepted
+- Decision: Shift project operations to a lean sprint-control model: keep `TASKS.md` focused on active/backlog only, move historical ledger to `ARCHIVE.md`, enforce explicit E2E-first policy in `AGENTS.md`, and automate quality/deploy checks with GitHub Actions including Lighthouse budget checks on PRs.
+- Alternatives Considered: Keep monolithic 500+ line `TASKS.md` and manual deploy/perf checks.
+- Rationale: Reduces planning context-switch overhead, creates deterministic guardrails for test-first execution, and prevents silent performance/deployment regressions.
+- Consequences: Added new CI/deploy workflows, a Lighthouse budget config + script, and introduced archive indirection for historical task evidence.
+- Revisit Trigger: If workflow runtime or maintenance overhead materially slows delivery versus current manual flow.
+
 ## Change Log
 - 2026-02-16: Initial decision set created.
 - 2026-02-16: Added auth provider, deployment URL strategy, and error recovery UX decisions.
@@ -292,3 +301,4 @@ Purpose: log system decisions, alternatives, rationale, and change history.
 - 2026-02-20: Added boards modal side-column scroll decision to prevent hidden share actions.
 - 2026-02-20: Added two-tier gate policy (fast dev gate + parallel pre-prod full gate).
 - 2026-02-20: Added AI warning-only inline messaging + board access metadata fallback gating decision.
+- 2026-02-20: Added lean sprint-control process decision (TASKS split, E2E-first rule, CI deploy + Lighthouse PR budgets).

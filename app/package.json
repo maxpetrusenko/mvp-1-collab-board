@@ -15,6 +15,7 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:stress": "RUN_EXTREME_STRESS=1 playwright test e2e/performance/stress-scale-5000-20users.spec.ts --reporter=line",
+    "test:perf": "npx --yes lighthouse http://127.0.0.1:4173 --chrome-flags='--headless=new --no-sandbox --disable-dev-shm-usage' --budget-path=perf-budget.json --quiet --output=json --output-path=./test-artifacts/lighthouse-report.json",
     "sim:100-mixed": "node scripts/run-100-user-mixed-sim.mjs"
   },
   "dependencies": {
