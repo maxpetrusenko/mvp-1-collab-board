@@ -251,7 +251,8 @@ test('TS-037 / T-063: dark mode state, persistence, and toggle UI are present', 
 
 test('TS-038 / T-067: view/edit mode toggle and edit-lock gating are present', () => {
   assert.equal(boardPageSource.includes("const [interactionMode, setInteractionMode] = useState<'edit' | 'view'>('edit')"), true)
-  assert.equal(boardPageSource.includes("const canEditBoard = interactionMode === 'edit'"), true)
+  assert.equal(boardPageSource.includes('const roleCanEditBoard = useMemo(() => {'), true)
+  assert.equal(boardPageSource.includes("const canEditBoard = interactionMode === 'edit' && roleCanEditBoard"), true)
   assert.equal(boardPageSource.includes('data-testid="interaction-mode-edit"'), true)
   assert.equal(boardPageSource.includes('data-testid="interaction-mode-view"'), true)
   assert.equal(boardPageSource.includes("if (!isMetaCombo && event.shiftKey && keyLower === 'e')"), true)
