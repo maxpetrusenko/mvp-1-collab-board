@@ -1,0 +1,8 @@
+# Firebase test user failures
+# generatedAt=2026-02-20T20:09:07.871Z
+index,email,password,error
+96,test96@example.com,password96,login=INVALID_LOGIN_CREDENTIALS; create=TOO_MANY_ATTEMPTS_TRY_LATER
+97,test97@example.com,password97,login=INVALID_LOGIN_CREDENTIALS; create=TOO_MANY_ATTEMPTS_TRY_LATER
+98,test98@example.com,password98,login=INVALID_LOGIN_CREDENTIALS; create=TOO_MANY_ATTEMPTS_TRY_LATER
+99,test99@example.com,password99,login=INVALID_LOGIN_CREDENTIALS; create=TOO_MANY_ATTEMPTS_TRY_LATER
+test,test@example.com,passwordtest,login=INVALID_LOGIN_CREDENTIALS; create=TOO_MANY_ATTEMPTS_TRY_LATER

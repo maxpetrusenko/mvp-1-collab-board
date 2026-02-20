@@ -14,10 +14,13 @@ import {
 import { db } from '../firebase/client'
 import { useAuth } from '../state/AuthContext'
 
+type BoardLinkAccess = 'restricted' | 'view' | 'edit'
+
 type BoardMeta = {
   id: string
   name: string
   ownerId: string
+  linkAccessRole: BoardLinkAccess
   sharedWith: string[]
   sharedRoles: Record<string, 'edit' | 'view'>
   createdBy: string
@@ -55,12 +58,19 @@ const normalizeSharedRoles = (
   })
   return normalized
 }
+const normalizeLinkAccessRole = (candidate: unknown): BoardLinkAccess => {
+  if (candidate === 'edit' || candidate === 'view') {
+    return candidate
+  }
+  return 'restricted'
+}
 
 const toBoardMeta = (
   id: string,
   data: Partial<BoardMeta> & {
     id?: string
     ownerId?: unknown
+    linkAccessRole?: unknown
     sharedWith?: unknown
     sharedRoles?: unknown
     deleted?: boolean
@@ -80,6 +90,7 @@ const toBoardMeta = (
   }
 
   const createdBy = createdByCandidate || ownerId
+  const linkAccessRole = normalizeLinkAccessRole(data.linkAccessRole)
   const sharedWith = normalizeSharedWith(data.sharedWith).filter((entry) => entry !== ownerId)
   const sharedRoles = normalizeSharedRoles(data.sharedRoles, sharedWith)
 
@@ -87,6 +98,7 @@ const toBoardMeta = (
     id: (typeof data.id === 'string' && data.id.trim() ? data.id : id).trim(),
     name: (typeof data.name === 'string' && data.name.trim() ? data.name : `Board ${id.slice(0, 8)}`).trim(),
     ownerId,
+    linkAccessRole,
     sharedWith,
     sharedRoles,
     createdBy,
@@ -95,7 +107,10 @@ const toBoardMeta = (
 }
 
 const canAccessBoardMeta = (boardMeta: BoardMeta, userId: string) =>
-  boardMeta.ownerId === userId || boardMeta.sharedWith.includes(userId)
+  boardMeta.ownerId === userId ||
+  boardMeta.sharedWith.includes(userId) ||
+  boardMeta.linkAccessRole === 'view' ||
+  boardMeta.linkAccessRole === 'edit'
 
 export const BoardEntryPage = () => {
   const { user, loading } = useAuth()
@@ -122,6 +137,7 @@ export const BoardEntryPage = () => {
           docSnap.id,
           docSnap.data() as Partial<BoardMeta> & {
             ownerId?: unknown
+            linkAccessRole?: unknown
             sharedWith?: unknown
             sharedRoles?: unknown
             deleted?: boolean
@@ -183,6 +199,7 @@ export const BoardEntryPage = () => {
             name: 'My first board',
             description: '',
             ownerId: user.uid,
+            linkAccessRole: 'restricted',
             sharedWith: [],
             sharedRoles: {},
             createdBy: user.uid,

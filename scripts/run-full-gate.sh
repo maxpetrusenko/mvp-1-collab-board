@@ -9,6 +9,7 @@ PREVIEW_URL="${PLAYWRIGHT_BASE_URL:-http://127.0.0.1:4173}"
 PLAYWRIGHT_WORKERS="${PLAYWRIGHT_WORKERS:-2}"
 PLAYWRIGHT_SHARDS="${PLAYWRIGHT_SHARDS:-2}"
 RUN_CRITICAL_CHECKS="${RUN_CRITICAL_CHECKS:-0}"
+RUN_BACKEND_PERF="${RUN_BACKEND_PERF:-0}"
 ARTIFACT_DIR="$ROOT_DIR/submission/test-artifacts"
 
 mkdir -p "$ARTIFACT_DIR"
@@ -57,6 +58,11 @@ wait "$functions_pid" || phase1_failed=1
 if (( phase1_failed != 0 )); then
   log "Phase 1 failed"
   exit 1
+fi
+
+if [[ "$RUN_BACKEND_PERF" == "1" ]]; then
+  log "Phase 1b: backend runtime perf harness"
+  (cd "$APP_DIR" && npm run test:backend-perf --silent)
 fi
 
 log "Phase 2: build app"

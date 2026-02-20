@@ -1,6 +1,6 @@
 {
-  "timestamp": 1771344969,
-  "boardId": "qa-critical-1771344969",
+  "timestamp": 1771617563,
+  "boardId": "qa-critical-1771617563",
   "checks": {
     "simultaneousAiCommands": {
       "pass": true,
@@ -8,16 +8,16 @@
         "success",
         "success"
       ],
-      "elapsedMs": 1741
+      "elapsedMs": 2069
     },
     "fiveAuthUsersBurst": {
-      "pass": true,
+      "pass": false,
       "statuses": [
         "success",
-        "success",
-        "success",
-        "success",
-        "success"
+        "unknown",
+        "unknown",
+        "unknown",
+        "unknown"
       ]
     },
     "idempotency": {
@@ -33,60 +33,32 @@
   },
   "queueEvidence": [
     {
-      "name": "cmd-b-1771344969",
+      "name": "cmd-b-1771617563",
       "status": "success",
       "queueSequence": 1,
-      "startedAt": 1771344973029,
-      "completedAt": 1771344973139
+      "startedAt": 1771617569844,
+      "completedAt": 1771617569943
     },
     {
-      "name": "cmd-a-1771344969",
+      "name": "cmd-a-1771617563",
       "status": "success",
       "queueSequence": 2,
-      "startedAt": 1771344974064,
-      "completedAt": 1771344974216
+      "startedAt": 1771617570992,
+      "completedAt": 1771617571085
     },
     {
-      "name": "cmd-burst-1771344969-1",
+      "name": "cmd-burst-1771617563-1",
       "status": "success",
       "queueSequence": 3,
-      "startedAt": 1771344974736,
-      "completedAt": 1771344974842
+      "startedAt": 1771617571924,
+      "completedAt": 1771617572013
     },
     {
-      "name": "cmd-burst-1771344969-2",
+      "name": "cmd-throttle-1771617563",
       "status": "success",
       "queueSequence": 4,
-      "startedAt": 1771344974993,
-      "completedAt": 1771344975100
-    },
-    {
-      "name": "cmd-burst-1771344969-5",
-      "status": "success",
-      "queueSequence": 5,
-      "startedAt": 1771344975584,
-      "completedAt": 1771344975717
-    },
-    {
-      "name": "cmd-burst-1771344969-3",
-      "status": "success",
-      "queueSequence": 6,
-      "startedAt": 1771344977197,
-      "completedAt": 1771344977301
-    },
-    {
-      "name": "cmd-burst-1771344969-4",
-      "status": "success",
-      "queueSequence": 7,
-      "startedAt": 1771344977532,
-      "completedAt": 1771344977648
-    },
-    {
-      "name": "cmd-throttle-1771344969",
-      "status": "success",
-      "queueSequence": 8,
-      "startedAt": 1771344979577,
-      "completedAt": 1771344979965
+      "startedAt": 1771617574589,
+      "completedAt": 1771617574969
     }
   ]
 }

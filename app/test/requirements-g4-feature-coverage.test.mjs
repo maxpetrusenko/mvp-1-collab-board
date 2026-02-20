@@ -8,6 +8,7 @@ const boardEntrySource = readFileSync(new URL('../src/pages/BoardEntryPage.tsx',
 const appSource = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
 const loginPageSource = readFileSync(new URL('../src/pages/LoginPage.tsx', import.meta.url), 'utf8')
 const authContextSource = readFileSync(new URL('../src/state/AuthContext.tsx', import.meta.url), 'utf8')
+const stylesSource = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
 
 test('TS-011 / RQ-011: board create UI exposes name/description form controls', () => {
   assert.equal(boardPageSource.includes('data-testid="board-create-form"'), true)
@@ -327,7 +328,7 @@ test('TS-039 / T-069: board duplicate action clones board metadata and objects',
   assert.equal(boardPageSource.includes('const duplicateBoardMeta = useCallback('), true)
   assert.equal(boardPageSource.includes("getDocs(collection(dbInstance, 'boards', targetBoardId, 'objects'))"), true)
   assert.equal(boardPageSource.includes('data-testid={`duplicate-board-${boardMeta.id}`}'), true)
-  assert.equal(boardPageSource.includes("run: () => duplicateBoardMeta(boardId)"), true)
+  assert.equal(boardPageSource.includes('void duplicateBoardMeta(boardId)'), true)
 })
 
 test('TS-040 / T-070: minimap click-to-navigate wiring and viewport indicator are present', () => {
@@ -368,25 +369,35 @@ test('G4-SHARE-002: main board header exposes a direct share action for owners',
   assert.equal(boardPageSource.includes('setShowBoardsPanel(true)'), true)
 })
 
-test('G4-PRESENCE-001: online presence indicators stay green (no away/yellow fallback class)', () => {
-  assert.equal(boardPageSource.includes('className="presence-dot"'), true)
-  assert.equal(boardPageSource.includes('presence-dot away'), false)
-  assert.equal(boardPageSource.includes('PRESENCE_AWAY_THRESHOLD_MS'), false)
+test('G4-PRESENCE-001: presence indicators support online and away states from heartbeat timestamps', () => {
+  assert.equal(boardPageSource.includes('const PRESENCE_AWAY_THRESHOLD_MS = 25_000'), true)
+  assert.equal(boardPageSource.includes('className={`presence-dot ${'), true)
+  assert.equal(boardPageSource.includes('nowMsValue - cursor.lastSeen > PRESENCE_AWAY_THRESHOLD_MS'), true)
+  assert.equal(stylesSource.includes('.presence-dot.away'), true)
 })
 
 test('G4-OPS-001: keyboard copy/duplicate actions resolve from live selection state and selected refs', () => {
   assert.equal(
-    boardPageSource.includes(
-      "if (\n        isMetaCombo &&\n        keyLower === 'c' &&\n        (selectedIdsRef.current.length > 0 || selectedObjects.length > 0 || selectedObject)\n      )",
-    ),
+    boardPageSource.includes("if (isMetaCombo && keyLower === 'c' && selectedIdsRef.current.length > 0)"),
+    true,
+  )
+  assert.equal(boardPageSource.includes('const copySelectionToClipboard = useCallback(() => {'), true)
+  assert.equal(
+    boardPageSource.includes('clipboardObjectsRef.current = sourceObjects.map((boardObject) => cloneBoardObject(boardObject))'),
+    true,
+  )
+  assert.equal(
+    boardPageSource.includes("if (isMetaCombo && keyLower === 'v' && clipboardObjectsRef.current.length > 0)"),
+    true,
+  )
+  assert.equal(boardPageSource.includes('const pasteClipboardObjects = useCallback(async () => {'), true)
+  assert.equal(boardPageSource.includes('const pasteOffset = OBJECT_DUPLICATE_OFFSET * pasteIteration'), true)
+  assert.equal(
+    boardPageSource.includes('const duplicated = await duplicateObject(source, { selectAfter: false, offset: pasteOffset })'),
     true,
   )
   assert.equal(
     boardPageSource.includes("if (isMetaCombo && keyLower === 'd' && (selectedIdsRef.current.length > 0 || selectedObject))"),
-    true,
-  )
-  assert.equal(
-    boardPageSource.includes('selectedObjects[0] ||'),
     true,
   )
   assert.equal(boardPageSource.includes('const sourceObjects ='), true)
@@ -411,10 +422,15 @@ test('G4-OFFSET-001: auto-offset is applied to newly created objects', () => {
   assert.equal(boardPageSource.includes('const NEW_OBJECT_OFFSET_STEP = 20'), true)
   assert.equal(boardPageSource.includes('const OBJECT_DUPLICATE_OFFSET = 20'), true)
   assert.equal(boardPageSource.includes('objectsCreatedCountRef.current * NEW_OBJECT_OFFSET_STEP'), true)
-  assert.equal(boardPageSource.includes('x: source.position.x + OBJECT_DUPLICATE_OFFSET'), true)
-  assert.equal(boardPageSource.includes('y: source.position.y + OBJECT_DUPLICATE_OFFSET'), true)
-  assert.equal(boardPageSource.includes('x: source.start.x + OBJECT_DUPLICATE_OFFSET'), true)
-  assert.equal(boardPageSource.includes('y: source.end.y + OBJECT_DUPLICATE_OFFSET'), true)
+  assert.equal(
+    boardPageSource.includes("const duplicateOffset = typeof options?.offset === 'number' ? options.offset : OBJECT_DUPLICATE_OFFSET"),
+    true,
+  )
+  assert.equal(boardPageSource.includes('const pasteOffset = OBJECT_DUPLICATE_OFFSET * pasteIteration'), true)
+  assert.equal(boardPageSource.includes('x: source.position.x + duplicateOffset'), true)
+  assert.equal(boardPageSource.includes('y: source.position.y + duplicateOffset'), true)
+  assert.equal(boardPageSource.includes('x: source.start.x + duplicateOffset'), true)
+  assert.equal(boardPageSource.includes('y: source.end.y + duplicateOffset'), true)
 })
 
 test('G4-VOTING-001: voting works on all object types not just sticky notes', () => {

@@ -20,6 +20,8 @@ type TestUser = {
   ephemeral: boolean
 }
 
+type ReusableCredentialSlot = 'primary' | 'secondary' | 'tertiary' | 'quaternary'
+
 const decodeJwtPayload = (token: string): Record<string, unknown> => {
   const [, payload] = token.split('.')
   if (!payload) {
@@ -91,20 +93,32 @@ const loadRawEnv = (): Record<string, string> => {
   }
 }
 
-const getReusableCredentialPair = (): { email: string; password: string } | null => {
+const getReusableCredentialPair = (slot: ReusableCredentialSlot = 'primary'): { email: string; password: string } | null => {
   const env = loadRawEnv()
-  const email = [
-    env.E2E_EMAIL,
-    env.QA_EMAIL,
-    env.EMAIL,
-    env.EMAIL1,
-    env.EMAIL2,
-    env.EMAIL3,
-    env.EMAIL4,
-  ]
-    .map((value) => String(value || '').trim())
-    .find((value) => value.length > 0)
-  const password = [env.E2E_PASSWORD, env.QA_PASSWORD, env.PW]
+  const slotCandidates: Record<
+    ReusableCredentialSlot,
+    { emails: Array<string | undefined>; passwords: Array<string | undefined> }
+  > = {
+    primary: {
+      emails: [env.E2E_EMAIL, env.QA_EMAIL, env.EMAIL, env.EMAIL1],
+      passwords: [env.E2E_PASSWORD, env.QA_PASSWORD, env.PW, env.PASSWORD],
+    },
+    secondary: {
+      emails: [env.E2E_EMAIL_2, env.QA_EMAIL_2, env.EMAIL2],
+      passwords: [env.E2E_PASSWORD_2, env.QA_PASSWORD_2, env.PW2, env.PASSWORD2, env.PW, env.PASSWORD],
+    },
+    tertiary: {
+      emails: [env.E2E_EMAIL_3, env.QA_EMAIL_3, env.EMAIL3],
+      passwords: [env.E2E_PASSWORD_3, env.QA_PASSWORD_3, env.PW3, env.PASSWORD3, env.PW, env.PASSWORD],
+    },
+    quaternary: {
+      emails: [env.E2E_EMAIL_4, env.QA_EMAIL_4, env.EMAIL4],
+      passwords: [env.E2E_PASSWORD_4, env.QA_PASSWORD_4, env.PW4, env.PASSWORD4, env.PW, env.PASSWORD],
+    },
+  }
+  const candidateSet = slotCandidates[slot]
+  const email = candidateSet.emails.map((value) => String(value || '').trim()).find((value) => value.length > 0)
+  const password = candidateSet.passwords
     .map((value) => String(value || '').trim())
     .find((value) => value.length > 0)
 
@@ -177,8 +191,8 @@ export const deleteTempUser = async (idToken: string): Promise<void> => {
   })
 }
 
-export const createOrReuseTestUser = async (): Promise<TestUser> => {
-  const reusable = getReusableCredentialPair()
+export const createOrReuseTestUser = async (slot: ReusableCredentialSlot = 'primary'): Promise<TestUser> => {
+  const reusable = getReusableCredentialPair(slot)
   if (reusable) {
     const idToken = await signInWithEmailPassword(reusable.email, reusable.password)
     if (idToken) {

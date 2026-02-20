@@ -30,6 +30,7 @@ const extremeStressSource = readFileSync(
   new URL('../e2e/performance/stress-scale-5000-20users.spec.ts', import.meta.url),
   'utf8',
 )
+const backendPerfSource = readFileSync(new URL('./backend-performance.mjs', import.meta.url), 'utf8')
 const boardPageSource = readFileSync(new URL('../src/pages/BoardPage.tsx', import.meta.url), 'utf8')
 const objectSyncHookSource = readFileSync(new URL('../src/hooks/useObjectSync.ts', import.meta.url), 'utf8')
 const presenceHookSource = readFileSync(new URL('../src/hooks/usePresence.ts', import.meta.url), 'utf8')
@@ -151,4 +152,24 @@ test('NFR-5 stability: presence hook batches RTDB cursor fan-out and prunes stal
   assert.equal(presenceHookSource.includes('scheduleCursorStateFlush()'), true)
   assert.equal(presenceHookSource.includes('pendingCursorsRef.current = next || {}'), true)
   assert.equal(presenceHookSource.includes('return now - lastSeen <= PRESENCE_STALE_THRESHOLD_MS'), true)
+})
+
+test('NFR-RUNTIME-001: backend perf harness records measured runtime latency data and emits artifact output', () => {
+  assert.equal(
+    backendPerfSource.includes("test('Backend perf: cursor sync latency (RTDB only, no Playwright)'"),
+    true,
+  )
+  assert.equal(
+    backendPerfSource.includes("test('Backend perf: five-user presence propagation (RTDB only, no Playwright)'"),
+    true,
+  )
+  assert.equal(backendPerfSource.includes('waitForPresenceMatch({'), true)
+  assert.equal(backendPerfSource.includes('waitForPresenceCount({'), true)
+  assert.equal(backendPerfSource.includes('runtimeSummary.tests.cursorSync = {'), true)
+  assert.equal(backendPerfSource.includes('runtimeSummary.tests.presence5Users = {'), true)
+  assert.equal(
+    backendPerfSource.includes("const ARTIFACT_PATH = path.resolve(process.cwd(), '../submission/test-artifacts/latest-backend-performance.json')"),
+    true,
+  )
+  assert.equal(backendPerfSource.includes('writeFileSync('), true)
 })

@@ -51,7 +51,8 @@ const waitForPresenceMatch = async (args: {
 test.describe('Performance: Multi-user cursor sync', () => {
   test.setTimeout(180_000)
 
-  test('NFR-3: cursor sync latency remains within PRD target and max bounds', async (_, testInfo) => {
+  test('NFR-3: cursor sync latency remains within PRD target and max bounds', async ({ page }, testInfo) => {
+    void page
     const boardId = `pw-perf-cursor-${Date.now()}`
     const firstUser = await createOrReuseTestUser()
     const secondUser = await createTempUser()
@@ -123,7 +124,8 @@ test.describe('Performance: Multi-user cursor sync', () => {
     }
   })
 
-  test('NFR-5: five concurrent users publish presence without degradation', async (_, testInfo) => {
+  test('NFR-5: five concurrent users publish presence without degradation', async ({ page }, testInfo) => {
+    void page
     const boardId = `pw-perf-presence5-${Date.now()}`
     const users = await Promise.all(
       Array.from({ length: 5 }, () => createTempUser()),

@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { cleanupTestUser, createOrReuseTestUser, loginWithEmail } from './helpers/auth'
-import { fetchBoardObjects, seedBoardObjects } from './helpers/performance'
+import { fetchBoardObjects } from './helpers/firestore'
+import { seedBoardObjects } from './helpers/performance'
 
 const APP_URL = process.env.PLAYWRIGHT_BASE_URL || 'https://mvp-1-collab-board.web.app'
 
@@ -28,7 +29,7 @@ test.describe('Accessibility: text contrast on colored objects', () => {
 
     // Verify objects were created with text
     const objects = await fetchBoardObjects(boardId, user.idToken)
-    const stickyNotes = objects.filter((o) => o.kind === 'stickyNote')
+    const stickyNotes = objects.filter((o) => o.type === 'stickyNote')
 
     expect(stickyNotes.length).toBeGreaterThanOrEqual(5)
 
@@ -45,23 +46,16 @@ test.describe('Accessibility: text contrast on colored objects', () => {
     const boardId = `pw-contrast-shape-${Date.now()}`
     await loginWithEmail(page, APP_URL, user.email, user.password)
 
-    // Create shapes with each color option
-    const shapeColors = ['#93c5fd', '#67e8f9', '#86efac', '#fcd34d', '#fca5a5', '#c4b5fd']
+    // Seed enough shapes to cover shape text readability checks.
+    const shapeCount = 6
 
-    for (const color of shapeColors) {
-      // Create a single rectangle with text for each color
-      await seedBoardObjects(boardId, user.idToken, 1, {
-        kind: 'rectangle',
-        color,
-        includeText: true,
-      })
-    }
+    await seedBoardObjects(boardId, user.idToken, shapeCount, { kind: 'shape', columns: shapeCount })
 
     await page.goto(`${APP_URL}/b/${boardId}`)
     await expect(page.locator('.board-stage')).toBeVisible()
 
     const objects = await fetchBoardObjects(boardId, user.idToken)
-    const shapes = objects.filter((o) => o.kind === 'rectangle')
+    const shapes = objects.filter((o) => o.type === 'shape')
 
     expect(shapes.length).toBeGreaterThanOrEqual(6)
 
@@ -77,21 +71,15 @@ test.describe('Accessibility: text contrast on colored objects', () => {
     const boardId = `pw-contrast-frame-${Date.now()}`
     await loginWithEmail(page, APP_URL, user.email, user.password)
 
-    // Create frames with each color option
-    const frameColors = ['#e2e8f0', '#dbeafe', '#dcfce7', '#fee2e2', '#fef3c7']
+    const frameCount = 5
 
-    for (const color of frameColors) {
-      await seedBoardObjects(boardId, user.idToken, 1, {
-        kind: 'frame',
-        color,
-      })
-    }
+    await seedBoardObjects(boardId, user.idToken, frameCount, { kind: 'frame', columns: frameCount })
 
     await page.goto(`${APP_URL}/b/${boardId}`)
     await expect(page.locator('.board-stage')).toBeVisible()
 
     const objects = await fetchBoardObjects(boardId, user.idToken)
-    const frames = objects.filter((o) => o.kind === 'frame')
+    const frames = objects.filter((o) => o.type === 'frame')
 
     expect(frames.length).toBeGreaterThanOrEqual(5)
 

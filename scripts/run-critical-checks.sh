@@ -20,6 +20,7 @@ API_KEY="$VITE_FIREBASE_API_KEY"
 PROJECT_ID="$VITE_FIREBASE_PROJECT_ID"
 AI_BASE_URL="${VITE_AI_API_BASE_URL%/}"
 AI_URL="$AI_BASE_URL/api/ai/command"
+SHARE_URL="$AI_BASE_URL/api/boards/share"
 TS="$(date +%s)"
 BOARD_ID="qa-critical-$TS"
 OUT_DIR="$ROOT_DIR/submission/test-artifacts"
@@ -38,6 +39,27 @@ now_ms() {
   python3 -c 'import time; print(int(time.time() * 1000))'
 }
 
+decode_uid_from_token() {
+  local id_token="$1"
+  python3 - "$id_token" <<'PY'
+import base64
+import json
+import sys
+
+token = sys.argv[1]
+parts = token.split('.')
+if len(parts) < 2:
+    print("")
+    sys.exit(0)
+
+payload = parts[1].replace('-', '+').replace('_', '/')
+payload += '=' * ((4 - len(payload) % 4) % 4)
+decoded = base64.b64decode(payload).decode('utf-8')
+data = json.loads(decoded)
+print(data.get("user_id") or data.get("sub") or data.get("uid") or "")
+PY
+}
+
 post_json() {
   local url="$1"
   local bearer="$2"
@@ -48,12 +70,57 @@ post_json() {
     --data "$body"
 }
 
-create_temp_user() {
+create_temp_user_once() {
   local email="$1"
   local password="$2"
   curl -sS -X POST "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=$API_KEY" \
     -H "Content-Type: application/json" \
     --data "{\"email\":\"$email\",\"password\":\"$password\",\"returnSecureToken\":true}"
+}
+
+sign_in_user() {
+  local email="$1"
+  local password="$2"
+  curl -sS -X POST "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=$API_KEY" \
+    -H "Content-Type: application/json" \
+    --data "{\"email\":\"$email\",\"password\":\"$password\",\"returnSecureToken\":true}"
+}
+
+create_temp_user() {
+  local email="$1"
+  local password="$2"
+  local max_attempts=8
+  local last_response=""
+
+  for attempt in $(seq 1 "$max_attempts"); do
+    local response
+    response="$(create_temp_user_once "$email" "$password")"
+    local token
+    token="$(echo "$response" | jq -r '.idToken // empty')"
+    if [[ -n "$token" ]]; then
+      echo "$response"
+      return 0
+    fi
+
+    local error_code
+    error_code="$(echo "$response" | jq -r '.error.message // empty')"
+    last_response="$response"
+    if [[ "$error_code" != "TOO_MANY_ATTEMPTS_TRY_LATER" ]]; then
+      echo "$response"
+      return 1
+    fi
+
+    if [[ "$attempt" -lt "$max_attempts" ]]; then
+      local backoff=$(( 2 ** (attempt - 1) ))
+      if [[ "$backoff" -gt 15 ]]; then
+        backoff=15
+      fi
+      sleep "$backoff"
+    fi
+  done
+
+  echo "$last_response"
+  return 1
 }
 
 delete_temp_user() {
@@ -66,9 +133,11 @@ delete_temp_user() {
 PASSWORD="QATest!${TS}!Aa1"
 USER_COUNT=5
 declare -a ID_TOKENS=()
+declare -a USER_EMAILS=()
+declare -a TEMP_ID_TOKENS=()
 
 cleanup_temp_users() {
-  for tok in "${ID_TOKENS[@]}"; do
+  for tok in "${TEMP_ID_TOKENS[@]-}"; do
     if [[ -n "$tok" ]]; then
       delete_temp_user "$tok" || true
     fi
@@ -77,21 +146,145 @@ cleanup_temp_users() {
 
 trap cleanup_temp_users EXIT
 
-log "Creating $USER_COUNT temporary QA users"
-for i in $(seq 1 "$USER_COUNT"); do
-  EMAIL="qa.user${i}.$TS@example.com"
-  USER_RESP="$(create_temp_user "$EMAIL" "$PASSWORD")"
+REUSABLE_PASSWORD="${E2E_PASSWORD:-${QA_PASSWORD:-${PW:-}}}"
+declare -a CANDIDATE_EMAILS=(
+  "${E2E_EMAIL:-}"
+  "${QA_EMAIL:-}"
+  "${EMAIL:-}"
+  "${EMAIL1:-}"
+  "${EMAIL2:-}"
+  "${EMAIL3:-}"
+  "${EMAIL4:-}"
+)
+
+if [[ -n "$REUSABLE_PASSWORD" ]]; then
+  log "Signing in reusable QA accounts for critical checks"
+  seen_emails="|"
+  for candidate_email in "${CANDIDATE_EMAILS[@]}"; do
+    if [[ -z "$candidate_email" ]]; then
+      continue
+    fi
+    if [[ "$seen_emails" == *"|$candidate_email|"* ]]; then
+      continue
+    fi
+    seen_emails="${seen_emails}${candidate_email}|"
+    USER_RESP="$(sign_in_user "$candidate_email" "$REUSABLE_PASSWORD" || true)"
+    USER_TOKEN="$(echo "$USER_RESP" | jq -r '.idToken // empty')"
+    if [[ -n "$USER_TOKEN" ]]; then
+      ID_TOKENS+=("$USER_TOKEN")
+      USER_EMAILS+=("$candidate_email")
+    fi
+    if [[ "${#ID_TOKENS[@]}" -ge "$USER_COUNT" ]]; then
+      break
+    fi
+  done
+fi
+
+if [[ "${#ID_TOKENS[@]}" -eq 0 ]]; then
+  log "No reusable QA account token available; creating temporary owner user"
+  EMAIL="qa.owner.$TS@example.com"
+  USER_RESP="$(create_temp_user "$EMAIL" "$PASSWORD" || true)"
   USER_TOKEN="$(echo "$USER_RESP" | jq -r '.idToken // empty')"
   if [[ -z "$USER_TOKEN" ]]; then
-    echo "Failed to create temp user $EMAIL" >&2
+    echo "Failed to acquire owner token for critical checks" >&2
     echo "$USER_RESP" >&2
     exit 1
   fi
   ID_TOKENS+=("$USER_TOKEN")
+  USER_EMAILS+=("$EMAIL")
+  TEMP_ID_TOKENS+=("$USER_TOKEN")
+fi
+
+while [[ "${#ID_TOKENS[@]}" -lt "$USER_COUNT" ]]; do
+  SLOT=$(( ${#ID_TOKENS[@]} + 1 ))
+  OWNER_EMAIL="${USER_EMAILS[0]}"
+  USER_TOKEN=""
+
+  if [[ -n "$REUSABLE_PASSWORD" && -n "$OWNER_EMAIL" ]]; then
+    USER_RESP="$(sign_in_user "$OWNER_EMAIL" "$REUSABLE_PASSWORD" || true)"
+    USER_TOKEN="$(echo "$USER_RESP" | jq -r '.idToken // empty')"
+    if [[ -n "$USER_TOKEN" ]]; then
+      ID_TOKENS+=("$USER_TOKEN")
+      USER_EMAILS+=("$OWNER_EMAIL")
+      continue
+    fi
+  fi
+
+  EMAIL="qa.user${SLOT}.$TS@example.com"
+  USER_RESP="$(create_temp_user "$EMAIL" "$PASSWORD" || true)"
+  USER_TOKEN="$(echo "$USER_RESP" | jq -r '.idToken // empty')"
+  if [[ -n "$USER_TOKEN" ]]; then
+    ID_TOKENS+=("$USER_TOKEN")
+    USER_EMAILS+=("$EMAIL")
+    TEMP_ID_TOKENS+=("$USER_TOKEN")
+    continue
+  fi
+
+  log "Temp signup unavailable for slot $SLOT; reusing owner token"
+  ID_TOKENS+=("${ID_TOKENS[0]}")
+  USER_EMAILS+=("${USER_EMAILS[0]}")
 done
+
+log "Using ${#ID_TOKENS[@]} authenticated sessions for burst checks"
 
 ID_TOKEN_1="${ID_TOKENS[0]}"
 ID_TOKEN_2="${ID_TOKENS[1]}"
+
+declare -a USER_IDS=()
+for token in "${ID_TOKENS[@]}"; do
+  USER_IDS+=("$(decode_uid_from_token "$token")")
+done
+
+OWNER_UID="${USER_IDS[0]}"
+declare -a SHARED_UIDS=()
+for uid in "${USER_IDS[@]}"; do
+  if [[ -n "$uid" && "$uid" != "$OWNER_UID" ]]; then
+    SHARED_UIDS+=("$uid")
+  fi
+done
+
+SHARED_WITH_VALUES='[]'
+SHARED_ROLES_MAP='{}'
+if [[ "${#SHARED_UIDS[@]}" -gt 0 ]]; then
+  SHARED_WITH_VALUES="$(
+    printf '%s\n' "${SHARED_UIDS[@]}" | jq -R . | jq -sc 'map(select(length > 0) | {stringValue:.})'
+  )"
+  SHARED_ROLES_MAP="$(
+    printf '%s\n' "${SHARED_UIDS[@]}" | jq -R . | jq -sc 'map(select(length > 0)) | unique | map({key:.,value:"edit"}) | from_entries'
+  )"
+fi
+
+NOW_MS="$(now_ms)"
+BOARD_DOC_BODY="$(jq -n \
+  --arg boardId "$BOARD_ID" \
+  --arg ownerId "$OWNER_UID" \
+  --arg nowMs "$NOW_MS" \
+  --argjson sharedWith "$SHARED_WITH_VALUES" \
+  --argjson sharedRoles "$SHARED_ROLES_MAP" \
+  '{
+    fields: {
+      id: { stringValue: $boardId },
+      name: { stringValue: "Critical Checks Board" },
+      ownerId: { stringValue: $ownerId },
+      sharedWith: { arrayValue: { values: $sharedWith } },
+      sharedRoles: { mapValue: { fields: ($sharedRoles | with_entries(.value = { stringValue: .value })) } },
+      createdAt: { integerValue: $nowMs },
+      updatedAt: { integerValue: $nowMs }
+    }
+  }'
+)"
+
+BOARD_CREATE_RESP="$(curl -sS -X POST \
+  "https://firestore.googleapis.com/v1/projects/$PROJECT_ID/databases/(default)/documents/boards?documentId=$BOARD_ID" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ID_TOKEN_1" \
+  --data "$BOARD_DOC_BODY")"
+BOARD_CREATE_NAME="$(echo "$BOARD_CREATE_RESP" | jq -r '.name // empty')"
+if [[ -z "$BOARD_CREATE_NAME" ]]; then
+  echo "Failed to pre-create board metadata for critical checks" >&2
+  echo "$BOARD_CREATE_RESP" >&2
+  exit 1
+fi
 
 CID_1="cmd-a-$TS"
 CID_2="cmd-b-$TS"
@@ -208,6 +401,11 @@ if [[ "$THROTTLE_EXIT" != "0" && ( "$THROTTLE_RETRY_STATUS" == "success" || "$TH
   PASS_THROTTLE_RETRY="true"
 fi
 
+OVERALL_PASS="true"
+if [[ "$PASS_SIMULTANEOUS" != "true" || "$PASS_FIVE_USERS" != "true" || "$PASS_IDEMPOTENT" != "true" || "$PASS_THROTTLE_RETRY" != "true" ]]; then
+  OVERALL_PASS="false"
+fi
+
 BURST_STATUSES_JSON="$(printf '%s\n' "${BURST_STATUSES[@]}" | jq -R . | jq -sc .)"
 
 jq -n \
@@ -226,6 +424,7 @@ jq -n \
   --arg passSimultaneous "$PASS_SIMULTANEOUS" \
   --arg passIdempotent "$PASS_IDEMPOTENT" \
   --arg passThrottleRetry "$PASS_THROTTLE_RETRY" \
+  --arg overallPass "$OVERALL_PASS" \
   '{
     timestamp: ($timestamp | tonumber),
     boardId: $boardId,
@@ -240,11 +439,20 @@ jq -n \
         retryIdempotent: ($throttleRetryIdempotent == "true")
       }
     },
+    overallPass: ($overallPass == "true"),
     queueEvidence: $queue
   }' >"$SUMMARY_JSON"
 
 cp "$SUMMARY_JSON" "$OUT_DIR/latest-critical-checks.json"
 cp "$RAW_LOG" "$OUT_DIR/latest-critical-checks.log"
 
-log "Done. Summary: $SUMMARY_JSON"
+if [[ "$OVERALL_PASS" == "true" ]]; then
+  log "Done. Summary: $SUMMARY_JSON"
+else
+  log "Critical checks failed. Summary: $SUMMARY_JSON"
+fi
 cat "$SUMMARY_JSON"
+
+if [[ "$OVERALL_PASS" != "true" ]]; then
+  exit 1
+fi

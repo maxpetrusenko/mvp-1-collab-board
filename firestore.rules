@@ -25,6 +25,10 @@ service cloud.firestore {
       return boardData(boardId).sharedRoles[userId];
     }
 
+    function boardLinkAccessRole(boardId) {
+      return boardData(boardId).linkAccessRole;
+    }
+
     function isBoardOwner(boardId) {
       return isSignedIn() && boardOwnerId(boardId) == request.auth.uid;
     }
@@ -32,7 +36,9 @@ service cloud.firestore {
     function hasBoardAccess(boardId) {
       return isSignedIn() && (
         isBoardOwner(boardId) ||
-        request.auth.uid in boardSharedWith(boardId)
+        request.auth.uid in boardSharedWith(boardId) ||
+        boardLinkAccessRole(boardId) == "view" ||
+        boardLinkAccessRole(boardId) == "edit"
       );
     }
 
@@ -42,7 +48,8 @@ service cloud.firestore {
         (
           request.auth.uid in boardSharedWith(boardId) &&
           boardSharedRole(boardId, request.auth.uid) != "view"
-        )
+        ) ||
+        boardLinkAccessRole(boardId) == "edit"
       );
     }
 
@@ -70,6 +77,12 @@ service cloud.firestore {
       match /aiCommands/{commandId} {
         allow read: if hasBoardAccess(boardId);
         allow write: if hasBoardEditAccess(boardId);
+      }
+
+      match /accessRequests/{requestUserId} {
+        allow create: if isSignedIn() && request.auth.uid == requestUserId;
+        allow read: if isBoardOwner(boardId) || (isSignedIn() && request.auth.uid == requestUserId);
+        allow update, delete: if isBoardOwner(boardId);
       }
 
       match /system/{docId} {

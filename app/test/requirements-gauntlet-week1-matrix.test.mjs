@@ -9,6 +9,7 @@ const conflictModelSource = readFileSync(new URL('./requirements-conflict-model.
 const dragOrderingSource = readFileSync(new URL('./drag-write-ordering.test.mjs', import.meta.url), 'utf8')
 const objectSyncPerfSource = readFileSync(new URL('../e2e/performance/object-sync-latency.spec.ts', import.meta.url), 'utf8')
 const multiUserPerfSource = readFileSync(new URL('../e2e/performance/multi-user.spec.ts', import.meta.url), 'utf8')
+const backendPerfSource = readFileSync(new URL('./backend-performance.mjs', import.meta.url), 'utf8')
 const renderingPerfSource = readFileSync(new URL('../e2e/performance/rendering.spec.ts', import.meta.url), 'utf8')
 const scalingPerfSource = readFileSync(new URL('../e2e/performance/scaling.spec.ts', import.meta.url), 'utf8')
 const aiResponsePerfSource = readFileSync(new URL('../e2e/performance/ai-response.spec.ts', import.meta.url), 'utf8')
@@ -65,6 +66,7 @@ test('RT-SCENARIOS-001: required realtime testing scenarios are covered', () => 
   // 5+ users concurrent
   assert.equal(aiConcurrencySource.includes('five authenticated users can execute command burst'), true)
   assert.equal(multiUserPerfSource.includes('connectedCount: 5'), true)
+  assert.equal(backendPerfSource.includes('five-user presence propagation (RTDB only, no Playwright)'), true)
 })
 
 test('RT-PERF-001: required performance targets are encoded in automated checks', () => {
@@ -83,6 +85,8 @@ test('RT-PERF-001: required performance targets are encoded in automated checks'
 
   // 5+ user concurrent degradation checks
   assert.equal(multiUserPerfSource.includes('NFR-5: five concurrent users publish presence'), true)
+  assert.equal(backendPerfSource.includes('runtimeSummary.tests.presence5Users'), true)
+  assert.equal(backendPerfSource.includes('latest-backend-performance.json'), true)
 })
 
 test('AI-COVERAGE-001: shared AI state, breadth, and latency requirements are covered by automation', () => {

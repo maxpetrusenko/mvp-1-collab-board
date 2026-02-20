@@ -17,6 +17,8 @@ const DEFAULT_AI_CONCURRENCY = 2
 const DEFAULT_AI_RETRIES = 2
 const DEFAULT_CONFLICT_SETTLE_MS = 1_500
 const DEFAULT_ALLOW_VIRTUAL_USERS = 1
+const DEFAULT_REAL_AUTH_USERS = 1
+const DEFAULT_USER_CREATE_MAX_ATTEMPTS = 20
 
 const parseEnvFile = (filePath) => {
   if (!existsSync(filePath)) {
@@ -140,6 +142,44 @@ const mapWithConcurrency = async (items, concurrency, worker) => {
   return results
 }
 
+const loadReusableCredentialFile = () => {
+  const configuredPath = String(env.SIM_REUSABLE_USERS_FILE || 'test-users-credentials.txt').trim()
+  if (!configuredPath) {
+    return []
+  }
+
+  const resolvedPath = path.isAbsolute(configuredPath) ? configuredPath : path.resolve(process.cwd(), configuredPath)
+  if (!existsSync(resolvedPath)) {
+    return []
+  }
+
+  const lines = readFileSync(resolvedPath, 'utf8').split(/\r?\n/)
+  /** @type {Array<{email: string, password: string}>} */
+  const credentials = []
+  lines.forEach((rawLine) => {
+    const line = rawLine.trim()
+    if (!line || line.startsWith('#') || line.startsWith('index,')) {
+      return
+    }
+
+    const [index, email, password, _uid, status] = line.split(',')
+    if (!index || !email || !password) {
+      return
+    }
+    const normalizedStatus = String(status || '').trim().toLowerCase()
+    if (normalizedStatus && normalizedStatus !== 'created' && normalizedStatus !== 'exists') {
+      return
+    }
+
+    credentials.push({
+      email: String(email).trim(),
+      password: String(password).trim(),
+    })
+  })
+
+  return credentials
+}
+
 const getReusableCredentialPool = () => {
   const emailCandidates = [
     env.E2E_EMAIL,
@@ -163,11 +203,14 @@ const getReusableCredentialPool = () => {
     .find(Boolean)
 
   if (!emailCandidates.length || !password) {
-    return []
+    const fromFileOnly = loadReusableCredentialFile()
+    return [...new Map(fromFileOnly.map((credential) => [credential.email.toLowerCase(), credential])).values()]
   }
 
-  const uniqueEmails = [...new Set(emailCandidates)]
-  return uniqueEmails.map((email) => ({ email, password }))
+  const fromFile = loadReusableCredentialFile()
+  const fromEnv = [...new Set(emailCandidates)].map((email) => ({ email, password }))
+  const merged = [...fromFile, ...fromEnv]
+  return [...new Map(merged.map((credential) => [credential.email.toLowerCase(), credential])).values()]
 }
 
 const signInWithEmailPassword = async (firebaseApiKey, email, password) => {
@@ -206,8 +249,7 @@ const loadReusableUsers = async (firebaseApiKey) => {
   return signedUsers.filter((candidate) => candidate?.ok)
 }
 
-const createTempUser = async (firebaseApiKey, label) => {
-  const maxAttempts = 7
+const createTempUser = async (firebaseApiKey, label, maxAttempts = DEFAULT_USER_CREATE_MAX_ATTEMPTS) => {
   let lastError = 'unknown error'
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -234,35 +276,40 @@ const createTempUser = async (firebaseApiKey, label) => {
 
     lastError = payload?.error?.message || `HTTP_${response.status}`
     const shouldRetry = lastError === 'TOO_MANY_ATTEMPTS_TRY_LATER' || response.status === 429
-    if (!shouldRetry || attempt === maxAttempts) {
+    if (!shouldRetry) {
       break
     }
-    const backoffMs = Math.min(20_000, 900 * 2 ** (attempt - 1)) + Math.floor(Math.random() * 300)
+    // Fallback to anonymous user when email/password signup is rate limited.
+    const anonResponse = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${firebaseApiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ returnSecureToken: true }),
+    })
+    const anonPayload = await anonResponse.json().catch(() => ({}))
+    if (anonResponse.ok && anonPayload.idToken) {
+      const uid = decodeUserIdFromIdToken(anonPayload.idToken)
+      return {
+        ok: true,
+        email: `anon.${uid.slice(0, 12)}@example.com`,
+        password: '',
+        idToken: anonPayload.idToken,
+        uid,
+        ephemeral: true,
+        virtual: false,
+      }
+    }
+
+    const anonError = anonPayload?.error?.message || `HTTP_${anonResponse.status}`
+    lastError = `${lastError}; anon: ${anonError}`
+    if (attempt >= maxAttempts) {
+      break
+    }
+
+    const backoffMs = Math.min(45_000, 1_200 * 2 ** Math.min(attempt - 1, 5)) + Math.floor(Math.random() * 600)
     await sleep(backoffMs)
   }
 
-  // Fallback to anonymous user when email/password signup is rate limited.
-  const anonResponse = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${firebaseApiKey}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ returnSecureToken: true }),
-  })
-  const anonPayload = await anonResponse.json().catch(() => ({}))
-  if (anonResponse.ok && anonPayload.idToken) {
-    const uid = decodeUserIdFromIdToken(anonPayload.idToken)
-    return {
-      ok: true,
-      email: `anon.${uid.slice(0, 12)}@example.com`,
-      password: '',
-      idToken: anonPayload.idToken,
-      uid,
-      ephemeral: true,
-      virtual: false,
-    }
-  }
-
-  const anonError = anonPayload?.error?.message || `HTTP_${anonResponse.status}`
-  return { ok: false, error: `Failed to create temp user (${label}): ${lastError}; anon fallback failed: ${anonError}` }
+  return { ok: false, error: `Failed to create temp user (${label}): ${lastError}` }
 }
 
 const deleteTempUser = async (firebaseApiKey, idToken) => {
@@ -637,6 +684,8 @@ const main = async () => {
   const aiRetries = Math.max(0, readInt('SIM_AI_RETRIES', DEFAULT_AI_RETRIES))
   const conflictSettleMs = Math.max(0, readInt('SIM_CONFLICT_SETTLE_MS', DEFAULT_CONFLICT_SETTLE_MS))
   const allowVirtualUsers = readInt('SIM_ALLOW_VIRTUAL_USERS', DEFAULT_ALLOW_VIRTUAL_USERS) !== 0
+  const realAuthUsersTarget = Math.max(1, Math.min(totalUsers, readInt('SIM_REAL_AUTH_USERS', DEFAULT_REAL_AUTH_USERS)))
+  const userCreateMaxAttempts = Math.max(1, readInt('SIM_USER_CREATE_MAX_ATTEMPTS', DEFAULT_USER_CREATE_MAX_ATTEMPTS))
 
   const boardId = `pw-load-100-ai-${Date.now()}`
   const startedAt = Date.now()
@@ -661,7 +710,7 @@ const main = async () => {
     users.push(owner)
     console.log(`[sim] Reused owner account: ${owner.email}`)
   } else {
-    const ownerResult = await createTempUser(firebaseApiKey, 'owner')
+    const ownerResult = await createTempUser(firebaseApiKey, 'owner', userCreateMaxAttempts)
     if (!ownerResult.ok) {
       throw new Error(ownerResult.error || 'Failed to create owner test user')
     }
@@ -673,11 +722,11 @@ const main = async () => {
   users.push(...reusableCollaborators)
 
   const collaboratorsToCreate = Array.from(
-    { length: Math.max(0, totalUsers - users.length) },
+    { length: Math.max(0, realAuthUsersTarget - users.length) },
     (_, index) => index + 1,
   )
   const collaboratorResults = await mapWithConcurrency(collaboratorsToCreate, userCreateConcurrency, async (label) =>
-    createTempUser(firebaseApiKey, `u${label}`),
+    createTempUser(firebaseApiKey, `u${label}`, userCreateMaxAttempts),
   )
   collaboratorResults.forEach((result) => {
     if (result?.ok) {
@@ -688,6 +737,7 @@ const main = async () => {
   const usersCreated = users.length
   const usersFailed = totalUsers - usersCreated
   const virtualUsers = []
+  const realAuthCoverageRate = totalUsers > 0 ? usersCreated / totalUsers : 1
   if (usersCreated < totalUsers && allowVirtualUsers) {
     const neededVirtual = totalUsers - usersCreated
     for (let index = 0; index < neededVirtual; index += 1) {
@@ -705,7 +755,12 @@ const main = async () => {
   } else if (usersCreated < totalUsers) {
     fatalErrors.push(`User creation shortfall: ${usersFailed} users failed to provision`)
   }
-  console.log(`[sim] Created ${usersCreated}/${totalUsers} authenticated users`)
+  if (realAuthCoverageRate < 0.9) {
+    warnings.push(
+      `Authenticated user coverage below target (${Math.round(realAuthCoverageRate * 100)}%). Score penalized for virtual-user fallback.`,
+    )
+  }
+  console.log(`[sim] Created ${usersCreated}/${totalUsers} authenticated users (target real users: ${realAuthUsersTarget})`)
   if (virtualUsers.length) {
     console.log(`[sim] Added ${virtualUsers.length} virtual users to reach requested participant count`)
   }
@@ -721,6 +776,9 @@ const main = async () => {
   }
 
   const collaborators = users.slice(1).filter((candidate) => !candidate.virtual)
+  if (!collaborators.length) {
+    warnings.push('Share reliability was not exercised with distinct authenticated collaborators.')
+  }
   const shareResults = await mapWithConcurrency(collaborators, shareConcurrency, async (collaborator) =>
     shareBoardWithUser({
       aiApiBaseUrl,
@@ -776,6 +834,9 @@ const main = async () => {
   const usableConflictObjectCount = Math.min(conflictObjectCount, createdObjectIds.length)
   const conflictTargetIds = createdObjectIds.slice(0, usableConflictObjectCount)
   const conflictWritersByObject = new Map()
+  if (!conflictTargetIds.length) {
+    warnings.push('Conflict convergence coverage was not exercised because no conflict targets were created.')
+  }
 
   const conflictTasks = conflictTargetIds.flatMap((objectId, objectIndex) => {
     const writers = Array.from({ length: conflictWriters }, (_, writerOffset) => {
@@ -822,13 +883,26 @@ const main = async () => {
     }),
   )
   const aiSuccess = aiResults.filter((result) => result?.ok).length
+  const aiFailures = aiResults.filter((result) => !result?.ok)
   const aiLatencies = aiResults.map((result) => Number(result?.elapsedMs || 0)).filter((value) => Number.isFinite(value) && value > 0)
   const aiP50Ms = percentile(aiLatencies, 0.5)
   const aiP95Ms = percentile(aiLatencies, 0.95)
   const aiAverageAttempts = aiResults.length
     ? aiResults.reduce((sum, result) => sum + Number(result?.attempts || 1), 0) / aiResults.length
     : 1
+  const aiFailuresByStatus = {}
+  const aiFailuresByError = {}
+  aiFailures.forEach((failure) => {
+    const statusCode = String(Number(failure?.statusCode || 0) || 'unknown')
+    aiFailuresByStatus[statusCode] = (aiFailuresByStatus[statusCode] || 0) + 1
+    const errorKey = String(failure?.error || failure?.status || 'unknown').slice(0, 120)
+    aiFailuresByError[errorKey] = (aiFailuresByError[errorKey] || 0) + 1
+  })
   console.log(`[sim] AI commands: ${aiSuccess}/${aiResults.length} succeeded (p50=${Math.round(aiP50Ms)}ms, p95=${Math.round(aiP95Ms)}ms)`)
+  if (aiFailures.length) {
+    console.log('[sim] AI failure status distribution:', JSON.stringify(aiFailuresByStatus))
+    console.log('[sim] AI failure error distribution:', JSON.stringify(aiFailuresByError))
+  }
 
   if (conflictSettleMs > 0) {
     await sleep(conflictSettleMs)
@@ -854,15 +928,21 @@ const main = async () => {
     fatalErrors.push(fetchObjectsResult.error || 'Failed to fetch final board objects')
   }
 
-  const shareRate = collaborators.length ? sharedSuccess / collaborators.length : 1
+  const shareRate = collaborators.length ? sharedSuccess / collaborators.length : 0
   const presenceRate = participants.length ? presenceSuccess / participants.length : 1
   const createRate = createResults.length ? createSuccess / createResults.length : 1
   const editRate = conflictResults.length ? conflictSuccess / conflictResults.length : 1
   const aiRate = aiResults.length ? aiSuccess / aiResults.length : 1
-  const conflictConvergenceRate = conflictTargetIds.length ? conflictConvergence / conflictTargetIds.length : 1
+  const conflictConvergenceRate = conflictTargetIds.length ? conflictConvergence / conflictTargetIds.length : 0
+  const virtualUserRate = totalUsers > 0 ? virtualUsers.length / totalUsers : 0
 
   const aiLatencyScore = clamp01(1 - Math.max(0, aiP95Ms - 2_000) / 8_000)
-  const fatalPenalty = fatalErrors.length ? 0.15 : 0
+  const aiLatencyMultiplier = 0.4 + 0.6 * aiLatencyScore
+  const fatalPenalty = Math.min(0.6, fatalErrors.length * 0.2)
+  const virtualPenalty = Math.min(0.75, virtualUserRate * 0.9)
+  const realAuthCoverageMultiplier = 0.2 + 0.8 * clamp01(realAuthCoverageRate)
+  const reliabilityGate = Math.min(shareRate, presenceRate, createRate, editRate, aiRate, conflictConvergenceRate)
+  const reliabilityMultiplier = 0.35 + 0.65 * reliabilityGate
 
   const weightedScore =
     10 *
@@ -872,7 +952,14 @@ const main = async () => {
       0.22 * editRate +
       0.22 * aiRate +
       0.08 * conflictConvergenceRate)
-  const finalScore = Math.max(1, Math.min(10, Number((weightedScore * (1 - fatalPenalty) * (0.85 + 0.15 * aiLatencyScore)).toFixed(1))))
+  const scoreAfterPenalties =
+    weightedScore *
+    (1 - fatalPenalty) *
+    aiLatencyMultiplier *
+    reliabilityMultiplier *
+    realAuthCoverageMultiplier *
+    (1 - virtualPenalty)
+  const finalScore = Math.max(1, Math.min(10, Number(scoreAfterPenalties.toFixed(1))))
 
   const durationMs = Date.now() - startedAt
   const summary = {
@@ -921,6 +1008,10 @@ const main = async () => {
         failure: aiResults.length - aiSuccess,
         successRate: Number((aiRate * 100).toFixed(1)),
         averageAttempts: Number(aiAverageAttempts.toFixed(2)),
+        failureBreakdown: {
+          byStatusCode: aiFailuresByStatus,
+          byError: aiFailuresByError,
+        },
         latencyMs: {
           p50: Math.round(aiP50Ms),
           p95: Math.round(aiP95Ms),
@@ -932,7 +1023,19 @@ const main = async () => {
       value: finalScore,
       scale: '1-10',
       method:
-        'Weighted reliability score across sharing/presence/create/edit/AI/conflict convergence with latency modifier and fatal-error penalty.',
+        'Weighted reliability score across sharing/presence/create/edit/AI/conflict convergence with latency, reliability-gate, real-auth coverage, virtual-user, and fatal-error penalties.',
+      breakdown: {
+        weightedScore: Number(weightedScore.toFixed(2)),
+        reliabilityGate: Number(reliabilityGate.toFixed(3)),
+        reliabilityMultiplier: Number(reliabilityMultiplier.toFixed(3)),
+        aiLatencyScore: Number(aiLatencyScore.toFixed(3)),
+        aiLatencyMultiplier: Number(aiLatencyMultiplier.toFixed(3)),
+        realAuthCoverageRate: Number(realAuthCoverageRate.toFixed(3)),
+        realAuthCoverageMultiplier: Number(realAuthCoverageMultiplier.toFixed(3)),
+        virtualUserRate: Number(virtualUserRate.toFixed(3)),
+        virtualPenalty: Number(virtualPenalty.toFixed(3)),
+        fatalPenalty: Number(fatalPenalty.toFixed(3)),
+      },
     },
     warnings,
     fatalErrors,

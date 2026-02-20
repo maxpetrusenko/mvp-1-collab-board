@@ -1,9 +1,9 @@
 # TASKS.md
 
 Date initialized: 2026-02-16
-Last updated: 2026-02-20 (duplicate/copy-paste regression hardening + selection-source guardrails)
+Last updated: 2026-02-20 (runtime backend NFR harness + artifact capture)
 Cadence: 1-hour deliverables with hard deadlines
-Source: `docs/Requirements.md` (markdown mirror) + `docs/G4 Week 1 - CollabBoard-requirements.pdf`
+Source: `AGENTS.md` + `G4 Week 1 - CollabBoard-requirements.pdf`
 
 ## Priority Lanes
 - Lane A: MVP hard gate (must pass first)
@@ -138,15 +138,31 @@ Source: `docs/Requirements.md` (markdown mirror) + `docs/G4 Week 1 - CollabBoard
 | T-122 | 2026-02-20 18:45 | Add missing gauntlet requirement coverage tests: object sync latency target, rapid create/move sync scenario, 5-user concurrent presence, AI command capability matrix, and AI deliverable-doc guardrails | A | Max | Done |
 | T-123 | 2026-02-20 19:10 | Add explicit extreme-scale stress simulation harness for `5000` cards and `20` concurrent users (presence + shared edit updates) with opt-in execution mode | A | Max | Done |
 | T-124 | 2026-02-20 20:10 | Harden high-concurrency board stability: add queued/coalesced presence + object snapshot application to reduce subscription churn and guard against render crashes under many-user load | A | Max | Done |
+| T-127 | 2026-02-20 20:30 | Enable URL-based board sharing (`restricted`/`view`/`edit`) and denied-state access requests (`request-access` + owner approval) across UI, backend API, Firestore rules, and guardrail tests | A | Max | Done |
 | T-125 | 2026-02-20 20:40 | Fix duplicate/copy-paste regressions by resolving source objects from live selected state (`selectedObjects`) with ref fallback and keep duplicate toolbar action wired to state-backed selection | A | Max | Done |
+| T-126 | 2026-02-20 21:30 | Close evidence-backed UX/sync gaps: restore away-state presence dots (green/orange from `lastSeen`), add throttled in-flight drag publishes (`100ms`) with final commit unchanged, implement multi-object clipboard copy/paste with deterministic progressive offsets, and harden FR-22 E2E user setup with reusable credential slots + sequential provisioning | A | Max | Done |
+| T-128 | 2026-02-20 22:00 | Add non-Playwright runtime NFR measurement harness (`app/test/backend-performance.mjs`) for cursor sync + 5-user presence with Firebase direct probes, credential fallback paths, and artifact output (`submission/test-artifacts/latest-backend-performance.json`) | A | Max | Done |
 
 ## Current Evidence Snapshot
 - Deployed app: `https://mvp-1-collab-board.web.app`
 - Duplicate/copy regression hardening (T-125): `duplicateSelected` now resolves from live `selectedObjects` first, keyboard `Cmd/Ctrl+C` resolves from selected state before ref fallback, duplicate toolbar action uses state-backed selection; guardrail updated in `app/test/requirements-g4-feature-coverage.test.mjs` and focused E2E added in `app/e2e/requirements-object-ops-gap.spec.ts` (execution deferred to push-time test sweep).
+- Evidence gap closure (T-126): `BoardPage` now publishes drag position patches during drag via `100ms` throttled writers (final drag-end commit preserved), copy/paste snapshots all selected objects with progressive deterministic offset per paste, and presence pills render away status via `lastSeen` threshold (`green` online / `orange` away).
+- FR-22 harness hardening (T-126): `app/e2e/helpers/auth.ts` supports reusable credential slots (`primary`/`secondary`/`tertiary`/`quaternary`); board-sharing E2E setup now provisions owner/collaborator sequentially using slot-aware reuse to reduce Firebase temp-user rate-limit pressure.
+- Stability compile checks (post T-126): `cd app && npx eslint src/pages/BoardPage.tsx e2e/requirements-board-sharing.spec.ts e2e/helpers/auth.ts` + `cd app && npx tsc -b --pretty false` pass (2026-02-20).
+- Runtime NFR harness (T-128): `app/test/backend-performance.mjs` now includes two live RTDB tests (`cursor sync latency`, `five-user presence propagation`) and always emits `submission/test-artifacts/latest-backend-performance.json` with measured/skipped status + reasons.
+- Runtime backend perf execution (T-128): `cd app && npm run test:backend-perf --silent` now completes with measured data using credential-file fallback (`app/test-users-credentials.txt`).
+  - `cursorSync`: `avg=181.75ms`, `max=421ms`, `target=50ms`, `critical=100ms`, `targetMet=false`, `score=1`
+  - `presence5Users`: `propagation=157ms`, `elapsed=601ms`, `target=600ms`, `critical=2500ms`, `targetMet=true`
+  - artifact: `submission/test-artifacts/latest-backend-performance.json` (gitignored by `submission/test-artifacts/.gitignore`)
+- Strict NFR target mode (T-128): `cd app && npm run test:backend-perf:strict --silent` intentionally fails while cursor target remains unmet (`Cursor average 181.75ms exceeds target 50ms`).
+- Runtime NFR guardrail updates (T-128): `app/test/requirements-performance-thresholds.test.mjs` and `app/test/requirements-gauntlet-week1-matrix.test.mjs` now assert runtime harness/artifact wiring (not only Playwright static constants).
 - Multi-user stability hardening (T-124): queued snapshot coalescing in `useObjectSync` + queued/pruned presence fan-out in `usePresence`; added requirement guardrails in `app/test/requirements-performance-thresholds.test.mjs` (execution deferred to push-time test sweep).
 - Stability compile checks (post T-124): `app lint + build pass` (`cd app && npm run lint --silent && npm run build --silent`, 2026-02-20)
 - 2026-02-20 regression closure follow-up (`T-106/T-107/T-109/T-110/T-119/T-121`) implemented in code; verification run intentionally deferred until push-time test sweep.
 - Gate workflow update: `scripts/run-dev-gate.sh` (fast local checks, no tests) + `scripts/run-full-gate.sh` (parallel static checks + sharded Playwright, optional critical checks), 2026-02-20
+- Full gate rerun (2026-02-20): static checks and build pass; Playwright blocked in this sandbox by Chromium launch permission error (`bootstrap_check_in ... MachPortRendezvousServer ... Permission denied (1100)`), so no reliable full-E2E verdict from this environment.
+- Submission QA refresh (2026-02-20): `pass=true`, `missingCount=0`, `failedUrls=0` (`submission/test-artifacts/latest-submission-qa.json`).
+- Critical checks refresh (2026-02-20): artifact regenerated (`submission/test-artifacts/latest-critical-checks.json`), but 5-user burst validation currently unstable due auth/rate-limit/access setup; script hardening in progress (`scripts/run-critical-checks.sh`).
 - Requirements coverage expansion (new tests added; full-gate execution deferred per dev workflow policy):
   - `app/e2e/performance/object-sync-latency.spec.ts`
   - `app/e2e/performance/multi-user.spec.ts` (5-user presence propagation case)
@@ -154,11 +170,12 @@ Source: `docs/Requirements.md` (markdown mirror) + `docs/G4 Week 1 - CollabBoard
   - `app/test/requirements-gauntlet-week1-matrix.test.mjs`
   - `app/test/requirements-performance-thresholds.test.mjs` (object-sync + 60fps + 5-user + 5000/20 harness checks)
   - `functions/test/requirements-ai-command-capabilities.test.js`
-- Regression sweep (current): `app unit 86/86 pass` (`cd app && npm run test:unit --silent`, includes `TS-057`, 2026-02-20)
+- Regression sweep (current): `app unit 106/106 pass` (`cd app && npm run test:unit --silent`, includes runtime-NFR harness guardrail assertions, 2026-02-20)
 - Regression sweep (current): `functions 51/51 pass` (`cd functions && npm test --silent`, includes shape-enum regression guardrail, 2026-02-20)
 - Regression sweep (current): `AI command UI E2E 8/8 pass` (`cd app && npm run test:e2e -- e2e/ai-command-ui.spec.ts`, 2026-02-20)
 - Regression sweep (current): `AI conversational fallback E2E 2/2 pass` (`cd app && npm run test:e2e -- e2e/ai-errors.spec.ts`, 2026-02-20)
-- Regression sweep (current): `FR-22 deny E2E 0/1 pass` (`cd app && playwright test e2e/requirements-board-sharing.spec.ts --grep "denies board access"`, `board-access-denied` not shown, 2026-02-20)
+- Regression sweep (current): `FR-22 deny E2E` currently unverified in this sandbox due Chromium launch permission failures during Playwright startup (`bootstrap_check_in ... Permission denied (1100)`), 2026-02-20
+- FR-22 suite parse/list validation: `5 tests discovered` (`cd app && npx playwright test e2e/requirements-board-sharing.spec.ts --list`, 2026-02-20)
 - Header rename + sync-label cleanup validation (local preview): `2 passed` (`PLAYWRIGHT_BASE_URL=http://127.0.0.1:4173 npx playwright test e2e/board-polish.spec.ts --grep "T-113|T-114" --reporter=line`, 2026-02-20)
 - Header share role validation (local preview): `2 passed` (`PLAYWRIGHT_BASE_URL=http://127.0.0.1:4173 npx playwright test e2e/requirements-board-sharing.spec.ts --grep "owner can open share dialog from main board header|owner can share read-only access and collaborator cannot edit" --reporter=line`, 2026-02-20)
 - Reconnect status visibility validation (local preview): `1 passed` (`PLAYWRIGHT_BASE_URL=http://127.0.0.1:4173 npx playwright test e2e/requirements-reconnect-ux.spec.ts --reporter=line`, 2026-02-20)
@@ -477,7 +494,7 @@ Research documents created for requirement-gap tracking (status refreshed):
 
 ### FR-41: Reconnect Syncing UX
 - **Research**: `thoughts/shared/research/2026-02-18-fr41-reconnect-syncing-ux.md`
-- **Current status**: ✅ closed with tri-state reconnect pill (`Reconnecting…`, `Syncing…`, `Connected`).
+- **Current status**: ✅ closed with transient reconnect pills (`Reconnecting…`, `Syncing…`) and connected-state hide behavior.
 - **Evidence**: `app/src/hooks/useConnectionStatus.ts`, `app/e2e/requirements-reconnect-ux.spec.ts`, `app/test/requirements-g4-feature-coverage.test.mjs`.
 
 ### Per-User Boards with Sharing

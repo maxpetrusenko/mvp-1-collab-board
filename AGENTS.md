@@ -30,11 +30,6 @@
 - **Research**: Google Deep Research → Perplexity fallback
 - **Presearch**: Generate doc, throw at multiple AIs for diverse responses
 - **Cursor**: Use indexing if available
-- **Voice**: Aqua + Whisper for AI interaction
-
-### Session Management
-- `Sessions/` folder: transcripts + screenshots
-- `www.Skills.sh`: project-level skills + symlinks
 - **Linear**: ticket tracking
 
 ---
@@ -142,7 +137,6 @@ Track: LLM costs, tokens in/out, API calls, other costs
 3. IP selection if hiring partner
 4. Cursor rules + skills setup
 5. OpenAI integration
-6. Aqua/Whisper for voice AI
 
 ---
 

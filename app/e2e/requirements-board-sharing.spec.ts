@@ -1,6 +1,11 @@
 import { expect, test, type Page } from '@playwright/test'
 
-import { createTempUser, deleteTempUser, getUserIdFromIdToken, loginWithEmail } from './helpers/auth'
+import {
+  cleanupTestUser,
+  createOrReuseTestUser,
+  getUserIdFromIdToken,
+  loginWithEmail,
+} from './helpers/auth'
 import { fetchBoardMeta } from './helpers/firestore'
 
 const APP_URL = process.env.PLAYWRIGHT_BASE_URL || 'https://mvp-1-collab-board.web.app'
@@ -26,21 +31,23 @@ test.describe('Requirements: board permission sharing', () => {
   test.describe.configure({ mode: 'serial' })
   test.setTimeout(240_000)
 
-  let owner: Awaited<ReturnType<typeof createTempUser>> | null = null
-  let collaborator: Awaited<ReturnType<typeof createTempUser>> | null = null
+  let owner: Awaited<ReturnType<typeof createOrReuseTestUser>> | null = null
+  let collaborator: Awaited<ReturnType<typeof createOrReuseTestUser>> | null = null
   let ownerId = ''
   let collaboratorId = ''
 
   test.beforeAll(async () => {
-    ;[owner, collaborator] = await Promise.all([createTempUser(), createTempUser()])
+    test.setTimeout(120_000)
+    owner = await createOrReuseTestUser('primary')
+    collaborator = await createOrReuseTestUser('secondary')
     ownerId = getUserIdFromIdToken(owner.idToken)
     collaboratorId = getUserIdFromIdToken(collaborator.idToken)
   })
 
   test.afterAll(async () => {
     await Promise.all([
-      owner ? deleteTempUser(owner.idToken).catch(() => undefined) : Promise.resolve(),
-      collaborator ? deleteTempUser(collaborator.idToken).catch(() => undefined) : Promise.resolve(),
+      owner ? cleanupTestUser(owner).catch(() => undefined) : Promise.resolve(),
+      collaborator ? cleanupTestUser(collaborator).catch(() => undefined) : Promise.resolve(),
     ])
   })
 

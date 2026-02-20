@@ -1,5 +1,4 @@
 import { type ChangeEvent, useRef, useState } from 'react'
-import { ImageUp, LoaderCircle } from 'lucide-react'
 
 type AICommandPanelProps = {
   disabled: boolean
@@ -144,27 +143,15 @@ export const AICommandPanel = ({ disabled, onSubmit, onIngestTextLines, history 
         ))}
       </div>
 
-      <div className="ai-tools-row">
-        <button
-          type="button"
-          className="button-icon ai-tool-icon-button"
-          onClick={() => screenshotInputRef.current?.click()}
-          disabled={disabled || ocrRunning || !onIngestTextLines}
-          aria-label="Import screenshot"
-          title={ocrRunning ? 'Processing screenshot...' : 'Import screenshot'}
-        >
-          {ocrRunning ? <LoaderCircle className="spinner" size={16} /> : <ImageUp size={16} />}
-        </button>
-        <input
-          ref={screenshotInputRef}
-          type="file"
-          accept="image/*"
-          aria-label="Import screenshot"
-          onChange={(event) => void handleImageUpload(event)}
-          disabled={disabled || ocrRunning || !onIngestTextLines}
-          className="ai-upload-input"
-        />
-      </div>
+      <input
+        ref={screenshotInputRef}
+        type="file"
+        accept="image/*"
+        aria-label="Import screenshot"
+        onChange={(event) => void handleImageUpload(event)}
+        disabled={disabled || ocrRunning || !onIngestTextLines}
+        className="ai-upload-input"
+      />
 
       <button
         type="button"
