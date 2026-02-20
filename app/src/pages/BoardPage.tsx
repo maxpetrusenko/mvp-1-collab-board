@@ -3843,6 +3843,7 @@ export const BoardPage = () => {
     openCommandPalette,
     redo,
     runCommandPaletteEntry,
+    roleCanEditBoard,
     selectedIds,
     selectedObject,
     selectionMode,
@@ -5449,7 +5450,13 @@ export const BoardPage = () => {
             <button
               type="button"
               className={`button-icon with-tooltip ${canEditBoard ? 'button-primary' : ''}`}
-              onClick={() => setInteractionMode('edit')}
+              onClick={() => {
+                if (!roleCanEditBoard) {
+                  return
+                }
+                setInteractionMode('edit')
+              }}
+              disabled={!roleCanEditBoard}
               title="Edit mode"
               data-tooltip="Edit mode"
               aria-label="Enable edit mode"
