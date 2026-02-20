@@ -9,9 +9,9 @@ const openBoardsPanel = async (page: Page) => {
   await expect(page.getByTestId('boards-panel')).toBeVisible()
 }
 
-const shareBoardWithEmail = async (page: Page, boardId: string, email: string, role: 'edit' | 'view' = 'edit') => {
-  await openBoardsPanel(page)
-  await page.getByTestId(`share-board-${boardId}`).click()
+const shareBoardWithEmail = async (page: Page, email: string, role: 'edit' | 'view' = 'edit') => {
+  await page.getByTestId('share-current-board-button').click()
+  await expect(page.getByTestId('boards-panel')).toBeVisible()
   await expect(page.getByTestId('share-dialog')).toBeVisible()
   await expect(page.getByTestId('share-role-select')).toHaveValue('edit')
   await page.getByTestId('share-email-input').fill(email)
@@ -22,6 +22,27 @@ const shareBoardWithEmail = async (page: Page, boardId: string, email: string, r
 
 test.describe('Requirements: board permission sharing', () => {
   test.setTimeout(240_000)
+
+  test('FR-22: owner can open share dialog from main board header', async ({ page }) => {
+    const owner = await createTempUser()
+    const boardId = `pw-req-board-share-header-${Date.now()}`
+
+    try {
+      await loginWithEmail(page, APP_URL, owner.email, owner.password)
+      await page.goto(`${APP_URL}/b/${boardId}`)
+      await expect(page.locator('.board-stage')).toBeVisible()
+
+      const shareButton = page.getByTestId('share-current-board-button')
+      await expect(shareButton).toBeVisible()
+      await shareButton.click()
+
+      await expect(page.getByTestId('boards-panel')).toBeVisible()
+      await expect(page.getByTestId('share-dialog')).toBeVisible()
+      await expect(page.getByTestId('share-role-select')).toHaveValue('edit')
+    } finally {
+      await deleteTempUser(owner.idToken).catch(() => undefined)
+    }
+  })
 
   test('FR-22: denies board access to authenticated user when board is not shared', async ({ browser }) => {
     const owner = await createTempUser()
@@ -69,7 +90,7 @@ test.describe('Requirements: board permission sharing', () => {
       await ownerPage.goto(`${APP_URL}/b/${boardId}`)
       await expect(ownerPage.locator('.board-stage')).toBeVisible()
 
-      await shareBoardWithEmail(ownerPage, boardId, collaborator.email)
+      await shareBoardWithEmail(ownerPage, collaborator.email)
       await expect(ownerPage.getByTestId(`share-collaborator-${collaboratorId}`)).toBeVisible()
 
       await loginWithEmail(collaboratorPage, APP_URL, collaborator.email, collaborator.password)
@@ -108,7 +129,7 @@ test.describe('Requirements: board permission sharing', () => {
       await ownerPage.goto(`${APP_URL}/b/${boardId}`)
       await expect(ownerPage.locator('.board-stage')).toBeVisible()
 
-      await shareBoardWithEmail(ownerPage, boardId, collaborator.email, 'view')
+      await shareBoardWithEmail(ownerPage, collaborator.email, 'view')
       await expect(ownerPage.getByTestId(`share-collaborator-${collaboratorId}`)).toBeVisible()
       await expect(ownerPage.getByTestId(`share-collaborator-role-${collaboratorId}`)).toContainText('Read only')
 
@@ -146,7 +167,7 @@ test.describe('Requirements: board permission sharing', () => {
       await ownerPage.goto(`${APP_URL}/b/${boardId}`)
       await expect(ownerPage.locator('.board-stage')).toBeVisible()
 
-      await shareBoardWithEmail(ownerPage, boardId, collaborator.email)
+      await shareBoardWithEmail(ownerPage, collaborator.email)
       await expect(ownerPage.getByTestId(`share-collaborator-${collaboratorId}`)).toBeVisible()
 
       await loginWithEmail(collaboratorPage, APP_URL, collaborator.email, collaborator.password)

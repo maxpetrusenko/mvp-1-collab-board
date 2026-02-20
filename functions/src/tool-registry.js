@@ -3,7 +3,7 @@
 // Maps LLM tools to existing handler functions in index.js
 
 const COLOR_OPTIONS = ['yellow', 'blue', 'green', 'pink', 'red', 'orange', 'purple', 'gray']
-const SHAPE_TYPES = ['rectangle', 'circle', 'diamond', 'triangle', 'line']
+const SHAPE_TYPES = ['rectangle', 'circle', 'diamond', 'triangle']
 const POSITION_OPTIONS = ['top left', 'top right', 'bottom left', 'bottom right', 'center', 'top', 'bottom', 'left', 'right']
 
 const TOOL_DEFINITIONS = [
@@ -422,7 +422,8 @@ GUIDELINES:
 5. Position new objects at (120, 120) if the user doesn't specify a location
 6. For "arrange" commands without specifics, prefer arrangeGrid for stickies
 7. Color names should be lowercase and match the available options exactly
-8. When user says "sticker" or "sticky note", use createStickyNote`
+8. When user says "sticker" or "sticky note", use createStickyNote
+9. If the request is conversational (for example math, explanation, or general chat) and does not need board changes, reply with plain text and do not call tools.`
 }
 
 module.exports = { TOOL_DEFINITIONS, buildSystemPrompt, COLOR_OPTIONS, SHAPE_TYPES, POSITION_OPTIONS }

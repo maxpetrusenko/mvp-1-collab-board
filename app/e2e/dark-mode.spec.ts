@@ -74,10 +74,6 @@ test.describe('Dark mode toggle', () => {
         return window.getComputedStyle(el).color
       })
 
-      const bgColor = await commentInput.evaluate((el) => {
-        return window.getComputedStyle(el).backgroundColor
-      })
-
       // In dark mode, text should be light (not dark)
       // The color should NOT be very dark (low RGB values)
       expect(inputColor).toBeTruthy()

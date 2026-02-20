@@ -43,7 +43,10 @@ test('TS-014 / RQ-014: AI command history is collected and rendered in the panel
 test('TS-015 / FR-7 / RQ-015: shift+click additive multi-select logic is present', () => {
   assert.equal(boardPageSource.includes('if (!additive) {'), true)
   assert.equal(boardPageSource.includes('if (prev.includes(objectId)) {'), true)
-  assert.equal(boardPageSource.includes('onClick={(event) => handleStickySelection(boardObject, Boolean(event.evt.shiftKey))}'), true)
+  assert.equal(
+    boardPageSource.includes("handleObjectSelection(boardObject, Boolean(event.evt.shiftKey), 'text')"),
+    true,
+  )
 })
 
 test('TS-016 / FR-7 / RQ-016: drag-box marquee selection handlers are wired', () => {
@@ -86,10 +89,9 @@ test('TS-021 / RQ-023: resize handles exist and commit object size changes', () 
 })
 
 test('TS-022 / RQ-024: sticky single-click edit shortcut is implemented', () => {
-  assert.equal(
-    boardPageSource.includes('if (canEditBoard && !additive && selectedIds.length === 1 && selectedId === boardObject.id) {'),
-    true,
-  )
+  assert.equal(boardPageSource.includes('inlineEditField &&'), true)
+  assert.equal(boardPageSource.includes('selectedIds.length === 1 &&'), true)
+  assert.equal(boardPageSource.includes('selectedId === boardObject.id'), true)
   assert.equal(boardPageSource.includes("startInlineEdit(boardObject, 'text')"), true)
 })
 
@@ -197,6 +199,25 @@ test('TS-033 / T-060: board rename supports double-click inline edit in boards p
   assert.equal(boardPageSource.includes('const submitBoardRename = useCallback('), true)
 })
 
+test('TS-055 / T-113: current board header supports inline rename for board owners', () => {
+  assert.equal(boardPageSource.includes('data-testid="current-board-name"'), true)
+  assert.equal(boardPageSource.includes('data-testid="current-board-name-input"'), true)
+  assert.equal(boardPageSource.includes("className={`board-name-pill ${canManageCurrentBoardSharing ? 'board-name-pill-editable' : ''}`}"), true)
+  assert.equal(boardPageSource.includes('beginBoardRename(currentBoardMeta)'), true)
+})
+
+test('TS-056 / T-114: legacy sync labels are removed from board header', () => {
+  assert.equal(boardPageSource.includes('Firebase LWW'), false)
+  assert.equal(boardPageSource.includes("'Connected'"), false)
+  assert.equal(boardPageSource.includes("const showConnectionStatusPill = connectionStatus !== 'connected'"), true)
+})
+
+test('TS-057 / T-117: line shape option is removed from board shape pickers', () => {
+  assert.equal(boardPageSource.includes("{ kind: 'line', label: 'Line' }"), false)
+  assert.equal(boardPageSource.includes("shapeType === 'line'"), false)
+  assert.equal(boardPageSource.includes("option.kind === 'line'"), false)
+})
+
 test('TS-034 / T-061: slash command palette UI + keyboard handlers are present', () => {
   assert.equal(boardPageSource.includes('if (!isMetaCombo && !event.altKey && !event.shiftKey && event.key === \'/\')'), true)
   assert.equal(boardPageSource.includes('data-testid="command-palette"'), true)
@@ -229,10 +250,11 @@ test('TS-051 / FR-22: share dialog exposes role selection, defaults to edit, and
   assert.equal(boardPageSource.includes('disabled={!roleCanEditBoard}'), true)
 })
 
-test('TS-052 / FR-16: local AI sticky parser accepts note alias to keep simple commands fast', () => {
+test('TS-052 / FR-16: AI commands are routed through backend planner/LLM path (no local hardcoded parser)', () => {
   const functionsIndexSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8')
   assert.equal(functionsIndexSource.includes('\\b(?:sticky(?:\\s*note)?|sticker|note)s?\\b'), true)
-  assert.equal(boardPageSource.includes('parseLocalMultiStickyCommand'), true)
+  assert.equal(boardPageSource.includes('fetch(aiCommandEndpoint'), true)
+  assert.equal(boardPageSource.includes('parseLocalMultiStickyCommand'), false)
 })
 
 test('TS-036 / T-062: template chooser modal and template apply wiring are present', () => {
@@ -295,6 +317,13 @@ test('G4-SHARE-001: share button is present in toolbar for board owners', () => 
   assert.equal(boardPageSource.includes('data-testid={`share-board-${boardMeta.id}`}'), true)
   assert.equal(boardPageSource.includes('title="Share board"'), true)
   assert.equal(boardPageSource.includes('openShareDialog(boardMeta.id)'), true)
+})
+
+test('G4-SHARE-002: main board header exposes a direct share action for owners', () => {
+  assert.equal(boardPageSource.includes('const canManageCurrentBoardSharing = useMemo('), true)
+  assert.equal(boardPageSource.includes('data-testid="share-current-board-button"'), true)
+  assert.equal(boardPageSource.includes('openShareDialog(currentBoardMeta.id)'), true)
+  assert.equal(boardPageSource.includes('setShowBoardsPanel(true)'), true)
 })
 
 test('G4-TIMER-001: timer editing functionality is present', () => {

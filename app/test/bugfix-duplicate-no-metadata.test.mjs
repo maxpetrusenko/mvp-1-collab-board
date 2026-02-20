@@ -1,84 +1,33 @@
 /**
- * Unit tests for bugfix: Duplicate should not copy collaborative metadata
- *
- * Addresses T-095: When duplicating objects (Ctrl+D), comments and votes
- * should NOT be copied - only visual properties.
+ * Regression guard for T-095:
+ * Duplicating objects must not copy collaborative metadata.
  */
 
 import { describe, it } from 'node:test'
-import assert from 'node:assert'
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 
-describe('BUGFIX-095: Duplicate object metadata isolation', () => {
-  it('should strip comments and votes when duplicating objects', () => {
-    // Simulate the duplicate logic from BoardPage.tsx
-    const source = {
-      id: 'original-id',
-      type: 'sticky',
-      text: 'Hello',
-      color: 'yellow',
-      position: { x: 100, y: 100 },
-      comments: [{ userId: 'user1', text: 'A comment', timestamp: Date.now() }],
-      votesByUser: { user1: true, user2: true },
-    }
+const boardPagePath = path.resolve(process.cwd(), 'src/pages/BoardPage.tsx')
+const boardPageSource = readFileSync(boardPagePath, 'utf8')
 
-    // This is what the fixed duplicateObject function does
-    const duplicate = {
-      ...source,
-      frameId: null,
-      id: 'duplicate-id',
-      position: {
-        x: source.position.x + 24,
-        y: source.position.y + 24,
-      },
-      // Don't copy collaborative metadata (comments, votes)
-      comments: undefined,
-      votesByUser: undefined,
-      zIndex: 1,
-      createdBy: 'current-user',
-      updatedBy: 'current-user',
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      version: 1,
-    }
+const countMatches = (source, matcher) => (source.match(matcher) || []).length
 
-    // Verify visual properties ARE copied
-    assert.strictEqual(duplicate.text, 'Hello')
-    assert.strictEqual(duplicate.color, 'yellow')
-    assert.strictEqual(duplicate.position.x, 124)
-    assert.strictEqual(duplicate.position.y, 124)
+describe('BUGFIX-095: duplicate strips comments and votes', () => {
+  it('applies metadata stripping in both duplicate branches (connector + non-connector)', () => {
+    const duplicateStart = boardPageSource.indexOf('const duplicateObject = useCallback(')
+    const duplicateEnd = boardPageSource.indexOf('const duplicateSelected = useCallback(', duplicateStart)
+    assert.ok(duplicateStart >= 0 && duplicateEnd > duplicateStart, 'duplicateObject function not found')
 
-    // Verify collaborative metadata is NOT copied
-    assert.strictEqual(duplicate.comments, undefined)
-    assert.strictEqual(duplicate.votesByUser, undefined)
-  })
+    const duplicateBody = boardPageSource.slice(duplicateStart, duplicateEnd)
 
-  it('should strip comments and votes from connectors when duplicating', () => {
-    const source = {
-      id: 'original-connector',
-      type: 'connector',
-      path: [{ x: 0, y: 0 }, { x: 100, y: 100 }],
-      style: 'solid',
-      comments: [{ userId: 'user1', text: 'Comment on connector' }],
-      votesByUser: { user1: true },
-    }
-
-    const duplicate = {
-      ...source,
-      id: 'duplicate-connector',
-      start: { x: 24, y: 24 },
-      end: { x: 124, y: 124 },
-      fromObjectId: null,
-      toObjectId: null,
-      fromAnchor: null,
-      toAnchor: null,
-      // Don't copy collaborative metadata (comments, votes)
-      comments: undefined,
-      votesByUser: undefined,
-      zIndex: 1,
-    }
-
-    assert.strictEqual(duplicate.comments, undefined)
-    assert.strictEqual(duplicate.votesByUser, undefined)
-    assert.strictEqual(duplicate.path, source.path)
+    assert.ok(
+      countMatches(duplicateBody, /comments:\s*undefined/g) >= 2,
+      'duplicateObject should clear comments for both connector and non-connector duplicates',
+    )
+    assert.ok(
+      countMatches(duplicateBody, /votesByUser:\s*undefined/g) >= 2,
+      'duplicateObject should clear votesByUser for both connector and non-connector duplicates',
+    )
   })
 })

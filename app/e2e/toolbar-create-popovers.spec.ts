@@ -20,6 +20,7 @@ test.describe('Toolbar create popovers', () => {
       const shapeText = `Shape ${Date.now()}`
       await page.getByTestId('add-shape-button').click()
       await expect(page.getByTestId('shape-create-popover')).toBeVisible()
+      await expect(page.locator('button[title="Set new shape type to Line"]')).toHaveCount(0)
       await page.locator('button[title="Set new shape type to Circle"]').click()
       await page.locator('button[title="Set new shape color to green"]').click()
       await page.getByTestId('shape-create-text-input').fill(shapeText)

@@ -46,7 +46,6 @@ const STICKY_SHAPE_SIZES = {
   circle: { width: 130, height: 130 },
   diamond: { width: 170, height: 120 },
   triangle: { width: 170, height: 120 },
-  line: { width: 220, height: 24 },
 }
 
 const normalizeShapeType = (rawShapeType, fallback = 'rectangle') => {
@@ -54,7 +53,6 @@ const normalizeShapeType = (rawShapeType, fallback = 'rectangle') => {
   if (normalized === 'circle') return 'circle'
   if (normalized === 'diamond' || normalized === 'rhombus' || normalized === 'romb') return 'diamond'
   if (normalized === 'triangle') return 'triangle'
-  if (normalized === 'line' || normalized === 'arrow') return 'line'
   if (normalized === 'rectangle' || normalized === 'box' || normalized === 'shape') return 'rectangle'
   return fallback
 }
@@ -75,6 +73,7 @@ const parseNumber = (value, fallback) => {
 }
 
 const sanitizeText = (text) => String(text || '').trim().slice(0, 300)
+const sanitizeAiAssistantResponse = (text) => sanitizeText(String(text || '').replace(/\s+/g, ' '))
 const normalizeCommand = (value) =>
   String(value || '')
     .normalize('NFKC')
@@ -1248,7 +1247,7 @@ const runCommandPlan = async (ctx, command) => {
   }
 
   const shapeMatch = normalizedCommand.match(
-    /^(?:add|create)\s+(?:a|an)?\s*(?:(\w+)\s+)?(rectangle|box|shape|circle|diamond|rhombus|romb|triangle|line)(?:\s+at(?:\s+position)?\s*(-?\d+)\s*,\s*(-?\d+))?[.!?]?\s*$/i,
+    /^(?:add|create)\s+(?:a|an)?\s*(?:(\w+)\s+)?(rectangle|box|shape|circle|diamond|rhombus|romb|triangle)(?:\s+at(?:\s+position)?\s*(-?\d+)\s*,\s*(-?\d+))?[.!?]?\s*$/i,
   )
   if (shapeMatch) {
     const [, colorCandidate, rawShapeType, xRaw, yRaw] = shapeMatch
@@ -1389,12 +1388,17 @@ const runCommandPlan = async (ctx, command) => {
       return await executeViaLLM(ctx, normalizedCommand)
     } catch (llmError) {
       console.error('LLM execution failed:', llmError)
-      // Fall through to original error message below
+      const modelUnavailableMessage =
+        'AI assistant is temporarily unavailable right now. Please try again in a moment.'
+      return {
+        message: modelUnavailableMessage,
+        aiResponse: modelUnavailableMessage,
+      }
     }
   }
 
   throw new Error(
-    'Unsupported command. Try: "add hello world sticker", "add rectangle", "add circle", "add diamond", "add line", "add frame", "add connector", "organize by color", "organize this board into groups", "space these elements evenly", "resize the frame to fit its contents", "summarize all stickies into themes", "arrange in grid", "create SWOT template", "retrospective", or "user journey map with 5 stages".',
+    'Unsupported command. Try: "add hello world sticker", "add rectangle", "add circle", "add diamond", "add frame", "add connector", "organize by color", "organize this board into groups", "space these elements evenly", "resize the frame to fit its contents", "summarize all stickies into themes", "arrange in grid", "create SWOT template", "retrospective", or "user journey map with 5 stages".',
   )
 }
 
@@ -1402,7 +1406,7 @@ const runCommandPlan = async (ctx, command) => {
  * Execute a command via GLM-5 LLM with tool calling
  * @param {object} ctx - Execution context { state, boardId, userId, executedTools }
  * @param {string} command - Normalized user command
- * @returns {Promise<void>}
+ * @returns {Promise<{message?: string, aiResponse?: string} | null>}
  */
 const executeViaLLM = async (ctx, command) => {
   console.log('Executing command via LLM:', command)
@@ -1413,12 +1417,18 @@ const executeViaLLM = async (ctx, command) => {
   })
 
   const toolCalls = glmClient.parseToolCalls(glmResponse)
+  const textResponse = sanitizeAiAssistantResponse(glmClient.getTextResponse(glmResponse))
 
   if (toolCalls.length === 0) {
-    // Check if there's a text response instead
-    const textResponse = glmClient.getTextResponse(glmResponse)
     if (textResponse) {
-      throw new Error(`LLM did not return any tool calls. Response: "${textResponse}"`)
+      ctx.executedTools.push({
+        tool: 'assistantResponse',
+        llmGenerated: true,
+      })
+      return {
+        message: textResponse,
+        aiResponse: textResponse,
+      }
     }
     throw new Error('LLM did not return any tool calls')
   }
@@ -1556,6 +1566,12 @@ const executeViaLLM = async (ctx, command) => {
   }
 
   console.log('LLM execution completed, tools executed:', toolCalls.length)
+  return textResponse
+    ? {
+        message: textResponse,
+        aiResponse: textResponse,
+      }
+    : null
 }
 
 const reserveQueueSequence = async (boardId) => {
@@ -1859,12 +1875,15 @@ exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) =>
       executedTools: [],
     }
 
-    await runCommandPlan(context, command)
+    const planResult = await runCommandPlan(context, command)
+    const resultMessage = sanitizeAiAssistantResponse(planResult?.message) || 'Command executed and synced to the board.'
+    const aiResponse = sanitizeAiAssistantResponse(planResult?.aiResponse)
 
     const result = {
       executedTools: context.executedTools,
       objectCount: context.state.length,
-      message: 'Command executed successfully',
+      message: resultMessage,
+      ...(aiResponse ? { aiResponse } : {}),
     }
 
     await commandRef.set(
@@ -1913,6 +1932,7 @@ exports.__test = {
   isOrganizeByColorCommand,
   parseStickyCommand,
   parsePosition,
+  sanitizeAiAssistantResponse,
   normalizeBoardMeta,
   canUserAccessBoard,
   canUserEditBoard,

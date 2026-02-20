@@ -1,7 +1,7 @@
 # TASKS.md
 
 Date initialized: 2026-02-16
-Last updated: 2026-02-20 (regression sweep: AI color-text, FR-22 deny-path, and guardrail recheck)
+Last updated: 2026-02-20 (line-shape removal across UI + AI schema + tests)
 Cadence: 1-hour deliverables with hard deadlines
 Source: `docs/Requirements.md` (markdown mirror) + `docs/G4 Week 1 - CollabBoard-requirements.pdf`
 
@@ -118,21 +118,32 @@ Source: `docs/Requirements.md` (markdown mirror) + `docs/G4 Week 1 - CollabBoard
 | T-102 | 2026-02-19 17:30 | Add: AI command position understanding (top/bottom/left/right, center coordinates) | B | Max | Pending |
 | T-103 | 2026-02-19 18:00 | Optimize: AI command latency to <2s (GLM API timeout, Firestore batch writes) | B | Max | Pending |
 | T-104 | 2026-02-20 11:30 | Restyle canvas inline editing to look in-object (sticky/shape/text/frame) and remove floating overlay visual for text edits | E | Max | Done |
-| T-105 | 2026-02-20 12:00 | Fix AI sticky parser for count+color + "with <color> color and text" phrasing (`round` alias), then redeploy functions and re-run AI E2E regressions | B | Max | Blocked |
+| T-105 | 2026-02-20 12:00 | Fix AI sticky parser for count+color + "with <color> color and text" phrasing (`round` alias), then redeploy functions and re-run AI E2E regressions | B | Max | Done |
 | T-106 | 2026-02-20 12:30 | Restore FR-22 behavior end-to-end: unshared collaborator must see access-denied state (`board-access-denied`) and lose canvas access | A | Max | In Progress |
-| T-107 | 2026-02-20 13:00 | Restore role-aware share UX/data model (`share-role-select`, `sharedRoles`, owner/edit/view enforcement) in board UI + API flow | A | Max | Pending |
+| T-107 | 2026-02-20 13:00 | Restore role-aware share UX/data model (`share-role-select`, `sharedRoles`, owner/edit/view enforcement) in board UI + API flow | A | Max | In Progress |
 | T-108 | 2026-02-20 13:30 | Restore AI panel non-editable gating (disable submit in view/read-only mode, not only runtime error on submit) | B | Max | Done |
 | T-109 | 2026-02-20 14:00 | Restore timer inline editing UX (`timer-edit-input`, Enter submit, Escape cancel, validation) regression from T-096 baseline | A | Max | Pending |
 | T-110 | 2026-02-20 14:30 | Revalidate object creation offset behavior (`objectsCreatedCountRef` and deterministic 20px duplication offset) post sticky/AI changes | A | Max | Pending |
 | T-111 | 2026-02-20 15:00 | Unblock backend deployment auth (`firebase login --reauth`) and redeploy functions so parser fixes are reflected on `web.app` | D | Max | Blocked |
+| T-112 | 2026-02-20 15:30 | Add owner-only main header share icon (`share-current-board-button`) that opens share dialog directly + unit/E2E regression coverage | A | Max | Done |
+| T-113 | 2026-02-20 16:00 | Remove legacy header sync labels (`Firebase LWW`, `Connected`) while keeping reconnect/sync transient states | A | Max | Done |
+| T-114 | 2026-02-20 16:15 | Add inline current-board rename from main board header (`current-board-name` -> `current-board-name-input`) | A | Max | Done |
+| T-115 | 2026-02-20 16:30 | Revalidate main-header share flow supports both `edit` and `view` roles and update E2E to exercise header path | A | Max | Done |
+| T-116 | 2026-02-20 16:45 | Fix AI conversational path so non-board prompts (e.g. `2+2`) return model text instead of `Unsupported command`, remove local UI parser fast-path, and refresh AI regression tests | B | Max | Done |
+| T-117 | 2026-02-20 17:00 | Remove line as a shape option (frontend render/create/edit + AI shape schema/parser), keep connector line style, and add guardrail + E2E coverage | A | Max | Done |
 
 ## Current Evidence Snapshot
 - Deployed app: `https://mvp-1-collab-board.web.app`
-- Regression sweep (current): `app unit 80/80 pass` (`cd app && npm run test:unit --silent`, 2026-02-20)
-- Regression sweep (current): `functions 46/46 pass` (`cd functions && npm test --silent`, 2026-02-20)
-- Regression sweep (current): `AI E2E 7/8 pass, 1 fail` (`cd app && playwright test e2e/ai-command-ui.spec.ts`, failing `creates green circle sticky from color-and-text instruction phrasing`, 2026-02-20)
+- Regression sweep (current): `app unit 86/86 pass` (`cd app && npm run test:unit --silent`, includes `TS-057`, 2026-02-20)
+- Regression sweep (current): `functions 51/51 pass` (`cd functions && npm test --silent`, includes shape-enum regression guardrail, 2026-02-20)
+- Regression sweep (current): `AI command UI E2E 8/8 pass` (`cd app && npm run test:e2e -- e2e/ai-command-ui.spec.ts`, 2026-02-20)
+- Regression sweep (current): `AI conversational fallback E2E 2/2 pass` (`cd app && npm run test:e2e -- e2e/ai-errors.spec.ts`, 2026-02-20)
 - Regression sweep (current): `FR-22 deny E2E 0/1 pass` (`cd app && playwright test e2e/requirements-board-sharing.spec.ts --grep "denies board access"`, `board-access-denied` not shown, 2026-02-20)
-- Regression artifact: AI phrasing command still creates yellow rectangle with literal instruction text on deployed app (see `app/test-results/ai-command-ui-AI-command-U-a39c7-d-text-instruction-phrasing-chromium/test-failed-1.png`, 2026-02-20)
+- Header rename + sync-label cleanup validation (local preview): `2 passed` (`PLAYWRIGHT_BASE_URL=http://127.0.0.1:4173 npx playwright test e2e/board-polish.spec.ts --grep "T-113|T-114" --reporter=line`, 2026-02-20)
+- Header share role validation (local preview): `2 passed` (`PLAYWRIGHT_BASE_URL=http://127.0.0.1:4173 npx playwright test e2e/requirements-board-sharing.spec.ts --grep "owner can open share dialog from main board header|owner can share read-only access and collaborator cannot edit" --reporter=line`, 2026-02-20)
+- Reconnect status visibility validation (local preview): `1 passed` (`PLAYWRIGHT_BASE_URL=http://127.0.0.1:4173 npx playwright test e2e/requirements-reconnect-ux.spec.ts --reporter=line`, 2026-02-20)
+- Line-shape removal coverage (local + unit): `1 passed` (`PLAYWRIGHT_BASE_URL=http://127.0.0.1:4173 npx playwright test e2e/toolbar-create-popovers.spec.ts --reporter=line`) + guardrails (`TS-057`, functions tool-schema enum assertion), 2026-02-20
+- Rotation overlay validation: `local 5/5 pass` (`PLAYWRIGHT_BASE_URL=http://127.0.0.1:4173 playwright test e2e/rotation.spec.ts`) and `deployed 0/5 pass` (deployed app missing `rotation-overlay-handle-*` markup, 2026-02-20)
 - Playwright run: `32 passed, 0 skipped` (`npx playwright test --list`, 2026-02-17)
 - Targeted regression run: `passed` (`npx playwright test e2e/object-deletion.spec.ts e2e/color-changes.spec.ts e2e/ai-errors.spec.ts e2e/ai-command-ui.spec.ts`, 2026-02-17)
 - Local validation run (post T-052): `5 passed` (`PLAYWRIGHT_BASE_URL=http://127.0.0.1:4173 npx playwright test e2e/color-changes.spec.ts e2e/shape-editing.spec.ts e2e/mvp-regression.spec.ts`, 2026-02-17)
@@ -174,7 +185,7 @@ Source: `docs/Requirements.md` (markdown mirror) + `docs/G4 Week 1 - CollabBoard
 - Freeze record:
   - `submission/SUBMISSION_FREEZE_2026-02-17.md`
 - Architecture spike notes: `docs/YJS_SPIKE.md`
-- Yjs pilot scaffold: `app/src/collab/yjs/*` + sync mode pill (`[data-testid=\"sync-mode-pill\"]`)
+- Yjs pilot scaffold: `app/src/collab/yjs/*`
 - Accessibility evidence docs:
   - `docs/ACCESSIBILITY_AUDIT.md`
   - `docs/VPAT_DRAFT.md` (optional)
@@ -281,7 +292,7 @@ Source: `docs/Requirements.md` (markdown mirror) + `docs/G4 Week 1 - CollabBoard
 - [x] `TS-049` Add guardrail coverage for vote badge clarity (icon + numeric count with dynamic width for multi-vote visibility).
 - [x] `TS-050` Add guardrail coverage for AI submit gating when board is in non-editable mode (view mode or read-only role).
 - [x] `TS-051` Add guardrail coverage for share-role UX (`share-role-select`, default edit, collaborator role label rendering, role payload).
-- [x] `TS-052` Add guardrail coverage for local AI `note` alias parsing to avoid slow fallback for simple sticky commands.
+- [x] `TS-052` Add guardrail coverage that AI commands route through backend planner/LLM path (no frontend local hardcoded parser fast-path).
 - [x] `TS-053` Add parser regression coverage for numbered color sticky commands (`add 1 red sticky note`, `create two red sticky notes`) to keep color/count deterministic.
 - [x] `TS-054` Add parser regression coverage for "with <color> color and text" AI phrasing and `round` shape alias to keep color/text/shape deterministic.
 

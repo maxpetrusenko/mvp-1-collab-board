@@ -1,5 +1,5 @@
 export type BoardObjectKind = 'stickyNote' | 'shape' | 'frame' | 'connector' | 'text'
-export type ShapeKind = 'rectangle' | 'circle' | 'diamond' | 'triangle' | 'line'
+export type ShapeKind = 'rectangle' | 'circle' | 'diamond' | 'triangle'
 export type AnchorKind = 'top' | 'right' | 'bottom' | 'left' | 'center'
 export type ConnectorStyle = 'arrow' | 'line'
 

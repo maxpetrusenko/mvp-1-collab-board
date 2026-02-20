@@ -48,9 +48,19 @@ export const AICommandPanel = ({ disabled, onSubmit, onIngestTextLines, history 
 
     setStatus('running')
     try {
-      await onSubmit(trimmed)
+      const submitResult = await onSubmit(trimmed)
+      const successMessage =
+        typeof submitResult === 'string' && submitResult.trim()
+          ? submitResult.trim()
+          : submitResult &&
+              typeof submitResult === 'object' &&
+              'message' in submitResult &&
+              typeof submitResult.message === 'string' &&
+              submitResult.message.trim()
+            ? submitResult.message.trim()
+            : 'Command executed and synced to the board.'
       setStatus('success')
-      setMessage('Command executed and synced to the board.')
+      setMessage(successMessage)
       setCommand('')
     } catch (error) {
       setStatus('error')

@@ -1,13 +1,11 @@
 /* eslint-disable no-console */
 const jwt = require('jsonwebtoken')
-const functions = require('firebase-functions')
 
 const TOKEN_TTL = 180 // 3 minutes
 let cachedToken = null
 
 function getApiKey() {
-  // Firebase config takes precedence, fallback to env var for local testing
-  const apiKey = functions.config()?.z_ai?.glm_api_key || process.env.Z_AI_GLM_API_KEY
+  const apiKey = process.env.Z_AI_GLM_API_KEY
   if (!apiKey) {
     throw new Error('Z_AI_GLM_API_KEY not configured')
   }
@@ -27,12 +25,18 @@ function generateToken() {
   const now = Math.floor(Date.now() / 1000)
 
   const payload = {
-    api_key: apiKey,
+    api_key: id,
     exp: now + TOKEN_TTL,
     timestamp: now
   }
 
-  return jwt.sign(payload, secret, { algorithm: 'HS256' })
+  return jwt.sign(payload, secret, {
+    algorithm: 'HS256',
+    header: {
+      alg: 'HS256',
+      sign_type: 'SIGN'
+    }
+  })
 }
 
 function getCachedToken() {

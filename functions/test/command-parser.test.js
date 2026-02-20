@@ -87,3 +87,13 @@ test('parseStickyCommand supports color instruction without forcing helper text 
   assert.equal(parsed.color, 'green')
   assert.deepEqual(parsed.texts, ['New sticky note'])
 })
+
+test('sanitizeAiAssistantResponse trims and normalizes model text responses', () => {
+  const response = __test.sanitizeAiAssistantResponse('  2 +   2    is 4  ')
+  assert.equal(response, '2 + 2 is 4')
+})
+
+test('sanitizeAiAssistantResponse caps assistant responses to sticky-safe length', () => {
+  const response = __test.sanitizeAiAssistantResponse('a'.repeat(450))
+  assert.equal(response.length, 300)
+})
