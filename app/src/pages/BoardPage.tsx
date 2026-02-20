@@ -125,6 +125,7 @@ type BoardMeta = {
   description: string
   ownerId: string
   sharedWith: string[]
+  sharedRoles: Record<string, 'edit' | 'view'>
   createdBy: string
   updatedBy?: string
   createdAt?: number
@@ -356,6 +357,33 @@ const calculateRotationAngle = (centerX: number, centerY: number, mouseX: number
   const degrees = radians * (180 / Math.PI)
   return normalizeRotationDegrees(degrees + 90) // +90 because handle is at top (-90 degrees)
 }
+const calculateRotationFromHandleTarget = (
+  target: Konva.Node,
+  objectWidth: number,
+  objectHeight: number,
+) => {
+  const stage = target.getStage()
+  if (!stage) {
+    return null
+  }
+
+  const group = target.getParent()
+  if (!group) {
+    return null
+  }
+
+  const pointer = stage.getPointerPosition()
+  if (!pointer) {
+    return null
+  }
+
+  const center = group.getAbsoluteTransform().point({
+    x: objectWidth / 2,
+    y: objectHeight / 2,
+  })
+
+  return calculateRotationAngle(center.x, center.y, pointer.x, pointer.y)
+}
 const overlaps = (
   left: { x: number; y: number; width: number; height: number },
   right: { x: number; y: number; width: number; height: number },
@@ -507,12 +535,33 @@ const normalizeSharedWith = (candidate: unknown): string[] => {
     .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
     .filter((entry) => entry.length > 0)
 }
+const normalizeSharedRoles = (
+  candidate: unknown,
+  sharedWith: string[],
+): Record<string, 'edit' | 'view'> => {
+  const normalized: Record<string, 'edit' | 'view'> = {}
+  if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+    Object.entries(candidate as Record<string, unknown>).forEach(([userId, roleValue]) => {
+      if (!sharedWith.includes(userId)) {
+        return
+      }
+      normalized[userId] = roleValue === 'view' ? 'view' : 'edit'
+    })
+  }
+  sharedWith.forEach((userId) => {
+    if (!normalized[userId]) {
+      normalized[userId] = 'edit'
+    }
+  })
+  return normalized
+}
 const toBoardMeta = (
   id: string,
   data: Partial<BoardMeta> & {
     id?: string
     ownerId?: unknown
     sharedWith?: unknown
+    sharedRoles?: unknown
     deleted?: boolean
   },
 ): BoardMeta | null => {
@@ -531,6 +580,7 @@ const toBoardMeta = (
 
   const createdBy = createdByCandidate || ownerId
   const sharedWith = normalizeSharedWith(data.sharedWith).filter((entry) => entry !== ownerId)
+  const sharedRoles = normalizeSharedRoles(data.sharedRoles, sharedWith)
 
   return {
     id: (typeof data.id === 'string' && data.id.trim() ? data.id : id).trim(),
@@ -538,6 +588,7 @@ const toBoardMeta = (
     description: typeof data.description === 'string' ? data.description : '',
     ownerId,
     sharedWith,
+    sharedRoles,
     createdBy,
     updatedBy: typeof data.updatedBy === 'string' ? data.updatedBy : undefined,
     createdAt: typeof data.createdAt === 'number' ? data.createdAt : undefined,
@@ -563,6 +614,7 @@ export const BoardPage = () => {
   const [resizingObjectId, setResizingObjectId] = useState<string | null>(null)
   const [rotatingObjectId, setRotatingObjectId] = useState<string | null>(null)
   const [localObjectRotations, setLocalObjectRotations] = useState<Record<string, number>>({})
+  const localObjectRotationsRef = useRef<Record<string, number>>({})
   const [draggingConnectorId, setDraggingConnectorId] = useState<string | null>(null)
   const [localObjectPositions, setLocalObjectPositions] = useState<
     Record<string, LocalPositionOverride>
@@ -600,6 +652,7 @@ export const BoardPage = () => {
   const [renameBoardError, setRenameBoardError] = useState<string | null>(null)
   const [shareDialogBoardId, setShareDialogBoardId] = useState<string | null>(null)
   const [shareEmail, setShareEmail] = useState('')
+  const [shareRole, setShareRole] = useState<'edit' | 'view'>('edit')
   const [shareError, setShareError] = useState<string | null>(null)
   const [shareStatus, setShareStatus] = useState<string | null>(null)
   const [isShareSubmitting, setIsShareSubmitting] = useState(false)
@@ -655,7 +708,20 @@ export const BoardPage = () => {
     end: Point
   } | null>(null)
   const [voteConfettiParticles, setVoteConfettiParticles] = useState<VoteConfettiParticle[]>([])
-  const canEditBoard = interactionMode === 'edit'
+  const roleCanEditBoard = useMemo(() => {
+    if (!userId) {
+      return false
+    }
+    const activeBoardMeta = boards.find((boardMeta) => boardMeta.id === boardId)
+    if (!activeBoardMeta) {
+      return true
+    }
+    if (activeBoardMeta.ownerId === userId) {
+      return true
+    }
+    return (activeBoardMeta.sharedRoles[userId] || 'edit') !== 'view'
+  }, [boardId, boards, userId])
+  const canEditBoard = interactionMode === 'edit' && roleCanEditBoard
   const boardCanvasBackground = themeMode === 'dark' ? '#0f172a' : '#f8fafc'
   const hasLiveBoardAccess = boardAccessState === 'granted'
   const { cursors, publishCursorPosition } = usePresence({
@@ -711,6 +777,9 @@ export const BoardPage = () => {
   )
 
   useEffect(() => {
+    localObjectRotationsRef.current = localObjectRotations
+  }, [localObjectRotations])
+  useEffect(() => {
     const handleResize = () => {
       setStageSize({
         width: window.innerWidth,
@@ -742,6 +811,12 @@ export const BoardPage = () => {
       return next.length === prev.length ? prev : next
     })
   }, [objects])
+  useEffect(() => {
+    if (roleCanEditBoard || interactionMode === 'view') {
+      return
+    }
+    setInteractionMode('view')
+  }, [interactionMode, roleCanEditBoard])
   useEffect(() => {
     if (canEditBoard) {
       return
@@ -797,6 +872,7 @@ export const BoardPage = () => {
             description: 'Untitled board',
             ownerId: user.uid,
             sharedWith: [],
+            sharedRoles: {},
             createdBy: user.uid,
             updatedBy: user.uid,
             createdAt: serverTimestamp(),
@@ -810,7 +886,12 @@ export const BoardPage = () => {
 
         const boardMeta = toBoardMeta(
           snapshot.id,
-          snapshot.data() as Partial<BoardMeta> & { ownerId?: unknown; sharedWith?: unknown; deleted?: boolean },
+          snapshot.data() as Partial<BoardMeta> & {
+            ownerId?: unknown
+            sharedWith?: unknown
+            sharedRoles?: unknown
+            deleted?: boolean
+          },
         )
         if (!boardMeta || !canAccessBoardMeta(boardMeta, user.uid)) {
           if (!cancelled) {
@@ -824,10 +905,17 @@ export const BoardPage = () => {
           setBoardAccessState('granted')
         }
 
-        const rawData = snapshot.data() as Partial<BoardMeta> & { ownerId?: unknown; sharedWith?: unknown }
+        const rawData = snapshot.data() as Partial<BoardMeta> & {
+          ownerId?: unknown
+          sharedWith?: unknown
+          sharedRoles?: unknown
+        }
         const requiresBackfill =
           typeof rawData.ownerId !== 'string' ||
           !Array.isArray(rawData.sharedWith) ||
+          !rawData.sharedRoles ||
+          typeof rawData.sharedRoles !== 'object' ||
+          Array.isArray(rawData.sharedRoles) ||
           typeof rawData.createdBy !== 'string' ||
           rawData.createdBy.trim().length === 0
         if (requiresBackfill && boardMeta.ownerId === user.uid) {
@@ -837,6 +925,7 @@ export const BoardPage = () => {
               createdBy: boardMeta.createdBy,
               ownerId: boardMeta.ownerId,
               sharedWith: boardMeta.sharedWith,
+              sharedRoles: boardMeta.sharedRoles,
               updatedBy: user.uid,
               updatedAt: serverTimestamp(),
             },
@@ -901,6 +990,7 @@ export const BoardPage = () => {
           docSnap.data() as Partial<BoardMeta> & {
             ownerId?: unknown
             sharedWith?: unknown
+            sharedRoles?: unknown
             deleted?: boolean
           },
         )
@@ -1386,6 +1476,20 @@ export const BoardPage = () => {
       localObjectPositions[inlineEditorTarget.id]?.point || inlineEditorTarget.position
     const objectLeft = viewport.x + objectPosition.x * viewport.scale
     const objectTop = viewport.y + objectPosition.y * viewport.scale
+    const objectRotation = localObjectRotations[inlineEditorTarget.id] ?? inlineEditorTarget.rotation ?? 0
+    const withTransform = (layout: {
+      left: number
+      top: number
+      width: number
+      height: number
+      fontSize: number
+      multiline: boolean
+    }) => ({
+      ...layout,
+      rotation: objectRotation,
+      transformOriginX: objectLeft - layout.left,
+      transformOriginY: objectTop - layout.top,
+    })
 
     if (inlineEditor.field === 'text' && inlineEditorTarget.type === 'stickyNote') {
       const shapeType = normalizeShapeKind(inlineEditorTarget.shapeType)
@@ -1394,14 +1498,14 @@ export const BoardPage = () => {
 
       if (shapeType === 'rectangle') {
         const inset = 8 * viewport.scale
-        return {
+        return withTransform({
           left: objectLeft + inset,
           top: objectTop + inset,
           width: Math.max(120, objectWidth - inset * 2),
           height: Math.max(48, objectHeight - inset * 2),
           fontSize: Math.max(12, 16 * viewport.scale),
           multiline: true,
-        }
+        })
       }
 
       const widthRatio =
@@ -1411,14 +1515,14 @@ export const BoardPage = () => {
       const width = Math.max(96, objectWidth * widthRatio)
       const height = Math.max(42, objectHeight * heightRatio)
 
-      return {
+      return withTransform({
         left: objectLeft + (objectWidth - width) / 2,
         top: objectTop + (objectHeight - height) / 2,
         width,
         height,
         fontSize: Math.max(12, 14 * viewport.scale),
         multiline: true,
-      }
+      })
     }
 
     if (inlineEditor.field === 'text' && inlineEditorTarget.type === 'shape') {
@@ -1428,14 +1532,14 @@ export const BoardPage = () => {
 
       if (shapeType === 'rectangle') {
         const inset = 10 * viewport.scale
-        return {
+        return withTransform({
           left: objectLeft + inset,
           top: objectTop + inset,
           width: Math.max(120, objectWidth - inset * 2),
           height: Math.max(36, objectHeight - inset * 2),
           fontSize: Math.max(12, 14 * viewport.scale),
           multiline: true,
-        }
+        })
       }
 
       const widthRatio =
@@ -1445,42 +1549,43 @@ export const BoardPage = () => {
       const width = Math.max(92, objectWidth * widthRatio)
       const height = Math.max(38, objectHeight * heightRatio)
 
-      return {
+      return withTransform({
         left: objectLeft + (objectWidth - width) / 2,
         top: objectTop + (objectHeight - height) / 2,
         width,
         height,
         fontSize: Math.max(12, 14 * viewport.scale),
         multiline: true,
-      }
+      })
     }
 
     if (inlineEditor.field === 'text' && inlineEditorTarget.type === 'text') {
-      return {
+      return withTransform({
         left: objectLeft,
         top: objectTop,
         width: Math.max(120, inlineEditorTarget.size.width * viewport.scale),
         height: Math.max(36, inlineEditorTarget.size.height * viewport.scale),
         fontSize: Math.max(12, (inlineEditorTarget.fontSize || 24) * viewport.scale),
         multiline: true,
-      }
+      })
     }
 
     if (inlineEditor.field === 'title' && inlineEditorTarget.type === 'frame') {
-      return {
+      return withTransform({
         left: objectLeft + 10 * viewport.scale,
         top: objectTop + 6 * viewport.scale,
         width: Math.max(160, inlineEditorTarget.size.width * viewport.scale - 20 * viewport.scale),
         height: Math.max(24, 24 * viewport.scale),
         fontSize: Math.max(12, 14 * viewport.scale),
         multiline: false,
-      }
+      })
     }
 
     return null
   }, [
     inlineEditor,
     inlineEditorTarget,
+    localObjectRotations,
     localObjectPositions,
     viewport.scale,
     viewport.x,
@@ -1906,6 +2011,7 @@ export const BoardPage = () => {
       }
       setShareDialogBoardId(null)
       setShareEmail('')
+      setShareRole('edit')
       setShareError(null)
       setShareStatus(null)
       setRenamingBoardId(null)
@@ -1963,6 +2069,7 @@ export const BoardPage = () => {
       description: newBoardDescription.trim(),
       ownerId: user.uid,
       sharedWith: [],
+      sharedRoles: {},
       createdBy: user.uid,
       updatedBy: user.uid,
       createdAt: serverTimestamp(),
@@ -2002,6 +2109,7 @@ export const BoardPage = () => {
           description: targetBoardMeta.description || '',
           ownerId: user.uid,
           sharedWith: [],
+          sharedRoles: {},
           createdBy: user.uid,
           updatedBy: user.uid,
           createdAt: serverTimestamp(),
@@ -2141,25 +2249,38 @@ export const BoardPage = () => {
   const openShareDialog = useCallback((targetBoardId: string) => {
     setShareDialogBoardId(targetBoardId)
     setShareEmail('')
+    setShareRole('edit')
     setShareError(null)
     setShareStatus(null)
   }, [])
   const closeShareDialog = useCallback(() => {
     setShareDialogBoardId(null)
     setShareEmail('')
+    setShareRole('edit')
     setShareError(null)
     setShareStatus(null)
   }, [])
   const applyShareResponse = useCallback(
-    (targetBoardId: string, payload: { sharedWith?: unknown; message?: string }) => {
-      if (Array.isArray(payload.sharedWith)) {
-        const nextSharedWith = normalizeSharedWith(payload.sharedWith)
-        setBoards((prev) =>
-          prev.map((boardMeta) =>
-            boardMeta.id === targetBoardId ? { ...boardMeta, sharedWith: nextSharedWith } : boardMeta,
-          ),
-        )
-      }
+    (targetBoardId: string, payload: { sharedWith?: unknown; sharedRoles?: unknown; message?: string }) => {
+      setBoards((prev) =>
+        prev.map((boardMeta) => {
+          if (boardMeta.id !== targetBoardId) {
+            return boardMeta
+          }
+          const nextSharedWith = Array.isArray(payload.sharedWith)
+            ? normalizeSharedWith(payload.sharedWith)
+            : boardMeta.sharedWith
+          const nextSharedRoles = normalizeSharedRoles(
+            payload.sharedRoles !== undefined ? payload.sharedRoles : boardMeta.sharedRoles,
+            nextSharedWith,
+          )
+          return {
+            ...boardMeta,
+            sharedWith: nextSharedWith,
+            sharedRoles: nextSharedRoles,
+          }
+        }),
+      )
       if (payload.message) {
         setShareStatus(payload.message)
       }
@@ -2167,7 +2288,12 @@ export const BoardPage = () => {
     [],
   )
   const applyShareMutationFallback = useCallback(
-    async (targetBoardId: string, collaboratorId: string, action: 'share' | 'revoke') => {
+    async (
+      targetBoardId: string,
+      collaboratorId: string,
+      action: 'share' | 'revoke',
+      role: 'edit' | 'view' = 'edit',
+    ) => {
       if (!db || !user) {
         throw new Error('Unable to update board sharing right now.')
       }
@@ -2181,18 +2307,23 @@ export const BoardPage = () => {
       }
 
       const sharedWithSet = new Set(targetBoardMeta.sharedWith)
+      const nextSharedRoles = { ...targetBoardMeta.sharedRoles }
       if (action === 'revoke') {
         sharedWithSet.delete(collaboratorId)
+        delete nextSharedRoles[collaboratorId]
       } else {
         sharedWithSet.add(collaboratorId)
+        nextSharedRoles[collaboratorId] = role
       }
 
       const nextSharedWith = [...sharedWithSet]
+      const normalizedSharedRoles = normalizeSharedRoles(nextSharedRoles, nextSharedWith)
       await setDoc(
         doc(db, 'boards', targetBoardId),
         {
           ownerId: targetBoardMeta.ownerId,
           sharedWith: nextSharedWith,
+          sharedRoles: normalizedSharedRoles,
           updatedBy: user.uid,
           updatedAt: serverTimestamp(),
         },
@@ -2201,7 +2332,11 @@ export const BoardPage = () => {
 
       applyShareResponse(targetBoardId, {
         sharedWith: nextSharedWith,
-        message: action === 'revoke' ? 'Collaborator access removed.' : 'Board shared successfully.',
+        sharedRoles: normalizedSharedRoles,
+        message:
+          action === 'revoke'
+            ? 'Collaborator access removed.'
+            : `Board shared successfully (${role === 'view' ? 'read-only' : 'can edit'}).`,
       })
       return nextSharedWith
     },
@@ -2253,10 +2388,11 @@ export const BoardPage = () => {
             boardId: shareDialogBoardId,
             email: trimmedEmail,
             action: 'share',
+            role: shareRole,
           }),
         })
         const payload = (await response.json().catch(() => null)) as
-          | { error?: string; sharedWith?: unknown; message?: string }
+          | { error?: string; sharedWith?: unknown; sharedRoles?: unknown; message?: string }
           | null
         if (!response.ok) {
           throw new Error(payload?.error || 'Unable to share board right now.')
@@ -2264,12 +2400,15 @@ export const BoardPage = () => {
 
         applyShareResponse(shareDialogBoardId, {
           sharedWith: payload?.sharedWith,
-          message: payload?.message || `Shared with ${trimmedEmail}.`,
+          sharedRoles: payload?.sharedRoles,
+          message:
+            payload?.message ||
+            `Shared with ${trimmedEmail} (${shareRole === 'view' ? 'read-only' : 'can edit'}).`,
         })
       } catch {
         const collaboratorId = await resolveCollaboratorIdByEmail(trimmedEmail)
-        await applyShareMutationFallback(shareDialogBoardId, collaboratorId, 'share')
-        setShareStatus(`Shared with ${trimmedEmail}.`)
+        await applyShareMutationFallback(shareDialogBoardId, collaboratorId, 'share', shareRole)
+        setShareStatus(`Shared with ${trimmedEmail} (${shareRole === 'view' ? 'read-only' : 'can edit'}).`)
       }
 
       setShareEmail('')
@@ -2279,7 +2418,15 @@ export const BoardPage = () => {
     } finally {
       setIsShareSubmitting(false)
     }
-  }, [applyShareMutationFallback, applyShareResponse, resolveCollaboratorIdByEmail, shareDialogBoardId, shareEmail, user])
+  }, [
+    applyShareMutationFallback,
+    applyShareResponse,
+    resolveCollaboratorIdByEmail,
+    shareDialogBoardId,
+    shareEmail,
+    shareRole,
+    user,
+  ])
   const revokeSharedCollaborator = useCallback(
     async (targetBoardId: string, collaboratorId: string) => {
       if (!user) {
@@ -2305,7 +2452,7 @@ export const BoardPage = () => {
             }),
           })
           const payload = (await response.json().catch(() => null)) as
-            | { error?: string; sharedWith?: unknown; message?: string }
+            | { error?: string; sharedWith?: unknown; sharedRoles?: unknown; message?: string }
             | null
           if (!response.ok) {
             throw new Error(payload?.error || 'Unable to remove collaborator right now.')
@@ -2313,6 +2460,7 @@ export const BoardPage = () => {
 
           applyShareResponse(targetBoardId, {
             sharedWith: payload?.sharedWith,
+            sharedRoles: payload?.sharedRoles,
             message: payload?.message || 'Collaborator access removed.',
           })
         } catch {
@@ -2411,6 +2559,27 @@ export const BoardPage = () => {
   }, [])
   const cancelInlineEdit = useCallback(() => {
     setInlineEditor(null)
+  }, [])
+  const setLocalRotation = useCallback((objectId: string, rotation: number) => {
+    setLocalObjectRotations((prev) => {
+      const next = {
+        ...prev,
+        [objectId]: rotation,
+      }
+      localObjectRotationsRef.current = next
+      return next
+    })
+  }, [])
+  const clearLocalRotation = useCallback((objectId: string) => {
+    setLocalObjectRotations((prev) => {
+      if (!(objectId in prev)) {
+        return prev
+      }
+      const next = { ...prev }
+      delete next[objectId]
+      localObjectRotationsRef.current = next
+      return next
+    })
   }, [])
 
   const createObject = useCallback(
@@ -3393,7 +3562,13 @@ export const BoardPage = () => {
           ? 'Lock object editing to prevent accidental changes'
           : 'Enable object creation and editing actions',
         keywords: ['view', 'edit', 'lock', 'mode', 'permissions'],
-        run: () => setInteractionMode((prev) => (prev === 'edit' ? 'view' : 'edit')),
+        run: () => {
+          if (!roleCanEditBoard) {
+            setInteractionMode('view')
+            return
+          }
+          setInteractionMode((prev) => (prev === 'edit' ? 'view' : 'edit'))
+        },
       },
       {
         id: 'toggle-selection-mode',
@@ -3411,7 +3586,17 @@ export const BoardPage = () => {
         run: () => setShowShortcuts((prev) => !prev),
       },
     ],
-    [boardId, canEditBoard, createObject, duplicateBoardMeta, selectionMode, themeMode, toggleThemeMode, zoomToFit],
+    [
+      boardId,
+      canEditBoard,
+      createObject,
+      duplicateBoardMeta,
+      roleCanEditBoard,
+      selectionMode,
+      themeMode,
+      toggleThemeMode,
+      zoomToFit,
+    ],
   )
   const filteredCommandPaletteCommands = useMemo(() => {
     const normalizedQuery = commandPaletteQuery.trim().toLowerCase()
@@ -3470,6 +3655,10 @@ export const BoardPage = () => {
 
       if (!isMetaCombo && event.shiftKey && keyLower === 'e') {
         event.preventDefault()
+        if (!roleCanEditBoard) {
+          setInteractionMode('view')
+          return
+        }
         setInteractionMode((prev) => (prev === 'edit' ? 'view' : 'edit'))
         return
       }
@@ -4828,6 +5017,19 @@ export const BoardPage = () => {
                         data-testid="share-email-input"
                       />
                     </label>
+                    <label className="board-field">
+                      <span>Permission</span>
+                      <select
+                        value={shareRole}
+                        onChange={(event) =>
+                          setShareRole(event.target.value === 'view' ? 'view' : 'edit')
+                        }
+                        data-testid="share-role-select"
+                      >
+                        <option value="edit">Can edit</option>
+                        <option value="view">Read only</option>
+                      </select>
+                    </label>
                     {shareError ? (
                       <p className="error-text" data-testid="share-error">
                         {shareError}
@@ -4859,6 +5061,14 @@ export const BoardPage = () => {
                           data-testid={`share-collaborator-${collaboratorId}`}
                         >
                           <span className="share-collaborator-id">{collaboratorId}</span>
+                          <span
+                            className="panel-note"
+                            data-testid={`share-collaborator-role-${collaboratorId}`}
+                          >
+                            {shareDialogBoardMeta.sharedRoles[collaboratorId] === 'view'
+                              ? 'Read only'
+                              : 'Can edit'}
+                          </span>
                           <button
                             type="button"
                             className="board-list-delete"
@@ -5594,7 +5804,7 @@ export const BoardPage = () => {
                   const shapeType = normalizeShapeKind(boardObject.shapeType)
                   const isInlineStickyTextEditing =
                     inlineEditor?.objectId === boardObject.id && inlineEditor.field === 'text'
-                  const rotation = boardObject.rotation || 0
+                  const rotation = localObjectRotations[boardObject.id] ?? boardObject.rotation ?? 0
                   const strokeColor = selected ? '#1d4ed8' : hovered ? '#0f766e' : '#0f172a'
                   const strokeWidth = selected ? 2 : hovered ? 2 : 1
                   const voteCount = Object.keys(boardObject.votesByUser || {}).length
@@ -5606,7 +5816,7 @@ export const BoardPage = () => {
                       x={position.x}
                       y={position.y}
                       rotation={rotation}
-                      draggable={canEditBoard && selectionMode === 'select' && resizingObjectId !== boardObject.id}
+                      draggable={canEditBoard && selectionMode === 'select' && resizingObjectId !== boardObject.id && rotatingObjectId !== boardObject.id}
                       onClick={(event) => handleStickySelection(boardObject, Boolean(event.evt.shiftKey))}
                       onTap={() => handleStickySelection(boardObject)}
                       onDblClick={() => {
@@ -5808,6 +6018,65 @@ export const BoardPage = () => {
                           }}
                           data-testid={`resize-handle-${boardObject.id}`}
                         />
+                      ) : null}
+                      {selected && canEditBoard ? (
+                        <>
+                          <Line
+                            x1={size.width / 2}
+                            y1={0}
+                            x2={size.width / 2}
+                            y2={-ROTATION_HANDLE_OFFSET}
+                            stroke="#1d4ed8"
+                            strokeWidth={1.5}
+                            listening={false}
+                          />
+                          <Circle
+                            x={size.width / 2}
+                            y={-ROTATION_HANDLE_OFFSET}
+                            radius={ROTATION_HANDLE_SIZE / 2}
+                            fill="#ffffff"
+                            stroke="#1d4ed8"
+                            strokeWidth={2}
+                            cursor="grab"
+                            draggable
+                            onMouseDown={(event) => {
+                              event.cancelBubble = true
+                            }}
+                            onDragStart={(event) => {
+                              setRotatingObjectId(boardObject.id)
+                              event.cancelBubble = true
+                            }}
+                            onDragMove={(event) => {
+                              const newRotation = calculateRotationFromHandleTarget(
+                                event.target,
+                                size.width,
+                                size.height,
+                              )
+                              if (newRotation === null) {
+                                return
+                              }
+
+                              setLocalRotation(boardObject.id, newRotation)
+                              event.cancelBubble = true
+                            }}
+                            onDragEnd={(event) => {
+                              const resolvedRotation =
+                                calculateRotationFromHandleTarget(event.target, size.width, size.height) ??
+                                localObjectRotationsRef.current[boardObject.id] ??
+                                boardObject.rotation ??
+                                0
+                              void patchObject(
+                                boardObject.id,
+                                { rotation: resolvedRotation },
+                                { actionLabel: `rotated ${boardObject.type}` },
+                              )
+                              clearLocalRotation(boardObject.id)
+                              setRotatingObjectId(null)
+                              event.cancelBubble = true
+                            }}
+                            data-testid={`rotation-handle-${boardObject.id}`}
+                          />
+                        </>
                       ) : null}
                     </Group>
                   )
@@ -6034,47 +6303,30 @@ export const BoardPage = () => {
                               event.cancelBubble = true
                             }}
                             onDragMove={(event) => {
-                              const stage = event.target.getStage()
-                              if (!stage) return
-
-                              const group = event.target.getParent()
-                              if (!group) return
-
-                              const groupPos = group.position()
-                              const objectCenterX = size.width / 2
-                              const objectCenterY = size.height / 2
-
-                              const worldCenterX = groupPos.x + objectCenterX
-                              const worldCenterY = groupPos.y + objectCenterY
-
-                              const stagePos = event.target.getStage()?.getPointerPosition()
-                              if (!stagePos) return
-
-                              const newRotation = calculateRotationAngle(
-                                worldCenterX,
-                                worldCenterY,
-                                stagePos.x,
-                                stagePos.y
+                              const newRotation = calculateRotationFromHandleTarget(
+                                event.target,
+                                size.width,
+                                size.height,
                               )
+                              if (newRotation === null) {
+                                return
+                              }
 
-                              setLocalObjectRotations((prev) => ({
-                                ...prev,
-                                [boardObject.id]: newRotation,
-                              }))
+                              setLocalRotation(boardObject.id, newRotation)
                               event.cancelBubble = true
                             }}
                             onDragEnd={(event) => {
-                              const finalRotation = localObjectRotations[boardObject.id] ?? boardObject.rotation ?? 0
+                              const finalRotation =
+                                calculateRotationFromHandleTarget(event.target, size.width, size.height) ??
+                                localObjectRotationsRef.current[boardObject.id] ??
+                                boardObject.rotation ??
+                                0
                               void patchObject(
                                 boardObject.id,
                                 { rotation: finalRotation },
-                                { actionLabel: `rotated ${boardObject.type}` }
+                                { actionLabel: `rotated ${boardObject.type}` },
                               )
-                              setLocalObjectRotations((prev) => {
-                                const next = { ...prev }
-                                delete next[boardObject.id]
-                                return next
-                              })
+                              clearLocalRotation(boardObject.id)
                               setRotatingObjectId(null)
                               event.cancelBubble = true
                             }}
@@ -6292,14 +6544,14 @@ export const BoardPage = () => {
                   const frameStroke = selected ? '#1d4ed8' : hovered ? '#0f766e' : '#334155'
                   const isInlineFrameTitleEditing =
                     inlineEditor?.objectId === boardObject.id && inlineEditor.field === 'title'
-                  const rotation = boardObject.rotation || 0
+                  const rotation = localObjectRotations[boardObject.id] ?? boardObject.rotation ?? 0
                   return (
                     <Group
                       key={boardObject.id}
                       x={position.x}
                       y={position.y}
                       rotation={rotation}
-                      draggable={canEditBoard && selectionMode === 'select' && resizingObjectId !== boardObject.id}
+                      draggable={canEditBoard && selectionMode === 'select' && resizingObjectId !== boardObject.id && rotatingObjectId !== boardObject.id}
                       onClick={(event) => selectObjectId(boardObject.id, Boolean(event.evt.shiftKey))}
                       onTap={() => selectObjectId(boardObject.id)}
                       onDblClick={() => {
@@ -6504,47 +6756,30 @@ export const BoardPage = () => {
                               event.cancelBubble = true
                             }}
                             onDragMove={(event) => {
-                              const stage = event.target.getStage()
-                              if (!stage) return
-
-                              const group = event.target.getParent()
-                              if (!group) return
-
-                              const groupPos = group.position()
-                              const objectCenterX = size.width / 2
-                              const objectCenterY = size.height / 2
-
-                              const worldCenterX = groupPos.x + objectCenterX
-                              const worldCenterY = groupPos.y + objectCenterY
-
-                              const stagePos = event.target.getStage()?.getPointerPosition()
-                              if (!stagePos) return
-
-                              const newRotation = calculateRotationAngle(
-                                worldCenterX,
-                                worldCenterY,
-                                stagePos.x,
-                                stagePos.y
+                              const newRotation = calculateRotationFromHandleTarget(
+                                event.target,
+                                size.width,
+                                size.height,
                               )
+                              if (newRotation === null) {
+                                return
+                              }
 
-                              setLocalObjectRotations((prev) => ({
-                                ...prev,
-                                [boardObject.id]: newRotation,
-                              }))
+                              setLocalRotation(boardObject.id, newRotation)
                               event.cancelBubble = true
                             }}
                             onDragEnd={(event) => {
-                              const finalRotation = localObjectRotations[boardObject.id] ?? boardObject.rotation ?? 0
+                              const finalRotation =
+                                calculateRotationFromHandleTarget(event.target, size.width, size.height) ??
+                                localObjectRotationsRef.current[boardObject.id] ??
+                                boardObject.rotation ??
+                                0
                               void patchObject(
                                 boardObject.id,
                                 { rotation: finalRotation },
-                                { actionLabel: `rotated ${boardObject.type}` }
+                                { actionLabel: `rotated ${boardObject.type}` },
                               )
-                              setLocalObjectRotations((prev) => {
-                                const next = { ...prev }
-                                delete next[boardObject.id]
-                                return next
-                              })
+                              clearLocalRotation(boardObject.id)
                               setRotatingObjectId(null)
                               event.cancelBubble = true
                             }}
@@ -6560,14 +6795,14 @@ export const BoardPage = () => {
                   const isInlineTextObjectEditing =
                     inlineEditor?.objectId === boardObject.id && inlineEditor.field === 'text'
                   const fontSize = Math.max(12, boardObject.fontSize || 24)
-                  const rotation = boardObject.rotation || 0
+                  const rotation = localObjectRotations[boardObject.id] ?? boardObject.rotation ?? 0
                   return (
                     <Group
                       key={boardObject.id}
                       x={position.x}
                       y={position.y}
                       rotation={rotation}
-                      draggable={canEditBoard && selectionMode === 'select' && resizingObjectId !== boardObject.id}
+                      draggable={canEditBoard && selectionMode === 'select' && resizingObjectId !== boardObject.id && rotatingObjectId !== boardObject.id}
                       onClick={(event) => selectObjectId(boardObject.id, Boolean(event.evt.shiftKey))}
                       onTap={() => selectObjectId(boardObject.id)}
                       onDblClick={() => {
@@ -6698,47 +6933,34 @@ export const BoardPage = () => {
                               event.cancelBubble = true
                             }}
                             onDragMove={(event) => {
-                              const stage = event.target.getStage()
-                              if (!stage) return
-
-                              const group = event.target.getParent()
-                              if (!group) return
-
-                              const groupPos = group.position()
                               const objectWidth = Math.max(80, size.width)
                               const objectHeight = Math.max(28, size.height)
-
-                              const worldCenterX = groupPos.x + objectWidth / 2
-                              const worldCenterY = groupPos.y + objectHeight / 2
-
-                              const stagePos = event.target.getStage()?.getPointerPosition()
-                              if (!stagePos) return
-
-                              const newRotation = calculateRotationAngle(
-                                worldCenterX,
-                                worldCenterY,
-                                stagePos.x,
-                                stagePos.y
+                              const newRotation = calculateRotationFromHandleTarget(
+                                event.target,
+                                objectWidth,
+                                objectHeight,
                               )
+                              if (newRotation === null) {
+                                return
+                              }
 
-                              setLocalObjectRotations((prev) => ({
-                                ...prev,
-                                [boardObject.id]: newRotation,
-                              }))
+                              setLocalRotation(boardObject.id, newRotation)
                               event.cancelBubble = true
                             }}
                             onDragEnd={(event) => {
-                              const finalRotation = localObjectRotations[boardObject.id] ?? boardObject.rotation ?? 0
+                              const objectWidth = Math.max(80, size.width)
+                              const objectHeight = Math.max(28, size.height)
+                              const finalRotation =
+                                calculateRotationFromHandleTarget(event.target, objectWidth, objectHeight) ??
+                                localObjectRotationsRef.current[boardObject.id] ??
+                                boardObject.rotation ??
+                                0
                               void patchObject(
                                 boardObject.id,
                                 { rotation: finalRotation },
-                                { actionLabel: `rotated ${boardObject.type}` }
+                                { actionLabel: `rotated ${boardObject.type}` },
                               )
-                              setLocalObjectRotations((prev) => {
-                                const next = { ...prev }
-                                delete next[boardObject.id]
-                                return next
-                              })
+                              clearLocalRotation(boardObject.id)
                               setRotatingObjectId(null)
                               event.cancelBubble = true
                             }}
@@ -6926,6 +7148,8 @@ export const BoardPage = () => {
                     width: inlineEditorLayout.width,
                     height: inlineEditorLayout.height,
                     fontSize: inlineEditorLayout.fontSize,
+                    transform: `rotate(${inlineEditorLayout.rotation}deg)`,
+                    transformOrigin: `${inlineEditorLayout.transformOriginX}px ${inlineEditorLayout.transformOriginY}px`,
                     ...(inlineEditorAppearance?.style || {}),
                   }}
                   value={inlineEditor.value}
@@ -6959,6 +7183,8 @@ export const BoardPage = () => {
                     width: inlineEditorLayout.width,
                     height: inlineEditorLayout.height,
                     fontSize: inlineEditorLayout.fontSize,
+                    transform: `rotate(${inlineEditorLayout.rotation}deg)`,
+                    transformOrigin: `${inlineEditorLayout.transformOriginX}px ${inlineEditorLayout.transformOriginY}px`,
                     ...(inlineEditorAppearance?.style || {}),
                   }}
                   value={inlineEditor.value}

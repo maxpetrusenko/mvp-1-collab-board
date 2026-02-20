@@ -353,10 +353,18 @@ test('G4-ROTATION-001: Miro-style drag-to-rotate handle is present', () => {
 
   // Uses local rotation state during drag and persists final value
   assert.equal(
-    boardPageSource.includes('const finalRotation = localObjectRotations[boardObject.id] ?? boardObject.rotation ?? 0'),
+    boardPageSource.includes('calculateRotationFromHandleTarget(event.target'),
     true,
   )
-  assert.equal(boardPageSource.includes('{ rotation: finalRotation }'), true)
+  assert.equal(
+    boardPageSource.includes('localObjectRotationsRef.current[boardObject.id]'),
+    true,
+  )
+  assert.equal(
+    boardPageSource.includes('{ rotation: resolvedRotation }') ||
+      boardPageSource.includes('{ rotation: finalRotation }'),
+    true,
+  )
 })
 
 test('G4-GLM-001: GLM tool registry includes rotateObject, deleteObject, duplicateObject', () => {

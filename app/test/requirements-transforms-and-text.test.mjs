@@ -74,8 +74,13 @@ test('Transforms: rotate controls are available and wired to persisted rotation 
   )
   assert.match(
     boardPageSource,
-    /const finalRotation = localObjectRotations\[boardObject\.id\] \?\? boardObject\.rotation \?\? 0/,
-    'Expected drag rotation to persist via final rotation patch',
+    /calculateRotationFromHandleTarget\(event\.target,/,
+    'Expected drag rotation to derive angle from handle drag position',
+  )
+  assert.match(
+    boardPageSource,
+    /localObjectRotationsRef\.current\[boardObject\.id\]/,
+    'Expected drag rotation to use ref-backed fallback when persisting',
   )
 })
 
