@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from 'react'
 import { Navigate, useNavigate, useParams } from 'react-router-dom'
 import { Arrow, Circle, Group, Layer, Line, Rect, Stage, Text } from 'react-konva'
 import Konva from 'konva'
@@ -1301,6 +1308,17 @@ export const BoardPage = () => {
     () => boards.find((boardMeta) => boardMeta.id === shareDialogBoardId) || null,
     [boards, shareDialogBoardId],
   )
+  const resolveObjectPosition = useCallback(
+    (boardObject: BoardObject) =>
+      liveDragPositionsRef.current[boardObject.id] ||
+      localObjectPositions[boardObject.id]?.point ||
+      boardObject.position,
+    [localObjectPositions],
+  )
+  const resolveObjectSize = useCallback(
+    (boardObject: BoardObject) => localObjectSizes[boardObject.id]?.size || boardObject.size,
+    [localObjectSizes],
+  )
   const selectedObject = useMemo(
     () => objects.find((boardObject) => boardObject.id === selectedId) || null,
     [objects, selectedId],
@@ -1738,17 +1756,6 @@ export const BoardPage = () => {
       return [...prev, objectId]
     })
   }, [])
-  const resolveObjectPosition = useCallback(
-    (boardObject: BoardObject) =>
-      liveDragPositionsRef.current[boardObject.id] ||
-      localObjectPositions[boardObject.id]?.point ||
-      boardObject.position,
-    [localObjectPositions],
-  )
-  const resolveObjectSize = useCallback(
-    (boardObject: BoardObject) => localObjectSizes[boardObject.id]?.size || boardObject.size,
-    [localObjectSizes],
-  )
   const selectedObjectScreenBounds = useMemo(() => {
     if (!selectedObject) {
       return null
