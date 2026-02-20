@@ -8,6 +8,7 @@ const boardEntrySource = readFileSync(new URL('../src/pages/BoardEntryPage.tsx',
 const appSource = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
 const loginPageSource = readFileSync(new URL('../src/pages/LoginPage.tsx', import.meta.url), 'utf8')
 const authContextSource = readFileSync(new URL('../src/state/AuthContext.tsx', import.meta.url), 'utf8')
+const stylesSource = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
 
 test('TS-011 / RQ-011: board create UI exposes name/description form controls', () => {
   assert.equal(boardPageSource.includes('data-testid="board-create-form"'), true)
@@ -371,6 +372,17 @@ test('G4-ROTATION-001: Miro-style drag-to-rotate handle is present', () => {
       boardPageSource.includes('{ rotation: finalRotation }'),
     true,
   )
+})
+
+test('G4-ROTATION-002: DOM overlay rotation handles support Playwright drag automation', () => {
+  assert.equal(boardPageSource.includes('const rotationOverlayHandles = useMemo(() => {'), true)
+  assert.equal(boardPageSource.includes('data-testid={`rotation-overlay-handle-${handle.objectId}`}'), true)
+  assert.equal(boardPageSource.includes('const startRotationOverlayDrag = useCallback('), true)
+  assert.equal(boardPageSource.includes('rotationOverlayDragRef.current = {'), true)
+  assert.equal(boardPageSource.includes("window.addEventListener('mousemove', handleMouseMove)"), true)
+  assert.equal(boardPageSource.includes("window.addEventListener('mouseup', handleMouseUp)"), true)
+  assert.equal(stylesSource.includes('.rotation-overlay-layer'), true)
+  assert.equal(stylesSource.includes('.rotation-overlay-handle'), true)
 })
 
 test('G4-GLM-001: GLM tool registry includes rotateObject, deleteObject, duplicateObject', () => {

@@ -1371,6 +1371,27 @@ select:focus-visible,
   cursor: crosshair;
 }
 
+.rotation-overlay-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 12;
+}
+
+.rotation-overlay-handle {
+  position: absolute;
+  border-radius: 999px;
+  border: 2px solid #1d4ed8;
+  background: #ffffff;
+  box-shadow: 0 0 0 1px rgba(29, 78, 216, 0.2);
+  cursor: grab;
+  pointer-events: auto;
+}
+
+.rotation-overlay-handle:active {
+  cursor: grabbing;
+}
+
 /* === INLINE EDITOR === */
 .inline-editor-layer {
   position: absolute;

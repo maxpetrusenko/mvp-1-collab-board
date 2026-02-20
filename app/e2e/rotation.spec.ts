@@ -4,7 +4,6 @@ import { seedBoardObjects } from './helpers/performance'
 import { fetchBoardObjects } from './helpers/firestore'
 
 const APP_URL = process.env.PLAYWRIGHT_BASE_URL || 'https://mvp-1-collab-board.web.app'
-const ROTATION_HANDLE_OFFSET = 30
 
 const getObjectRotation = async (boardId: string, idToken: string, objectId: string) => {
   const objects = await fetchBoardObjects(boardId, idToken)
@@ -35,17 +34,22 @@ const selectSeededObject = async (
 
 const dragRotationHandle = async (
   page: Page,
-  boardObject: { position?: { x?: number; y?: number }; size?: { width?: number; height?: number } },
+  objectId: string,
   deltaX: number,
   deltaY: number,
 ) => {
-  const handleX = (boardObject.position?.x ?? 0) + (boardObject.size?.width ?? 180) / 2
-  const handleY = (boardObject.position?.y ?? 0) - ROTATION_HANDLE_OFFSET
-  const start = await toCanvasScreenPoint(page, handleX, handleY)
+  const handle = page.getByTestId(`rotation-overlay-handle-${objectId}`)
+  await expect(handle).toBeVisible()
+  const box = await handle.boundingBox()
+  if (!box) {
+    throw new Error(`Rotation overlay handle missing for ${objectId}`)
+  }
 
-  await page.mouse.move(start.x, start.y)
+  const startX = box.x + box.width / 2
+  const startY = box.y + box.height / 2
+  await page.mouse.move(startX, startY)
   await page.mouse.down()
-  await page.mouse.move(start.x + deltaX, start.y + deltaY)
+  await page.mouse.move(startX + deltaX, startY + deltaY)
   await page.mouse.up()
 }
 
@@ -80,7 +84,7 @@ test.describe('Rotation: drag-to-rotate handle', () => {
     await selectSeededObject(page, sticky)
     const initialRotation = await getObjectRotation(boardId, user.idToken, sticky.id)
 
-    await dragRotationHandle(page, sticky, 100, 0)
+    await dragRotationHandle(page, sticky.id, 100, 0)
     await page.waitForTimeout(500)
 
     const newRotation = await getObjectRotation(boardId, user.idToken, sticky.id)
@@ -105,7 +109,7 @@ test.describe('Rotation: drag-to-rotate handle', () => {
 
     await selectSeededObject(page, shape)
     const initialRotation = await getObjectRotation(boardId, user.idToken, shape.id)
-    await dragRotationHandle(page, shape, -80, 50)
+    await dragRotationHandle(page, shape.id, -80, 50)
     await page.waitForTimeout(500)
 
     const finalRotation = await getObjectRotation(boardId, user.idToken, shape.id)
@@ -130,7 +134,7 @@ test.describe('Rotation: drag-to-rotate handle', () => {
 
     await selectSeededObject(page, frame)
     const initialRotation = await getObjectRotation(boardId, user.idToken, frame.id)
-    await dragRotationHandle(page, frame, 60, 60)
+    await dragRotationHandle(page, frame.id, 60, 60)
     await page.waitForTimeout(500)
 
     const finalRotation = await getObjectRotation(boardId, user.idToken, frame.id)
@@ -153,19 +157,19 @@ test.describe('Rotation: drag-to-rotate handle', () => {
     await page.goto(`${APP_URL}/b/${boardId}`)
     await expect(page.locator('.board-stage')).toBeVisible()
 
-    // Without selection, dragging where handle would be should do nothing.
+    const rotationHandle = page.getByTestId(`rotation-overlay-handle-${sticky.id}`)
+    await expect(rotationHandle).toHaveCount(0)
+
+    // Without selection, there should be no draggable rotation handle.
     const initialRotation = await getObjectRotation(boardId, user.idToken, sticky.id)
-    await dragRotationHandle(page, sticky, 100, 0)
-    await page.waitForTimeout(500)
-    const afterUnselectedDrag = await getObjectRotation(boardId, user.idToken, sticky.id)
-    expect(afterUnselectedDrag).toBe(initialRotation)
 
     // After selecting, dragging the same area should rotate.
     await selectSeededObject(page, sticky)
-    await dragRotationHandle(page, sticky, 100, 0)
+    await expect(rotationHandle).toBeVisible()
+    await dragRotationHandle(page, sticky.id, 100, 0)
     await page.waitForTimeout(500)
     const afterSelectedDrag = await getObjectRotation(boardId, user.idToken, sticky.id)
-    expect(afterSelectedDrag).not.toBe(afterUnselectedDrag)
+    expect(afterSelectedDrag).not.toBe(initialRotation)
   })
 
   test('ROTATION-E2E-005: rotation handle not visible in view mode', async ({ page }) => {
@@ -185,6 +189,8 @@ test.describe('Rotation: drag-to-rotate handle', () => {
     await expect(page.locator('.board-stage')).toBeVisible()
 
     await selectSeededObject(page, sticky)
+    const rotationHandle = page.getByTestId(`rotation-overlay-handle-${sticky.id}`)
+    await expect(rotationHandle).toBeVisible()
     const selectedRotation = await getObjectRotation(boardId, user.idToken, sticky.id)
 
     // Switch to view mode.
@@ -194,8 +200,9 @@ test.describe('Rotation: drag-to-rotate handle', () => {
     } else {
       await page.keyboard.press('Shift+E')
     }
+    await expect(rotationHandle).toHaveCount(0)
 
-    await dragRotationHandle(page, sticky, 120, 0)
+    await page.keyboard.press('r')
     await page.waitForTimeout(500)
 
     const rotationInViewMode = await getObjectRotation(boardId, user.idToken, sticky.id)

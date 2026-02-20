@@ -30,3 +30,4 @@ firebase-debug.log
 *.cer
 *service*account*.json
 *credentials*.json
+app.zip
