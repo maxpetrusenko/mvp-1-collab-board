@@ -60,6 +60,25 @@ test('parseStickyCommand preserves count and color for multi-sticky requests', (
   assert.deepEqual(parsed.texts, ['Note 1', 'Note 2'])
 })
 
+test('parseStickyCommand supports stickies plural phrasing with count and reason-list text', () => {
+  const parsed = __test.parseStickyCommand('add 10 stickies that list the reasons why my husband is awesome')
+
+  assert.ok(parsed)
+  assert.equal(parsed.count, 10)
+  assert.equal(parsed.texts.length, 10)
+  assert.equal(parsed.texts[0], 'Reason 1: my husband is awesome')
+  assert.equal(parsed.texts[9], 'Reason 10: my husband is awesome')
+})
+
+test('parseStickyCommand supports common sticky typo variants', () => {
+  const parsed = __test.parseStickyCommand('add 10 sticikies that list the reasons why my husband is awesome')
+
+  assert.ok(parsed)
+  assert.equal(parsed.count, 10)
+  assert.equal(parsed.texts.length, 10)
+  assert.equal(parsed.texts[0], 'Reason 1: my husband is awesome')
+})
+
 test('parseStickyCommand keeps position with numbered color requests', () => {
   const parsed = __test.parseStickyCommand('create 2 red sticky notes at top right')
 
@@ -91,6 +110,46 @@ test('parseStickyCommand supports color instruction without forcing helper text 
 test('sanitizeAiAssistantResponse trims and normalizes model text responses', () => {
   const response = __test.sanitizeAiAssistantResponse('  2 +   2    is 4  ')
   assert.equal(response, '2 + 2 is 4')
+})
+
+test('getAutoStickyPosition advances grid slots to avoid overlap for default placement', () => {
+  const pos1 = __test.getAutoStickyPosition([])
+  const pos2 = __test.getAutoStickyPosition([{ type: 'stickyNote', position: pos1 }])
+  const pos3 = __test.getAutoStickyPosition([
+    { type: 'stickyNote', position: pos1 },
+    { type: 'stickyNote', position: pos2 },
+  ])
+
+  assert.notDeepEqual(pos1, pos2)
+  assert.notDeepEqual(pos2, pos3)
+})
+
+test('normalizeAiPlacementHint keeps finite pointer/viewport placement fields', () => {
+  const placement = __test.normalizeAiPlacementHint({
+    pointer: { x: 420, y: 260 },
+    viewportCenter: { x: 400, y: 240 },
+    viewport: { x: 200, y: 120, width: 500, height: 300 },
+  })
+
+  assert.ok(placement)
+  assert.deepEqual(placement?.pointer, { x: 420, y: 260 })
+  assert.deepEqual(placement?.anchor, { x: 420, y: 260 })
+  assert.deepEqual(placement?.viewportCenter, { x: 400, y: 240 })
+  assert.deepEqual(placement?.viewport, { x: 200, y: 120, width: 500, height: 300 })
+})
+
+test('getStickyBatchLayoutPositions centers multi-sticky layout around anchor', () => {
+  const positions = __test.getStickyBatchLayoutPositions({
+    count: 10,
+    anchor: { x: 1000, y: 700 },
+    shapeType: 'rectangle',
+  })
+
+  assert.equal(positions.length, 10)
+  const avgX = positions.reduce((sum, pos) => sum + pos.x + 90, 0) / positions.length
+  const avgY = positions.reduce((sum, pos) => sum + pos.y + 55, 0) / positions.length
+  assert.ok(Math.abs(avgX - 1000) < 5)
+  assert.ok(Math.abs(avgY - 700) < 5)
 })
 
 test('sanitizeAiAssistantResponse caps assistant responses to sticky-safe length', () => {

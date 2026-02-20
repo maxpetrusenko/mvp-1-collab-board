@@ -101,6 +101,8 @@ type TimerState = {
   remainingMs: number
 }
 
+type BoardLinkAccess = 'restricted' | 'view' | 'edit'
+
 type VoteConfettiParticle = {
   id: string
   x: number
@@ -125,6 +127,7 @@ type BoardMeta = {
   name: string
   description: string
   ownerId: string
+  linkAccessRole: BoardLinkAccess
   sharedWith: string[]
   sharedRoles: Record<string, 'edit' | 'view'>
   createdBy: string
@@ -140,6 +143,13 @@ type AiCommandHistoryEntry = {
   queuedAt?: number
   completedAt?: number
   error?: string
+}
+
+type BoardAccessRequest = {
+  userId: string
+  role: 'edit' | 'view'
+  email: string
+  requestedAt?: number
 }
 
 type CreatePopoverKey = 'shape' | 'connector' | 'text'
@@ -168,6 +178,8 @@ const BOARD_HEADER_HEIGHT = 64
 const CONNECTOR_SNAP_THRESHOLD_PX = 36
 const CONNECTOR_HANDLE_RADIUS = 7
 const TIMER_DEFAULT_MS = 5 * 60 * 1000
+const PRESENCE_AWAY_THRESHOLD_MS = 25_000
+const DRAG_PUBLISH_INTERVAL_MS = 100
 const MIN_ZOOM_SCALE = 0.25
 const MAX_ZOOM_SCALE = 3
 const ZOOM_MOMENTUM_SMOOTHING = 0.24
@@ -247,6 +259,8 @@ const isEditableTarget = (target: EventTarget | null) => {
 }
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
+const cloneBoardObject = (boardObject: BoardObject): BoardObject =>
+  JSON.parse(JSON.stringify(boardObject)) as BoardObject
 const isFinitePoint = (candidate: unknown): candidate is Point =>
   Boolean(
     candidate &&
@@ -564,11 +578,18 @@ const normalizeSharedRoles = (
   })
   return normalized
 }
+const normalizeLinkAccessRole = (candidate: unknown): BoardLinkAccess => {
+  if (candidate === 'edit' || candidate === 'view') {
+    return candidate
+  }
+  return 'restricted'
+}
 const toBoardMeta = (
   id: string,
   data: Partial<BoardMeta> & {
     id?: string
     ownerId?: unknown
+    linkAccessRole?: unknown
     sharedWith?: unknown
     sharedRoles?: unknown
     deleted?: boolean
@@ -588,6 +609,7 @@ const toBoardMeta = (
   }
 
   const createdBy = createdByCandidate || ownerId
+  const linkAccessRole = normalizeLinkAccessRole(data.linkAccessRole)
   const sharedWith = normalizeSharedWith(data.sharedWith).filter((entry) => entry !== ownerId)
   const sharedRoles = normalizeSharedRoles(data.sharedRoles, sharedWith)
 
@@ -596,6 +618,7 @@ const toBoardMeta = (
     name: (typeof data.name === 'string' && data.name.trim() ? data.name : `Board ${id.slice(0, 8)}`).trim(),
     description: typeof data.description === 'string' ? data.description : '',
     ownerId,
+    linkAccessRole,
     sharedWith,
     sharedRoles,
     createdBy,
@@ -605,7 +628,19 @@ const toBoardMeta = (
   }
 }
 const canAccessBoardMeta = (boardMeta: BoardMeta, userId: string) =>
-  boardMeta.ownerId === userId || boardMeta.sharedWith.includes(userId)
+  boardMeta.ownerId === userId ||
+  boardMeta.sharedWith.includes(userId) ||
+  boardMeta.linkAccessRole === 'view' ||
+  boardMeta.linkAccessRole === 'edit'
+const canEditBoardMeta = (boardMeta: BoardMeta, userId: string) => {
+  if (boardMeta.ownerId === userId) {
+    return true
+  }
+  if (boardMeta.sharedWith.includes(userId)) {
+    return (boardMeta.sharedRoles[userId] || 'edit') !== 'view'
+  }
+  return boardMeta.linkAccessRole === 'edit'
+}
 
 export const BoardPage = () => {
   const { boardId: boardIdParam } = useParams()
@@ -619,8 +654,8 @@ export const BoardPage = () => {
   const objectsRef = useRef<BoardObject[]>([])
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const selectedIdsRef = useRef<string[]>([])
-  const [clipboardObject, setClipboardObject] = useState<BoardObject | null>(null)
-  const clipboardObjectRef = useRef<BoardObject | null>(null)
+  const clipboardObjectsRef = useRef<BoardObject[]>([])
+  const clipboardPasteCountRef = useRef(0)
   const [draggingObjectId, setDraggingObjectId] = useState<string | null>(null)
   const [resizingObjectId, setResizingObjectId] = useState<string | null>(null)
   const [rotatingObjectId, setRotatingObjectId] = useState<string | null>(null)
@@ -657,6 +692,9 @@ export const BoardPage = () => {
   const [boardAccessMeta, setBoardAccessMeta] = useState<BoardMeta | null>(null)
   const [boardAccessState, setBoardAccessState] = useState<'checking' | 'granted' | 'denied'>('checking')
   const [boardAccessError, setBoardAccessError] = useState<string | null>(null)
+  const [boardAccessRequestStatus, setBoardAccessRequestStatus] = useState<string | null>(null)
+  const [boardAccessRequestError, setBoardAccessRequestError] = useState<string | null>(null)
+  const [isSubmittingAccessRequest, setIsSubmittingAccessRequest] = useState(false)
   const [showBoardsPanel, setShowBoardsPanel] = useState(false)
   const [newBoardName, setNewBoardName] = useState('')
   const [newBoardDescription, setNewBoardDescription] = useState('')
@@ -667,9 +705,11 @@ export const BoardPage = () => {
   const [shareDialogBoardId, setShareDialogBoardId] = useState<string | null>(null)
   const [shareEmail, setShareEmail] = useState('')
   const [shareRole, setShareRole] = useState<'edit' | 'view'>('edit')
+  const [shareLinkRole, setShareLinkRole] = useState<BoardLinkAccess>('restricted')
   const [shareError, setShareError] = useState<string | null>(null)
   const [shareStatus, setShareStatus] = useState<string | null>(null)
   const [isShareSubmitting, setIsShareSubmitting] = useState(false)
+  const [pendingAccessRequests, setPendingAccessRequests] = useState<BoardAccessRequest[]>([])
   const [aiCommandHistory, setAiCommandHistory] = useState<AiCommandHistoryEntry[]>([])
   const [themeMode, setThemeMode] = useState<'light' | 'dark'>(() => {
     if (typeof window === 'undefined') {
@@ -695,9 +735,6 @@ export const BoardPage = () => {
     selectedIdsRef.current = selectedIds
   }, [selectedIds])
 
-  useEffect(() => {
-    clipboardObjectRef.current = clipboardObject
-  }, [clipboardObject])
   const [hoveredObjectId, setHoveredObjectId] = useState<string | null>(null)
   const [shapeCreateDraft, setShapeCreateDraft] = useState<{
     shapeType: ShapeKind
@@ -742,10 +779,7 @@ export const BoardPage = () => {
     if (!activeBoardMeta) {
       return false
     }
-    if (activeBoardMeta.ownerId === userId) {
-      return true
-    }
-    return (activeBoardMeta.sharedRoles[userId] || 'edit') !== 'view'
+    return canEditBoardMeta(activeBoardMeta, userId)
   }, [activeBoardMeta, userId])
   const canEditBoard = interactionMode === 'edit' && roleCanEditBoard
   const boardCanvasBackground = themeMode === 'dark' ? '#0f172a' : '#f8fafc'
@@ -758,6 +792,7 @@ export const BoardPage = () => {
   })
 
   const stageRef = useRef<Konva.Stage | null>(null)
+  const lastWorldPointerRef = useRef<Point | null>(null)
   const replayAbortRef = useRef(false)
   const [stageSize, setStageSize] = useState({
     width: window.innerWidth,
@@ -771,6 +806,7 @@ export const BoardPage = () => {
   )
 
   const liveDragPositionsRef = useRef<Record<string, Point>>({})
+  const objectDragPublishersRef = useRef<Record<string, (patch: Partial<BoardObject>) => void>>({})
   const connectorPublishersRef = useRef<Record<string, (patch: ConnectorPatch) => void>>({})
   const historyPastRef = useRef<HistoryEntry[]>([])
   const historyFutureRef = useRef<HistoryEntry[]>([])
@@ -845,11 +881,14 @@ export const BoardPage = () => {
     })
   }, [objects])
   useEffect(() => {
+    if (!activeBoardMeta) {
+      return
+    }
     if (roleCanEditBoard || interactionMode === 'view') {
       return
     }
     setInteractionMode('view')
-  }, [interactionMode, roleCanEditBoard])
+  }, [activeBoardMeta, interactionMode, roleCanEditBoard])
   useEffect(() => {
     if (canEditBoard) {
       return
@@ -893,6 +932,8 @@ export const BoardPage = () => {
     let cancelled = false
     setBoardAccessState('checking')
     setBoardAccessError(null)
+    setBoardAccessRequestStatus(null)
+    setBoardAccessRequestError(null)
     setBoardAccessMeta(null)
 
     const boardRef = doc(db, 'boards', boardId)
@@ -905,6 +946,7 @@ export const BoardPage = () => {
             name: `Board ${boardId.slice(0, 8)}`,
             description: 'Untitled board',
             ownerId: user.uid,
+            linkAccessRole: 'restricted',
             sharedWith: [],
             sharedRoles: {},
             createdBy: user.uid,
@@ -926,6 +968,7 @@ export const BoardPage = () => {
           snapshot.id,
           snapshot.data() as Partial<BoardMeta> & {
             ownerId?: unknown
+            linkAccessRole?: unknown
             sharedWith?: unknown
             sharedRoles?: unknown
             deleted?: boolean
@@ -947,6 +990,7 @@ export const BoardPage = () => {
 
         const rawData = snapshot.data() as Partial<BoardMeta> & {
           ownerId?: unknown
+          linkAccessRole?: unknown
           sharedWith?: unknown
           sharedRoles?: unknown
         }
@@ -956,6 +1000,7 @@ export const BoardPage = () => {
           !rawData.sharedRoles ||
           typeof rawData.sharedRoles !== 'object' ||
           Array.isArray(rawData.sharedRoles) ||
+          normalizeLinkAccessRole(rawData.linkAccessRole) !== rawData.linkAccessRole ||
           typeof rawData.createdBy !== 'string' ||
           rawData.createdBy.trim().length === 0
         if (requiresBackfill && boardMeta.ownerId === user.uid) {
@@ -964,6 +1009,7 @@ export const BoardPage = () => {
             {
               createdBy: boardMeta.createdBy,
               ownerId: boardMeta.ownerId,
+              linkAccessRole: boardMeta.linkAccessRole,
               sharedWith: boardMeta.sharedWith,
               sharedRoles: boardMeta.sharedRoles,
               updatedBy: user.uid,
@@ -1031,6 +1077,7 @@ export const BoardPage = () => {
           docSnap.id,
           docSnap.data() as Partial<BoardMeta> & {
             ownerId?: unknown
+            linkAccessRole?: unknown
             sharedWith?: unknown
             sharedRoles?: unknown
             deleted?: boolean
@@ -1095,6 +1142,7 @@ export const BoardPage = () => {
       setBoardAccessMeta(current)
     }
   }, [boardId, boards])
+
 
   useEffect(() => {
     objectsCreatedCountRef.current = 0
@@ -1356,6 +1404,70 @@ export const BoardPage = () => {
       (shareDialogBoardId && activeBoardMeta?.id === shareDialogBoardId ? activeBoardMeta : null),
     [activeBoardMeta, boards, shareDialogBoardId],
   )
+  const shareDialogBoardUrl = useMemo(() => {
+    if (!shareDialogBoardMeta) {
+      return ''
+    }
+    if (typeof window === 'undefined') {
+      return `/b/${shareDialogBoardMeta.id}`
+    }
+    return `${window.location.origin}/b/${shareDialogBoardMeta.id}`
+  }, [shareDialogBoardMeta])
+  useEffect(() => {
+    if (!shareDialogBoardMeta) {
+      return
+    }
+    setShareLinkRole(shareDialogBoardMeta.linkAccessRole)
+  }, [shareDialogBoardMeta])
+  useEffect(() => {
+    if (!db || !user || !shareDialogBoardMeta || shareDialogBoardMeta.ownerId !== user.uid) {
+      setPendingAccessRequests([])
+      return
+    }
+
+    const accessRequestsQuery = query(
+      collection(db, 'boards', shareDialogBoardMeta.id, 'accessRequests'),
+      where('status', '==', 'pending'),
+      firestoreLimit(40),
+    )
+
+    const unsubscribe = onSnapshot(
+      accessRequestsQuery,
+      (snapshot) => {
+        const next = snapshot.docs
+          .map((docSnap): BoardAccessRequest | null => {
+            const data = docSnap.data() as {
+              userId?: unknown
+              role?: unknown
+              email?: unknown
+              requestedAt?: unknown
+            }
+            const userIdValue =
+              typeof data.userId === 'string' && data.userId.trim().length > 0 ? data.userId.trim() : docSnap.id
+            if (!userIdValue) {
+              return null
+            }
+            const roleValue = data.role === 'view' ? 'view' : 'edit'
+            const emailValue = typeof data.email === 'string' ? data.email.trim() : ''
+            return {
+              userId: userIdValue,
+              role: roleValue,
+              email: emailValue,
+              ...(typeof data.requestedAt === 'number' ? { requestedAt: data.requestedAt } : {}),
+            }
+          })
+          .filter((entry): entry is BoardAccessRequest => Boolean(entry))
+          .sort((left, right) => (left.requestedAt || 0) - (right.requestedAt || 0))
+        setPendingAccessRequests(next)
+      },
+      (error) => {
+        console.warn('Access requests query failed', error)
+        setPendingAccessRequests([])
+      },
+    )
+
+    return () => unsubscribe()
+  }, [shareDialogBoardMeta, user])
   const selectedObject = useMemo(
     () => objects.find((boardObject) => boardObject.id === selectedId) || null,
     [objects, selectedId],
@@ -2249,6 +2361,7 @@ export const BoardPage = () => {
       name: trimmedName,
       description: newBoardDescription.trim(),
       ownerId: user.uid,
+      linkAccessRole: 'restricted',
       sharedWith: [],
       sharedRoles: {},
       createdBy: user.uid,
@@ -2269,9 +2382,16 @@ export const BoardPage = () => {
       }
       const dbInstance = db
 
-      const targetBoardMeta = boards.find((candidate) => candidate.id === targetBoardId)
+      const targetBoardMeta =
+        boards.find((candidate) => candidate.id === targetBoardId) ||
+        (currentBoardMeta?.id === targetBoardId ? currentBoardMeta : null) ||
+        (boardAccessMeta?.id === targetBoardId ? boardAccessMeta : null)
       if (!targetBoardMeta) {
-        setBoardFormError('Board not found.')
+        setBoardFormError('Board metadata is still loading. Try again in a moment.')
+        return
+      }
+      if (!canEditBoardMeta(targetBoardMeta, user.uid)) {
+        setBoardFormError('You need edit access to duplicate this board.')
         return
       }
 
@@ -2289,6 +2409,7 @@ export const BoardPage = () => {
           name: duplicateName,
           description: targetBoardMeta.description || '',
           ownerId: user.uid,
+          linkAccessRole: 'restricted',
           sharedWith: [],
           sharedRoles: {},
           createdBy: user.uid,
@@ -2348,7 +2469,7 @@ export const BoardPage = () => {
         setBoardFormError('Unable to duplicate board right now.')
       }
     },
-    [boards, navigateToBoard, user],
+    [boardAccessMeta, boards, currentBoardMeta, navigateToBoard, user],
   )
   const deleteBoardMeta = useCallback(
     async (targetBoardId: string) => {
@@ -2463,11 +2584,15 @@ export const BoardPage = () => {
     setShareDialogBoardId(null)
     setShareEmail('')
     setShareRole('edit')
+    setShareLinkRole('restricted')
     setShareError(null)
     setShareStatus(null)
   }, [])
   const applyShareResponse = useCallback(
-    (targetBoardId: string, payload: { sharedWith?: unknown; sharedRoles?: unknown; message?: string }) => {
+    (
+      targetBoardId: string,
+      payload: { sharedWith?: unknown; sharedRoles?: unknown; linkAccessRole?: unknown; message?: string },
+    ) => {
       setBoards((prev) =>
         prev.map((boardMeta) => {
           if (boardMeta.id !== targetBoardId) {
@@ -2480,13 +2605,36 @@ export const BoardPage = () => {
             payload.sharedRoles !== undefined ? payload.sharedRoles : boardMeta.sharedRoles,
             nextSharedWith,
           )
+          const nextLinkAccessRole =
+            payload.linkAccessRole !== undefined
+              ? normalizeLinkAccessRole(payload.linkAccessRole)
+              : boardMeta.linkAccessRole
           return {
             ...boardMeta,
+            linkAccessRole: nextLinkAccessRole,
             sharedWith: nextSharedWith,
             sharedRoles: nextSharedRoles,
           }
         }),
       )
+      setBoardAccessMeta((prev) => {
+        if (!prev || prev.id !== targetBoardId) {
+          return prev
+        }
+        const nextSharedWith = Array.isArray(payload.sharedWith) ? normalizeSharedWith(payload.sharedWith) : prev.sharedWith
+        const nextSharedRoles = normalizeSharedRoles(
+          payload.sharedRoles !== undefined ? payload.sharedRoles : prev.sharedRoles,
+          nextSharedWith,
+        )
+        const nextLinkAccessRole =
+          payload.linkAccessRole !== undefined ? normalizeLinkAccessRole(payload.linkAccessRole) : prev.linkAccessRole
+        return {
+          ...prev,
+          linkAccessRole: nextLinkAccessRole,
+          sharedWith: nextSharedWith,
+          sharedRoles: nextSharedRoles,
+        }
+      })
       if (payload.message) {
         setShareStatus(payload.message)
       }
@@ -2528,6 +2676,7 @@ export const BoardPage = () => {
         doc(db, 'boards', targetBoardId),
         {
           ownerId: targetBoardMeta.ownerId,
+          linkAccessRole: targetBoardMeta.linkAccessRole,
           sharedWith: nextSharedWith,
           sharedRoles: normalizedSharedRoles,
           updatedBy: user.uid,
@@ -2545,6 +2694,41 @@ export const BoardPage = () => {
             : `Board shared successfully (${role === 'view' ? 'read-only' : 'can edit'}).`,
       })
       return nextSharedWith
+    },
+    [applyShareResponse, boards, user],
+  )
+  const applyLinkAccessFallback = useCallback(
+    async (targetBoardId: string, linkAccessRole: BoardLinkAccess) => {
+      if (!db || !user) {
+        throw new Error('Unable to update URL sharing right now.')
+      }
+
+      const targetBoardMeta = boards.find((candidate) => candidate.id === targetBoardId)
+      if (!targetBoardMeta) {
+        throw new Error('Board metadata unavailable.')
+      }
+      if (targetBoardMeta.ownerId !== user.uid) {
+        throw new Error('Only the board owner can manage sharing.')
+      }
+
+      await setDoc(
+        doc(db, 'boards', targetBoardId),
+        {
+          ownerId: targetBoardMeta.ownerId,
+          linkAccessRole,
+          updatedBy: user.uid,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true },
+      )
+
+      applyShareResponse(targetBoardId, {
+        linkAccessRole,
+        message:
+          linkAccessRole === 'restricted'
+            ? 'Link sharing disabled.'
+            : `Anyone with link can ${linkAccessRole === 'edit' ? 'edit' : 'view'}.`,
+      })
     },
     [applyShareResponse, boards, user],
   )
@@ -2598,7 +2782,7 @@ export const BoardPage = () => {
           }),
         })
         const payload = (await response.json().catch(() => null)) as
-          | { error?: string; sharedWith?: unknown; sharedRoles?: unknown; message?: string }
+          | { error?: string; sharedWith?: unknown; sharedRoles?: unknown; linkAccessRole?: unknown; message?: string }
           | null
         if (!response.ok) {
           throw new Error(payload?.error || 'Unable to share board right now.')
@@ -2607,15 +2791,27 @@ export const BoardPage = () => {
         applyShareResponse(shareDialogBoardId, {
           sharedWith: payload?.sharedWith,
           sharedRoles: payload?.sharedRoles,
+          linkAccessRole: payload?.linkAccessRole,
           message:
             payload?.message ||
             `Shared with ${trimmedEmail} (${shareRole === 'view' ? 'read-only' : 'can edit'}).`,
         })
-      } catch {
-        const collaboratorId = await resolveCollaboratorIdByEmail(trimmedEmail)
-        await applyShareMutationFallback(shareDialogBoardId, collaboratorId, 'share', shareRole)
-        setShareStatus(`Shared with ${trimmedEmail} (${shareRole === 'view' ? 'read-only' : 'can edit'}).`)
-      }
+        } catch {
+          try {
+            const collaboratorId = await resolveCollaboratorIdByEmail(trimmedEmail)
+            await applyShareMutationFallback(shareDialogBoardId, collaboratorId, 'share', shareRole)
+            setShareStatus(`Shared with ${trimmedEmail} (${shareRole === 'view' ? 'read-only' : 'can edit'}).`)
+          } catch (resolveError) {
+            const resolveMessage = resolveError instanceof Error ? resolveError.message : ''
+            if (/not found/i.test(resolveMessage)) {
+              throw new Error(
+                'Collaborator not found. Verify the email or use the URL access controls explicitly.',
+              )
+            } else {
+              throw resolveError
+            }
+          }
+        }
 
       setShareEmail('')
     } catch (error) {
@@ -2658,7 +2854,7 @@ export const BoardPage = () => {
             }),
           })
           const payload = (await response.json().catch(() => null)) as
-            | { error?: string; sharedWith?: unknown; sharedRoles?: unknown; message?: string }
+            | { error?: string; sharedWith?: unknown; sharedRoles?: unknown; linkAccessRole?: unknown; message?: string }
             | null
           if (!response.ok) {
             throw new Error(payload?.error || 'Unable to remove collaborator right now.')
@@ -2667,6 +2863,7 @@ export const BoardPage = () => {
           applyShareResponse(targetBoardId, {
             sharedWith: payload?.sharedWith,
             sharedRoles: payload?.sharedRoles,
+            linkAccessRole: payload?.linkAccessRole,
             message: payload?.message || 'Collaborator access removed.',
           })
         } catch {
@@ -2682,6 +2879,150 @@ export const BoardPage = () => {
     },
     [applyShareMutationFallback, applyShareResponse, user],
   )
+  const submitLinkSharingUpdate = useCallback(async () => {
+    if (!shareDialogBoardId || !user) {
+      return
+    }
+
+    setIsShareSubmitting(true)
+    setShareError(null)
+    setShareStatus(null)
+    try {
+      try {
+        const idToken = await user.getIdToken()
+        const response = await fetch(shareBoardEndpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({
+            boardId: shareDialogBoardId,
+            action: 'set-link-access',
+            linkRole: shareLinkRole,
+          }),
+        })
+        const payload = (await response.json().catch(() => null)) as
+          | { error?: string; linkAccessRole?: unknown; message?: string }
+          | null
+        if (!response.ok) {
+          throw new Error(payload?.error || 'Unable to update URL sharing right now.')
+        }
+
+        applyShareResponse(shareDialogBoardId, {
+          linkAccessRole: payload?.linkAccessRole ?? shareLinkRole,
+          message:
+            payload?.message ||
+            (shareLinkRole === 'restricted'
+              ? 'Link sharing disabled.'
+              : `Anyone with link can ${shareLinkRole === 'edit' ? 'edit' : 'view'}.`),
+        })
+      } catch {
+        await applyLinkAccessFallback(shareDialogBoardId, shareLinkRole)
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to update URL sharing right now.'
+      setShareError(message)
+    } finally {
+      setIsShareSubmitting(false)
+    }
+  }, [applyLinkAccessFallback, applyShareResponse, shareDialogBoardId, shareLinkRole, user])
+  const approveAccessRequest = useCallback(
+    async (targetBoardId: string, requesterId: string, role: 'edit' | 'view') => {
+      if (!user) {
+        return
+      }
+
+      setIsShareSubmitting(true)
+      setShareError(null)
+      setShareStatus(null)
+      try {
+        try {
+          const idToken = await user.getIdToken()
+          const response = await fetch(shareBoardEndpoint, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${idToken}`,
+            },
+            body: JSON.stringify({
+              boardId: targetBoardId,
+              userId: requesterId,
+              action: 'approve-request',
+              role,
+            }),
+          })
+          const payload = (await response.json().catch(() => null)) as
+            | { error?: string; sharedWith?: unknown; sharedRoles?: unknown; message?: string }
+            | null
+          if (!response.ok) {
+            throw new Error(payload?.error || 'Unable to approve access request right now.')
+          }
+
+          applyShareResponse(targetBoardId, {
+            sharedWith: payload?.sharedWith,
+            sharedRoles: payload?.sharedRoles,
+            message: payload?.message || `Access granted (${role === 'view' ? 'read-only' : 'can edit'}).`,
+          })
+        } catch {
+          await applyShareMutationFallback(targetBoardId, requesterId, 'share', role)
+          if (db) {
+            await setDoc(
+              doc(db, 'boards', targetBoardId, 'accessRequests', requesterId),
+              {
+                status: 'approved',
+                approvedAt: serverTimestamp(),
+                approvedBy: user.uid,
+                updatedAt: serverTimestamp(),
+              },
+              { merge: true },
+            )
+          }
+          setShareStatus(`Access granted (${role === 'view' ? 'read-only' : 'can edit'}).`)
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unable to approve access request right now.'
+        setShareError(message)
+      } finally {
+        setIsShareSubmitting(false)
+      }
+    },
+    [applyShareMutationFallback, applyShareResponse, user],
+  )
+  const requestBoardAccess = useCallback(async () => {
+    if (!user) {
+      return
+    }
+
+    setIsSubmittingAccessRequest(true)
+    setBoardAccessRequestError(null)
+    setBoardAccessRequestStatus(null)
+    try {
+      const idToken = await user.getIdToken()
+      const response = await fetch(shareBoardEndpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          boardId,
+          action: 'request-access',
+          role: 'edit',
+        }),
+      })
+      const payload = (await response.json().catch(() => null)) as { error?: string; message?: string } | null
+      if (!response.ok) {
+        throw new Error(payload?.error || 'Unable to submit access request right now.')
+      }
+      setBoardAccessRequestStatus(payload?.message || 'Access request sent to board owner.')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to submit access request right now.'
+      setBoardAccessRequestError(message)
+    } finally {
+      setIsSubmittingAccessRequest(false)
+    }
+  }, [boardId, user])
   const normalizeBoardObjectForWrite = useCallback(
     (boardObject: BoardObject): BoardObject => {
       const now = Date.now()
@@ -3446,13 +3787,14 @@ export const BoardPage = () => {
   }, [canEditBoard, deleteBoardObjectById, hasLiveBoardAccess, logActivity, pushHistory, selectedObjects, touchBoard, user])
 
   const duplicateObject = useCallback(
-    async (source: BoardObject, options?: { selectAfter?: boolean }) => {
+    async (source: BoardObject, options?: { selectAfter?: boolean; offset?: number }) => {
       if (!db || !user || !hasLiveBoardAccess || !canEditBoard) {
         return null
       }
 
       const id = crypto.randomUUID()
       const now = Date.now()
+      const duplicateOffset = typeof options?.offset === 'number' ? options.offset : OBJECT_DUPLICATE_OFFSET
       const zIndex = objectsRef.current.reduce(
         (maxValue, boardObject) => Math.max(maxValue, boardObject.zIndex),
         0,
@@ -3464,21 +3806,21 @@ export const BoardPage = () => {
               ...source,
               id,
               start: {
-                x: source.start.x + OBJECT_DUPLICATE_OFFSET,
-                y: source.start.y + OBJECT_DUPLICATE_OFFSET,
+                x: source.start.x + duplicateOffset,
+                y: source.start.y + duplicateOffset,
               },
               end: {
-                x: source.end.x + OBJECT_DUPLICATE_OFFSET,
-                y: source.end.y + OBJECT_DUPLICATE_OFFSET,
+                x: source.end.x + duplicateOffset,
+                y: source.end.y + duplicateOffset,
               },
               ...toConnectorBounds(
                 {
-                  x: source.start.x + OBJECT_DUPLICATE_OFFSET,
-                  y: source.start.y + OBJECT_DUPLICATE_OFFSET,
+                  x: source.start.x + duplicateOffset,
+                  y: source.start.y + duplicateOffset,
                 },
                 {
-                  x: source.end.x + OBJECT_DUPLICATE_OFFSET,
-                  y: source.end.y + OBJECT_DUPLICATE_OFFSET,
+                  x: source.end.x + duplicateOffset,
+                  y: source.end.y + duplicateOffset,
                 },
               ),
               fromObjectId: null,
@@ -3499,8 +3841,8 @@ export const BoardPage = () => {
               frameId: null,
               id,
               position: {
-                x: source.position.x + OBJECT_DUPLICATE_OFFSET,
-                y: source.position.y + OBJECT_DUPLICATE_OFFSET,
+                x: source.position.x + duplicateOffset,
+                y: source.position.y + duplicateOffset,
               },
               comments: [],
               votesByUser: {},
@@ -3560,6 +3902,45 @@ export const BoardPage = () => {
       setSelectedIds(duplicatedIds)
     }
   }, [canEditBoard, duplicateObject, selectedObjects])
+
+  const copySelectionToClipboard = useCallback(() => {
+    const sourceIds = selectedIdsRef.current
+    const sourceObjects = sourceIds
+      .map((id) => objectsRef.current.find((boardObject) => boardObject.id === id))
+      .filter((boardObject): boardObject is BoardObject => Boolean(boardObject))
+
+    if (sourceObjects.length === 0) {
+      return false
+    }
+
+    clipboardObjectsRef.current = sourceObjects.map((boardObject) => cloneBoardObject(boardObject))
+    clipboardPasteCountRef.current = 0
+    return true
+  }, [])
+
+  const pasteClipboardObjects = useCallback(async () => {
+    if (!canEditBoard || clipboardObjectsRef.current.length === 0) {
+      return
+    }
+
+    const pasteIteration = clipboardPasteCountRef.current + 1
+    const pasteOffset = OBJECT_DUPLICATE_OFFSET * pasteIteration
+    const duplicatedIds: string[] = []
+    for (const source of clipboardObjectsRef.current) {
+      const duplicated = await duplicateObject(source, { selectAfter: false, offset: pasteOffset })
+      if (duplicated) {
+        duplicatedIds.push(duplicated.id)
+      }
+    }
+
+    if (duplicatedIds.length === 0) {
+      return
+    }
+
+    clipboardPasteCountRef.current = pasteIteration
+    selectedIdsRef.current = duplicatedIds
+    setSelectedIds(duplicatedIds)
+  }, [canEditBoard, duplicateObject])
 
   const applyHistoryEntry = useCallback(
     async (entry: HistoryEntry, direction: 'undo' | 'redo') => {
@@ -3833,7 +4214,13 @@ export const BoardPage = () => {
         label: 'Duplicate current board',
         description: 'Create a private copy of the current board and open it',
         keywords: ['board', 'duplicate', 'copy'],
-        run: () => duplicateBoardMeta(boardId),
+        run: () => {
+          if (!roleCanEditBoard) {
+            setBoardFormError('You need edit access to duplicate this board.')
+            return
+          }
+          void duplicateBoardMeta(boardId)
+        },
       },
       {
         id: 'toggle-view-edit-mode',
@@ -4031,35 +4418,22 @@ export const BoardPage = () => {
         return
       }
 
-      if (
-        isMetaCombo &&
-        keyLower === 'c' &&
-        (selectedIdsRef.current.length > 0 || selectedObjects.length > 0 || selectedObject)
-      ) {
+      if (isMetaCombo && keyLower === 'c' && selectedIdsRef.current.length > 0) {
         if (!canEditBoard) {
           return
         }
 
-        const sourceObject =
-          selectedObjects[0] ||
-          objectsRef.current.find((boardObject) => boardObject.id === selectedIdsRef.current[0]) ||
-          selectedObject
-        if (!sourceObject) {
-          return
-        }
-
         event.preventDefault()
-        clipboardObjectRef.current = sourceObject
-        setClipboardObject(sourceObject)
+        copySelectionToClipboard()
         return
       }
 
-      if (isMetaCombo && keyLower === 'v' && clipboardObjectRef.current) {
+      if (isMetaCombo && keyLower === 'v' && clipboardObjectsRef.current.length > 0) {
         if (!canEditBoard) {
           return
         }
         event.preventDefault()
-        void duplicateObject(clipboardObjectRef.current)
+        void pasteClipboardObjects()
         return
       }
 
@@ -4132,12 +4506,14 @@ export const BoardPage = () => {
     activeCreatePopover,
     canEditBoard,
     closeCommandPalette,
+    copySelectionToClipboard,
     commandPaletteActiveIndex,
     deleteSelected,
     duplicateObject,
     duplicateSelected,
     filteredCommandPaletteCommands,
     openCommandPalette,
+    pasteClipboardObjects,
     redo,
     runCommandPaletteEntry,
     roleCanEditBoard,
@@ -4155,13 +4531,33 @@ export const BoardPage = () => {
     zoomToFit,
   ])
 
+  const getObjectDragPublisher = useCallback(
+    (objectId: string) => {
+      if (!objectDragPublishersRef.current[objectId]) {
+        let lastDragPublishAt = 0
+        objectDragPublishersRef.current[objectId] = (patch: Partial<BoardObject>) => {
+          const now = Date.now()
+          if (now - lastDragPublishAt < DRAG_PUBLISH_INTERVAL_MS) {
+            return
+          }
+
+          lastDragPublishAt = now
+          void patchObject(objectId, patch, { recordHistory: false, logEvent: false })
+        }
+      }
+
+      return objectDragPublishersRef.current[objectId]
+    },
+    [patchObject],
+  )
+
   const getConnectorPublisher = useCallback(
     (objectId: string) => {
       if (!connectorPublishersRef.current[objectId]) {
         let lastDragPublishAt = 0
         connectorPublishersRef.current[objectId] = (patch: ConnectorPatch) => {
           const now = Date.now()
-          if (now - lastDragPublishAt < 100) {
+          if (now - lastDragPublishAt < DRAG_PUBLISH_INTERVAL_MS) {
             return
           }
 
@@ -4669,22 +5065,28 @@ export const BoardPage = () => {
     },
     [resolveObjectPosition, selectedIdSet, selectedIds],
   )
-  const moveObjectDrag = useCallback((boardObject: BoardObject, nextPos: Point) => {
-    const snapshot = multiDragSnapshotRef.current[boardObject.id]
-    if (!snapshot) {
-      liveDragPositionsRef.current[boardObject.id] = nextPos
-      return
-    }
-
-    const dx = nextPos.x - snapshot.anchor.x
-    const dy = nextPos.y - snapshot.anchor.y
-    snapshot.members.forEach((member) => {
-      liveDragPositionsRef.current[member.id] = {
-        x: member.start.x + dx,
-        y: member.start.y + dy,
+  const moveObjectDrag = useCallback(
+    (boardObject: BoardObject, nextPos: Point) => {
+      const snapshot = multiDragSnapshotRef.current[boardObject.id]
+      if (!snapshot) {
+        liveDragPositionsRef.current[boardObject.id] = nextPos
+        getObjectDragPublisher(boardObject.id)({ position: nextPos })
+        return
       }
-    })
-  }, [])
+
+      const dx = nextPos.x - snapshot.anchor.x
+      const dy = nextPos.y - snapshot.anchor.y
+      snapshot.members.forEach((member) => {
+        const memberPosition = {
+          x: member.start.x + dx,
+          y: member.start.y + dy,
+        }
+        liveDragPositionsRef.current[member.id] = memberPosition
+        getObjectDragPublisher(member.id)({ position: memberPosition })
+      })
+    },
+    [getObjectDragPublisher],
+  )
   const endObjectDrag = useCallback(
     async (boardObject: BoardObject, finalPos: Point, actionLabel: string) => {
       const snapshot = multiDragSnapshotRef.current[boardObject.id]
@@ -4857,6 +5259,18 @@ export const BoardPage = () => {
     }
 
     const idToken = await resolveAuthToken()
+    const viewportWorld = {
+      x: -viewport.x / viewport.scale,
+      y: -viewport.y / viewport.scale,
+      width: stageSize.width / viewport.scale,
+      height: stageSize.height / viewport.scale,
+    }
+    const viewportCenter = {
+      x: viewportWorld.x + viewportWorld.width / 2,
+      y: viewportWorld.y + viewportWorld.height / 2,
+    }
+    const currentWorldPointer = stageRef.current ? resolveWorldPointer(stageRef.current) : null
+    const placementAnchor = currentWorldPointer || lastWorldPointerRef.current || viewportCenter
     const response = await fetch(aiCommandEndpoint, {
       method: 'POST',
       headers: {
@@ -4868,6 +5282,12 @@ export const BoardPage = () => {
         userDisplayName: user.displayName || user.email || 'Anonymous',
         command,
         clientCommandId: crypto.randomUUID(),
+        placement: {
+          anchor: placementAnchor,
+          pointer: currentWorldPointer || lastWorldPointerRef.current || null,
+          viewportCenter,
+          viewport: viewportWorld,
+        },
       }),
     })
 
@@ -4891,6 +5311,7 @@ export const BoardPage = () => {
   }
   const renderBoardListItem = (boardMeta: BoardMeta) => {
     const isOwner = boardMeta.ownerId === userId
+    const canDuplicateBoard = userId ? canEditBoardMeta(boardMeta, userId) : false
     const collaboratorsCount = boardMeta.sharedWith.length
     return (
       <article
@@ -4990,6 +5411,7 @@ export const BoardPage = () => {
             title="Duplicate board"
             data-tooltip="Duplicate board"
             aria-label={`Duplicate board ${boardMeta.name}`}
+            disabled={!canDuplicateBoard}
             data-testid={`duplicate-board-${boardMeta.id}`}
           >
             <Copy size={14} />
@@ -5054,9 +5476,30 @@ export const BoardPage = () => {
   if (boardAccessState === 'denied') {
     return (
       <main className="board-shell">
-        <section className="setup-warning" data-testid="board-access-denied">
+        <section className="setup-warning board-access-denied-card" data-testid="board-access-denied">
           <h2>Access denied</h2>
           <p>{boardAccessError || "You don't have permission to access this board."}</p>
+          {boardAccessRequestError ? (
+            <p className="error-text" data-testid="board-access-request-error">
+              {boardAccessRequestError}
+            </p>
+          ) : null}
+          {boardAccessRequestStatus ? (
+            <p className="panel-note" data-testid="board-access-request-status">
+              {boardAccessRequestStatus}
+            </p>
+          ) : null}
+          <button
+            type="button"
+            className="primary-button"
+            onClick={() => {
+              void requestBoardAccess()
+            }}
+            disabled={isSubmittingAccessRequest}
+            data-testid="board-access-request-button"
+          >
+            {isSubmittingAccessRequest ? 'Requesting…' : 'Request access'}
+          </button>
           <button
             type="button"
             className="primary-button"
@@ -5438,6 +5881,55 @@ export const BoardPage = () => {
                           <option value="view">Read only</option>
                         </select>
                       </label>
+                      <label className="board-field">
+                        <span>Anyone with URL</span>
+                        <select
+                          value={shareLinkRole}
+                          onChange={(event) =>
+                            setShareLinkRole(normalizeLinkAccessRole(event.target.value))
+                          }
+                          data-testid="share-link-role-select"
+                        >
+                          <option value="restricted">Restricted</option>
+                          <option value="edit">Can edit</option>
+                          <option value="view">Read only</option>
+                        </select>
+                      </label>
+                      <button
+                        type="button"
+                        className="primary-button"
+                        onClick={() => {
+                          void submitLinkSharingUpdate()
+                        }}
+                        disabled={isShareSubmitting}
+                        data-testid="share-link-role-submit-button"
+                      >
+                        {isShareSubmitting ? 'Updating…' : 'Update URL access'}
+                      </button>
+                      <label className="board-field">
+                        <span>Board URL</span>
+                        <input value={shareDialogBoardUrl} readOnly data-testid="share-link-url-input" />
+                      </label>
+                      <button
+                        type="button"
+                        className="button-icon with-tooltip tooltip-bottom board-list-action-button"
+                        title="Copy board URL"
+                        data-tooltip="Copy URL"
+                        aria-label="Copy board URL"
+                        data-testid="share-link-copy-button"
+                        onClick={() => {
+                          void navigator.clipboard
+                            .writeText(shareDialogBoardUrl)
+                            .then(() => {
+                              setShareStatus('Board URL copied.')
+                            })
+                            .catch(() => {
+                              setShareError('Unable to copy board URL.')
+                            })
+                        }}
+                      >
+                        <Copy size={14} />
+                      </button>
                       {shareError ? (
                         <p className="error-text" data-testid="share-error">
                           {shareError}
@@ -5488,6 +5980,45 @@ export const BoardPage = () => {
                               data-testid={`revoke-collaborator-${collaboratorId}`}
                             >
                               <Trash2 size={14} />
+                            </button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                    <div className="share-collaborators">
+                      <h5>Access requests</h5>
+                      {pendingAccessRequests.length === 0 ? (
+                        <p className="panel-note">No pending requests.</p>
+                      ) : (
+                        pendingAccessRequests.map((request) => (
+                          <div
+                            key={request.userId}
+                            className="share-collaborator-row"
+                            data-testid={`share-access-request-${request.userId}`}
+                          >
+                            <span className="share-collaborator-id">
+                              {request.email || request.userId}
+                            </span>
+                            <span className="panel-note">
+                              Requested {request.role === 'view' ? 'read only' : 'edit'} access
+                            </span>
+                            <button
+                              type="button"
+                              className="button-icon with-tooltip tooltip-bottom board-list-action-button"
+                              disabled={isShareSubmitting}
+                              onClick={() =>
+                                void approveAccessRequest(
+                                  shareDialogBoardMeta.id,
+                                  request.userId,
+                                  request.role,
+                                )
+                              }
+                              title="Approve access request"
+                              data-tooltip="Approve"
+                              aria-label={`Approve access request for ${request.email || request.userId}`}
+                              data-testid={`approve-access-request-${request.userId}`}
+                            >
+                              <Plus size={14} />
                             </button>
                           </div>
                         ))
@@ -6083,7 +6614,14 @@ export const BoardPage = () => {
             </span>
             {remotePresenceEntries.map((cursor) => (
               <span key={cursor.userId} className="presence-pill">
-                <span className="presence-dot" />
+                <span
+                  className={`presence-dot ${
+                    typeof cursor.lastSeen === 'number' &&
+                    nowMsValue - cursor.lastSeen > PRESENCE_AWAY_THRESHOLD_MS
+                      ? 'away'
+                      : ''
+                  }`}
+                />
                 {cursor.displayName}
               </span>
             ))}
@@ -6164,6 +6702,8 @@ export const BoardPage = () => {
                 return
               }
 
+              lastWorldPointerRef.current = worldPoint
+
               if (selectionBox?.active) {
                 updateSelectionBox(worldPoint)
                 return
@@ -6184,8 +6724,12 @@ export const BoardPage = () => {
                 return
               }
 
+              const worldPoint = resolveWorldPointer(stage)
+              if (worldPoint) {
+                lastWorldPointerRef.current = worldPoint
+              }
+
               if (selectionMode === 'area' || event.evt.shiftKey) {
-                const worldPoint = resolveWorldPointer(stage)
                 if (!worldPoint) {
                   return
                 }
@@ -6993,15 +7537,18 @@ export const BoardPage = () => {
                         }
                         const nextFramePos = { x: event.target.x(), y: event.target.y() }
                         liveDragPositionsRef.current[boardObject.id] = nextFramePos
+                        getObjectDragPublisher(boardObject.id)({ position: nextFramePos })
                         const snapshot = frameDragSnapshotRef.current[boardObject.id]
                         if (snapshot) {
                           const dx = nextFramePos.x - snapshot.frameStart.x
                           const dy = nextFramePos.y - snapshot.frameStart.y
                           snapshot.members.forEach((member) => {
-                            liveDragPositionsRef.current[member.id] = {
+                            const memberPosition = {
                               x: member.start.x + dx,
                               y: member.start.y + dy,
                             }
+                            liveDragPositionsRef.current[member.id] = memberPosition
+                            getObjectDragPublisher(member.id)({ position: memberPosition })
                           })
                         }
                       }}
@@ -7898,7 +8445,7 @@ export const BoardPage = () => {
               <li>`Shift + Drag` (or Area tool): marquee multi-select</li>
               <li>`Cmd/Ctrl + A`: select all objects</li>
               <li>`Cmd/Ctrl + D`: duplicate selected object</li>
-              <li>`Cmd/Ctrl + C`, `Cmd/Ctrl + V`: copy/paste selected object</li>
+              <li>`Cmd/Ctrl + C`, `Cmd/Ctrl + V`: copy/paste selected object(s)</li>
               <li>`Cmd/Ctrl + Z`: undo</li>
               <li>`Cmd/Ctrl + Shift + Z` or `Cmd/Ctrl + Y`: redo</li>
               <li>`Shift + E`: toggle view/edit mode</li>

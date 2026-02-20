@@ -83,8 +83,16 @@ const normalizeCommand = (value) =>
     .replace(/[‘’]/g, "'")
     .replace(/\s+/g, ' ')
     .trim()
+const normalizeStickyVocabulary = (value) =>
+  String(value || '')
+    .replace(/\bsticikies\b/gi, 'sticky notes')
+    .replace(/\bstickies\b/gi, 'sticky notes')
+    .replace(/\bstikies\b/gi, 'sticky notes')
+    .replace(/\bstickys\b/gi, 'sticky notes')
+    .replace(/\bstiky\b/gi, 'sticky')
+    .replace(/\bstikcy\b/gi, 'sticky')
 const normalizeCommandForPlan = (value) =>
-  normalizeCommand(value)
+  normalizeStickyVocabulary(normalizeCommand(value))
     .replace(/\borganise\b/gi, 'organize')
     .replace(/\bcolour\b/gi, 'color')
 const isOrganizeByColorCommand = (lowerCommand) =>
@@ -200,6 +208,61 @@ const parsePosition = (positionString, defaultX = 120, defaultY = 120) => {
   return { x, y }
 }
 
+const toFinitePoint = (candidate) => {
+  if (!candidate || typeof candidate !== 'object') {
+    return null
+  }
+
+  const x = parseNumber(candidate.x, Number.NaN)
+  const y = parseNumber(candidate.y, Number.NaN)
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return null
+  }
+
+  return { x, y }
+}
+
+const toFiniteViewport = (candidate) => {
+  if (!candidate || typeof candidate !== 'object') {
+    return null
+  }
+
+  const x = parseNumber(candidate.x, Number.NaN)
+  const y = parseNumber(candidate.y, Number.NaN)
+  const width = parseNumber(candidate.width, Number.NaN)
+  const height = parseNumber(candidate.height, Number.NaN)
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height)) {
+    return null
+  }
+  if (width <= 0 || height <= 0) {
+    return null
+  }
+
+  return { x, y, width, height }
+}
+
+const normalizeAiPlacementHint = (candidate) => {
+  if (!candidate || typeof candidate !== 'object') {
+    return null
+  }
+
+  const pointer = toFinitePoint(candidate.pointer)
+  const viewportCenter = toFinitePoint(candidate.viewportCenter)
+  const anchor = toFinitePoint(candidate.anchor) || pointer || viewportCenter
+  const viewport = toFiniteViewport(candidate.viewport)
+
+  if (!anchor && !pointer && !viewportCenter && !viewport) {
+    return null
+  }
+
+  return {
+    anchor,
+    pointer,
+    viewportCenter,
+    viewport,
+  }
+}
+
 const stripWrappingQuotes = (value) => {
   const trimmed = String(value || '').trim()
   if (!trimmed) return ''
@@ -255,7 +318,7 @@ const inferStickyShapeType = (command) => {
 }
 
 const parseRequestedStickyCount = (command) => {
-  const lower = normalizeCommand(command).toLowerCase()
+  const lower = normalizeStickyVocabulary(normalizeCommand(command)).toLowerCase()
   const countMatch = lower.match(
     /\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:sticky(?:\s*note)?|sticker|note)s?\b/,
   )
@@ -287,8 +350,54 @@ const parseExplicitStickyTexts = (command) => {
   return []
 }
 
+const getStickyBatchLayoutPositions = ({ count, anchor, shapeType = 'rectangle' }) => {
+  const safeCount = Math.max(1, Math.min(10, parseNumber(count, 1)))
+  const normalizedShapeType = normalizeShapeType(shapeType, 'rectangle')
+  const size = STICKY_SHAPE_SIZES[normalizedShapeType] || STICKY_SHAPE_SIZES.rectangle
+  const safeAnchor = toFinitePoint(anchor) || { x: 220, y: 180 }
+  const columns = Math.min(5, Math.max(2, Math.ceil(Math.sqrt(safeCount))))
+  const rows = Math.ceil(safeCount / columns)
+  const rowCounts = Array.from({ length: rows }, (_, rowIndex) => Math.min(columns, Math.max(1, safeCount - rowIndex * columns)))
+  const weightedRowCenter = rowCounts.reduce((sum, rowCount, rowIndex) => sum + rowIndex * rowCount, 0) / safeCount
+  const gapX = Math.max(24, Math.round(size.width * 0.2))
+  const gapY = Math.max(20, Math.round(size.height * 0.28))
+
+  return Array.from({ length: safeCount }, (_, index) => {
+    const col = index % columns
+    const row = Math.floor(index / columns)
+    const remaining = safeCount - row * columns
+    const rowItemCount = Math.min(columns, Math.max(1, remaining))
+    const colOffset = col - (rowItemCount - 1) / 2
+    const rowOffset = row - weightedRowCenter
+    const centerX = safeAnchor.x + colOffset * (size.width + gapX)
+    const centerY = safeAnchor.y + rowOffset * (size.height + gapY)
+    return {
+      x: Math.round(centerX - size.width / 2),
+      y: Math.round(centerY - size.height / 2),
+    }
+  })
+}
+
+const buildStickyTextsFromTemplate = (template, count) => {
+  const safeCount = Math.max(1, Math.min(10, parseNumber(count, 1)))
+  const normalizedTemplate = sanitizeText(template || 'New sticky note') || 'New sticky note'
+  if (safeCount === 1) {
+    return [normalizedTemplate]
+  }
+
+  const reasonsMatch = normalizedTemplate.match(/^(?:(?:that\s+)?list\s+)?(?:the\s+)?reasons?\s+why\s+(.+)$/i)
+  if (reasonsMatch) {
+    const subject = sanitizeText(reasonsMatch[1]) || 'this is awesome'
+    return Array.from({ length: safeCount }, (_, index) => `Reason ${index + 1}: ${subject}`)
+  }
+
+  return Array.from({ length: safeCount }, (_, index) =>
+    normalizedTemplate === 'New sticky note' ? `Note ${index + 1}` : `${normalizedTemplate} ${index + 1}`,
+  )
+}
+
 const parseStickyCommand = (command) => {
-  const normalized = normalizeCommand(command)
+  const normalized = normalizeStickyVocabulary(normalizeCommand(command))
   if (!/^(?:add|create)\b/i.test(normalized)) {
     return null
   }
@@ -380,12 +489,7 @@ const parseStickyCommand = (command) => {
     shapeType,
     count,
     position,
-    texts:
-      count === 1
-        ? [fallbackText]
-        : Array.from({ length: count }, (_, index) =>
-            fallbackText === 'New sticky note' ? `Note ${index + 1}` : `${fallbackText} ${index + 1}`,
-          ),
+    texts: buildStickyTextsFromTemplate(fallbackText, count),
   }
 }
 
@@ -418,6 +522,12 @@ const normalizeSharedRoles = (candidate, sharedWith) => {
   })
   return normalized
 }
+const normalizeLinkAccessRole = (candidate) => {
+  if (candidate === 'edit' || candidate === 'view') {
+    return candidate
+  }
+  return 'restricted'
+}
 
 const normalizeBoardMeta = (boardId, data) => {
   const ownerIdCandidate =
@@ -428,6 +538,7 @@ const normalizeBoardMeta = (boardId, data) => {
     typeof data?.createdBy === 'string' && data.createdBy.trim() ? data.createdBy.trim() : ''
   const ownerId = ownerIdCandidate || createdByCandidate
   const createdBy = createdByCandidate || ownerId
+  const linkAccessRole = normalizeLinkAccessRole(data?.linkAccessRole)
   const sharedWith = normalizeSharedWith(data?.sharedWith, ownerId)
   const sharedRoles = normalizeSharedRoles(data?.sharedRoles, sharedWith)
 
@@ -437,22 +548,28 @@ const normalizeBoardMeta = (boardId, data) => {
     description: typeof data?.description === 'string' ? data.description : '',
     createdBy,
     ownerId,
+    linkAccessRole,
     sharedWith,
     sharedRoles,
   }
 }
 
 const canUserAccessBoard = (boardMeta, userId) =>
-  Boolean(boardMeta?.ownerId === userId || boardMeta?.sharedWith?.includes(userId))
+  Boolean(
+    boardMeta?.ownerId === userId ||
+      boardMeta?.sharedWith?.includes(userId) ||
+      boardMeta?.linkAccessRole === 'view' ||
+      boardMeta?.linkAccessRole === 'edit',
+  )
 
 const canUserEditBoard = (boardMeta, userId) => {
   if (boardMeta?.ownerId === userId) {
     return true
   }
-  if (!boardMeta?.sharedWith?.includes(userId)) {
-    return false
+  if (boardMeta?.sharedWith?.includes(userId)) {
+    return boardMeta?.sharedRoles?.[userId] !== 'view'
   }
-  return boardMeta?.sharedRoles?.[userId] !== 'view'
+  return boardMeta?.linkAccessRole === 'edit'
 }
 
 const ensureBoardAccess = async ({ boardId, userId, createIfMissing = false }) => {
@@ -469,6 +586,7 @@ const ensureBoardAccess = async ({ boardId, userId, createIfMissing = false }) =
       name: `Board ${boardId.slice(0, 8)}`,
       description: 'Untitled board',
       ownerId: userId,
+      linkAccessRole: 'restricted',
       sharedWith: [],
       sharedRoles: {},
       createdBy: userId,
@@ -485,6 +603,7 @@ const ensureBoardAccess = async ({ boardId, userId, createIfMissing = false }) =
         description: 'Untitled board',
         createdBy: userId,
         ownerId: userId,
+        linkAccessRole: 'restricted',
         sharedWith: [],
         sharedRoles: {},
       },
@@ -616,6 +735,22 @@ const getObjectBounds = (object) => {
   }
 }
 
+const getAutoStickyPosition = (state, size = STICKY_SHAPE_SIZES.rectangle) => {
+  const stickyCount = state.filter((candidate) => candidate.type === 'stickyNote').length
+  const width = Math.max(1, parseNumber(size?.width, 180))
+  const height = Math.max(1, parseNumber(size?.height, 110))
+  const columns = 5
+  const gutterX = 28
+  const gutterY = 26
+  const startX = 120
+  const startY = 120
+
+  return {
+    x: startX + (stickyCount % columns) * (width + gutterX),
+    y: startY + Math.floor(stickyCount / columns) * (height + gutterY),
+  }
+}
+
 const writeObject = async ({ boardId, objectId, payload, merge = false }) => {
   const ref = getObjectsRef(boardId).doc(objectId)
   if (merge) {
@@ -631,10 +766,16 @@ const createStickyNote = async (ctx, args) => {
   const zIndex = getNextZIndex(ctx.state)
   const shapeType = normalizeShapeType(args.shapeType || args.type)
   const defaultSize = STICKY_SHAPE_SIZES[shapeType]
-  // Use position string if provided, otherwise use numeric x/y with defaults
-  const pos = args.position
-    ? parsePosition(args.position, 80, 80)
-    : { x: parseNumber(args.x, 80), y: parseNumber(args.y, 80) }
+  const hasExplicitX = Number.isFinite(Number(args.x))
+  const hasExplicitY = Number.isFinite(Number(args.y))
+  let pos
+  if (args.position) {
+    pos = parsePosition(args.position, 80, 80)
+  } else if (hasExplicitX || hasExplicitY) {
+    pos = { x: parseNumber(args.x, 80), y: parseNumber(args.y, 80) }
+  } else {
+    pos = getAutoStickyPosition(ctx.state, defaultSize)
+  }
   const sticky = {
     id,
     boardId: ctx.boardId,
@@ -1270,6 +1411,22 @@ const runCommandPlan = async (ctx, command) => {
   if (stickyCommand) {
     const stickyCount = Math.min(10, Math.max(1, stickyCommand.count || stickyCommand.texts.length || 1))
     const basePosition = stickyCommand.position ? parsePosition(stickyCommand.position, 120, 120) : null
+    const commandPlacementAnchor =
+      ctx.commandPlacement?.anchor || ctx.commandPlacement?.pointer || ctx.commandPlacement?.viewportCenter || null
+    const layoutPositions =
+      stickyCount > 1
+        ? basePosition
+          ? Array.from({ length: stickyCount }, (_, index) => ({
+              x: basePosition.x + (index % 4) * 220,
+              y: basePosition.y + Math.floor(index / 4) * 150,
+            }))
+          : getStickyBatchLayoutPositions({
+              count: stickyCount,
+              anchor: commandPlacementAnchor,
+              shapeType: stickyCommand.shapeType || 'rectangle',
+            })
+        : []
+
     for (let index = 0; index < stickyCount; index += 1) {
       const stickyArgs = {
         text: stickyCommand.texts[index] || `Note ${index + 1}`,
@@ -1279,14 +1436,26 @@ const runCommandPlan = async (ctx, command) => {
       }
 
       if (stickyCount > 1) {
+        const targetPosition = layoutPositions[index] || layoutPositions[layoutPositions.length - 1] || { x: 120, y: 120 }
         await createStickyNote(ctx, {
           ...stickyArgs,
           position: undefined,
-          x: (basePosition?.x ?? 120) + (index % 4) * 220,
-          y: (basePosition?.y ?? 120) + Math.floor(index / 4) * 150,
+          x: targetPosition.x,
+          y: targetPosition.y,
         })
       } else {
-        await createStickyNote(ctx, stickyArgs)
+        if (!stickyCommand.position && commandPlacementAnchor) {
+          const stickyShapeType = normalizeShapeType(stickyCommand.shapeType || 'rectangle', 'rectangle')
+          const stickySize = STICKY_SHAPE_SIZES[stickyShapeType] || STICKY_SHAPE_SIZES.rectangle
+          await createStickyNote(ctx, {
+            ...stickyArgs,
+            position: undefined,
+            x: Math.round(commandPlacementAnchor.x - stickySize.width / 2),
+            y: Math.round(commandPlacementAnchor.y - stickySize.height / 2),
+          })
+        } else {
+          await createStickyNote(ctx, stickyArgs)
+        }
       }
     }
     return
@@ -1772,6 +1941,46 @@ exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) =>
       const action = String(req.body?.action || 'share').trim().toLowerCase()
       const roleInput = String(req.body?.role || 'edit').trim().toLowerCase()
       const requestedRole = roleInput === 'view' ? 'view' : roleInput === 'edit' ? 'edit' : null
+      const requestedLinkRole = normalizeLinkAccessRole(req.body?.linkRole)
+      const boardRef = getBoardRef(boardId)
+
+      if (action === 'request-access' || action === 'request_access') {
+        const boardSnapshot = await boardRef.get()
+        if (!boardSnapshot.exists) {
+          res.status(404).json({ error: 'Board not found' })
+          return
+        }
+
+        const boardMeta = normalizeBoardMeta(boardId, boardSnapshot.data())
+        if (!boardMeta.ownerId) {
+          res.status(404).json({ error: 'Board not found' })
+          return
+        }
+        if (canUserAccessBoard(boardMeta, userId)) {
+          res.status(200).json({ status: 'success', boardId, message: 'You already have access to this board.' })
+          return
+        }
+
+        await boardRef.collection('accessRequests').doc(userId).set(
+          {
+            userId,
+            email: String(decodedToken.email || '').trim().toLowerCase(),
+            role: requestedRole || 'edit',
+            status: 'pending',
+            requestedAt: nowMs(),
+            updatedAt: nowMs(),
+          },
+          { merge: true },
+        )
+
+        res.status(200).json({
+          status: 'success',
+          boardId,
+          message: 'Access request sent to board owner.',
+        })
+        return
+      }
+
       const accessResult = await ensureBoardAccess({ boardId, userId, createIfMissing: false })
       if (!accessResult.ok) {
         res.status(accessResult.status || 403).json({ error: accessResult.reason || 'Access denied' })
@@ -1781,6 +1990,28 @@ exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) =>
       const boardMeta = accessResult.boardMeta
       if (!boardMeta || boardMeta.ownerId !== userId) {
         res.status(403).json({ error: 'Only board owner can manage sharing' })
+        return
+      }
+      if (action === 'set-link-access' || action === 'set_link_access' || action === 'link-access') {
+        await (accessResult.boardRef || boardRef).set(
+          {
+            ownerId: boardMeta.ownerId,
+            linkAccessRole: requestedLinkRole,
+            updatedBy: userId,
+            updatedAt: nowMs(),
+          },
+          { merge: true },
+        )
+
+        res.status(200).json({
+          status: 'success',
+          boardId,
+          linkAccessRole: requestedLinkRole,
+          message:
+            requestedLinkRole === 'restricted'
+              ? 'Link sharing disabled.'
+              : `Anyone with link can ${requestedLinkRole}.`,
+        })
         return
       }
 
@@ -1799,41 +2030,88 @@ exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) =>
         res.status(400).json({ error: 'Invalid collaborator' })
         return
       }
-      if ((action === 'share' || action === 'add') && !requestedRole) {
+      if ((action === 'share' || action === 'add' || action === 'approve-request') && !requestedRole) {
         res.status(400).json({ error: 'Invalid role. Use "edit" or "view".' })
         return
       }
 
-      const sharedWithSet = new Set(boardMeta.sharedWith)
-      const nextSharedRoles = { ...(boardMeta.sharedRoles || {}) }
-      if (action === 'revoke' || action === 'remove') {
-        sharedWithSet.delete(collaboratorId)
-        delete nextSharedRoles[collaboratorId]
-      } else {
-        sharedWithSet.add(collaboratorId)
-        nextSharedRoles[collaboratorId] = requestedRole || 'edit'
+      const boardRefForShare = accessResult.boardRef || boardRef
+      let nextSharedWith = []
+      let normalizedSharedRoles = {}
+      let nextLinkAccessRole = boardMeta.linkAccessRole || 'restricted'
+
+      try {
+        await db.runTransaction(async (tx) => {
+          const latestBoardSnapshot = await tx.get(boardRefForShare)
+          if (!latestBoardSnapshot.exists) {
+            const missingBoardError = new Error('Board not found')
+            missingBoardError.httpStatus = 404
+            throw missingBoardError
+          }
+
+          const latestBoardMeta = normalizeBoardMeta(boardId, latestBoardSnapshot.data())
+          if (!latestBoardMeta.ownerId || latestBoardMeta.ownerId !== userId) {
+            const ownerError = new Error('Only board owner can manage sharing')
+            ownerError.httpStatus = 403
+            throw ownerError
+          }
+
+          const sharedWithSet = new Set(latestBoardMeta.sharedWith)
+          const nextSharedRoles = { ...(latestBoardMeta.sharedRoles || {}) }
+          if (action === 'revoke' || action === 'remove') {
+            sharedWithSet.delete(collaboratorId)
+            delete nextSharedRoles[collaboratorId]
+          } else {
+            sharedWithSet.add(collaboratorId)
+            nextSharedRoles[collaboratorId] = requestedRole || 'edit'
+          }
+
+          nextSharedWith = [...sharedWithSet]
+          normalizedSharedRoles = normalizeSharedRoles(nextSharedRoles, nextSharedWith)
+          nextLinkAccessRole = latestBoardMeta.linkAccessRole || 'restricted'
+
+          tx.set(
+            boardRefForShare,
+            {
+              ownerId: latestBoardMeta.ownerId,
+              linkAccessRole: nextLinkAccessRole,
+              sharedWith: nextSharedWith,
+              sharedRoles: normalizedSharedRoles,
+              updatedBy: userId,
+              updatedAt: nowMs(),
+            },
+            { merge: true },
+          )
+        })
+      } catch (shareError) {
+        const status = Number(shareError?.httpStatus || 500)
+        const message = shareError instanceof Error ? shareError.message : 'Failed to update board sharing'
+        res.status(status).json({ error: message })
+        return
       }
 
-      const nextSharedWith = [...sharedWithSet]
-      const normalizedSharedRoles = normalizeSharedRoles(nextSharedRoles, nextSharedWith)
-      await (accessResult.boardRef || getBoardRef(boardId)).set(
-        {
-          ownerId: boardMeta.ownerId,
-          sharedWith: nextSharedWith,
-          sharedRoles: normalizedSharedRoles,
-          updatedBy: userId,
-          updatedAt: nowMs(),
-        },
-        { merge: true },
-      )
+      if (action === 'approve-request') {
+        await boardRef.collection('accessRequests').doc(collaboratorId).set(
+          {
+            status: 'approved',
+            approvedBy: userId,
+            approvedAt: nowMs(),
+            updatedAt: nowMs(),
+          },
+          { merge: true },
+        )
+      }
 
       res.status(200).json({
         status: 'success',
         boardId,
+        linkAccessRole: nextLinkAccessRole,
         sharedWith: nextSharedWith,
         sharedRoles: normalizedSharedRoles,
         message:
-          action === 'revoke' || action === 'remove'
+          action === 'approve-request'
+            ? `Access request approved (${requestedRole || 'edit'} access).`
+            : action === 'revoke' || action === 'remove'
             ? 'Collaborator removed from board'
             : `Board shared successfully (${requestedRole || 'edit'} access). No invitation email is sent yet.`,
       })
@@ -1842,6 +2120,7 @@ exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) =>
 
     const userDisplayName = String(req.body?.userDisplayName || decodedToken.name || '').trim()
     const command = sanitizeText(req.body?.command)
+    const commandPlacement = normalizeAiPlacementHint(req.body?.placement)
     commandForError = command
     const clientCommandId = String(req.body?.clientCommandId || crypto.randomUUID()).trim()
     boardIdForError = boardId
@@ -1931,6 +2210,7 @@ exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) =>
       userId,
       state,
       executedTools: [],
+      commandPlacement,
     }
 
     const planResult = await runCommandPlan(context, command)
@@ -1991,6 +2271,9 @@ exports.__test = {
   normalizeCommandForPlan,
   isOrganizeByColorCommand,
   parseStickyCommand,
+  getAutoStickyPosition,
+  normalizeAiPlacementHint,
+  getStickyBatchLayoutPositions,
   parsePosition,
   sanitizeAiAssistantResponse,
   normalizeBoardMeta,
