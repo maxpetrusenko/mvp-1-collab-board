@@ -408,7 +408,9 @@ const toFiniteViewport = (candidate) => {
 }
 
 const normalizeAiPlacementHint = (candidate) => {
+  console.log('[PLACEMENT] Raw input:', JSON.stringify(candidate))
   if (!candidate || typeof candidate !== 'object') {
+    console.log('[PLACEMENT] REJECTED: Not an object')
     return null
   }
 
@@ -417,42 +419,58 @@ const normalizeAiPlacementHint = (candidate) => {
   const anchor = toFinitePoint(candidate.anchor) || pointer || viewportCenter
   const viewport = toFiniteViewport(candidate.viewport)
 
+  console.log('[PLACEMENT] Parsed values:', { pointer, viewportCenter, anchor, viewport })
+
   if (!anchor && !pointer && !viewportCenter && !viewport) {
+    console.log('[PLACEMENT] REJECTED: No valid placement data')
     return null
   }
 
-  return {
+  const result = {
     anchor,
     pointer,
     viewportCenter,
     viewport,
   }
+  console.log('[PLACEMENT] Final result:', result)
+  return result
 }
 
 const resolvePlacementAnchor = (commandPlacement) => {
+  console.log('[ANCHOR] Input placement:', JSON.stringify(commandPlacement))
   if (!commandPlacement || typeof commandPlacement !== 'object') {
+    console.log('[ANCHOR] REJECTED: Invalid placement')
     return null
   }
-  return (
+  const result = (
     toFinitePoint(commandPlacement.anchor) ||
     toFinitePoint(commandPlacement.pointer) ||
     toFinitePoint(commandPlacement.viewportCenter)
   )
+  console.log('[ANCHOR] Resolved anchor:', result)
+  return result
 }
 
 const resolveLlmCreateArgsWithPlacement = (toolName, args, commandPlacement, batchContext = null) => {
+  console.log('[PLACEMENT_RESOLVE] toolName:', toolName, 'batchContext:', batchContext)
   if (!args || typeof args !== 'object') {
+    console.log('[PLACEMENT_RESOLVE] REJECTED: Invalid args')
     return args
   }
 
   const hasExplicitCoordinates = Number.isFinite(Number(args.x)) && Number.isFinite(Number(args.y))
   const hasNamedPosition = typeof args.position === 'string' && args.position.trim().length > 0
+  console.log('[PLACEMENT_RESOLVE] hasExplicitCoordinates:', hasExplicitCoordinates, 'hasNamedPosition:', hasNamedPosition)
+  console.log('[PLACEMENT_RESOLVE] args.x:', args.x, 'args.y:', args.y, 'args.position:', args.position)
   if (hasExplicitCoordinates || hasNamedPosition) {
+    console.log('[PLACEMENT_RESOLVE] Using explicit coordinates')
     return args
   }
 
   const anchor = resolvePlacementAnchor(commandPlacement)
+  console.log('[PLACEMENT_RESOLVE] anchor from commandPlacement:', anchor)
   if (!anchor) {
+    console.log('[PLACEMENT_RESOLVE] No anchor, returning args as-is')
     return args
   }
 
@@ -469,10 +487,12 @@ const resolveLlmCreateArgsWithPlacement = (toolName, args, commandPlacement, bat
       const target = layout[batchContext.index] || layout[layout.length - 1] || { x: 120, y: 120 }
       resolved.x = target.x
       resolved.y = target.y
+      console.log('[PLACEMENT_RESOLVE] Batch layout for index', batchContext.index, ':', target)
       return resolved
     }
     resolved.x = Math.round(anchor.x - stickySize.width / 2)
     resolved.y = Math.round(anchor.y - stickySize.height / 2)
+    console.log('[PLACEMENT_RESOLVE] Single sticky centered at anchor:', { x: resolved.x, y: resolved.y })
     return resolved
   }
 
@@ -1399,6 +1419,50 @@ const getObjectCenter = (object) => ({
   x: parseNumber(object?.position?.x, 0) + parseNumber(object?.size?.width, 0) / 2,
   y: parseNumber(object?.position?.y, 0) + parseNumber(object?.size?.height, 0) / 2,
 })
+const normalizeAnchorKind = (rawAnchor) => {
+  const normalized = String(rawAnchor || '').toLowerCase().trim()
+  if (normalized === 'top') return 'top'
+  if (normalized === 'right') return 'right'
+  if (normalized === 'bottom') return 'bottom'
+  if (normalized === 'left') return 'left'
+  if (normalized === 'center') return 'center'
+  return null
+}
+const getAnchorPointForObject = (object, anchor) => {
+  if (!object || object.type === 'connector') {
+    return null
+  }
+
+  const bounds = getObjectBounds(object)
+  const center = getObjectCenter(object)
+  const normalizedAnchor = normalizeAnchorKind(anchor) || 'center'
+
+  if (normalizedAnchor === 'top') {
+    return { x: center.x, y: bounds.y }
+  }
+  if (normalizedAnchor === 'right') {
+    return { x: bounds.x + bounds.width, y: center.y }
+  }
+  if (normalizedAnchor === 'bottom') {
+    return { x: center.x, y: bounds.y + bounds.height }
+  }
+  if (normalizedAnchor === 'left') {
+    return { x: bounds.x, y: center.y }
+  }
+  return center
+}
+const inferConnectorAnchorsBetweenObjects = (fromObject, toObject) => {
+  const fromCenter = getObjectCenter(fromObject)
+  const toCenter = getObjectCenter(toObject)
+  const deltaX = toCenter.x - fromCenter.x
+  const deltaY = toCenter.y - fromCenter.y
+
+  if (Math.abs(deltaX) >= Math.abs(deltaY)) {
+    return deltaX >= 0 ? { fromAnchor: 'right', toAnchor: 'left' } : { fromAnchor: 'left', toAnchor: 'right' }
+  }
+
+  return deltaY >= 0 ? { fromAnchor: 'bottom', toAnchor: 'top' } : { fromAnchor: 'top', toAnchor: 'bottom' }
+}
 const getObjectBounds = (object) => {
   if (object?.type === 'connector') {
     const startX = parseNumber(object?.start?.x, 0)
@@ -1596,14 +1660,20 @@ const createConnector = async (ctx, args) => {
   const style = normalizeConnectorStyle(args.style)
   const fromObject = ctx.state.find((candidate) => candidate.id === args.fromId)
   const toObject = ctx.state.find((candidate) => candidate.id === args.toId)
+  const explicitFromAnchor = normalizeAnchorKind(args.fromAnchor)
+  const explicitToAnchor = normalizeAnchorKind(args.toAnchor)
+  const inferredAnchors =
+    fromObject && toObject ? inferConnectorAnchorsBetweenObjects(fromObject, toObject) : null
+  const fromAnchor = fromObject ? explicitFromAnchor || inferredAnchors?.fromAnchor || 'center' : null
+  const toAnchor = toObject ? explicitToAnchor || inferredAnchors?.toAnchor || 'center' : null
   const start = fromObject
-    ? getObjectCenter(fromObject)
+    ? getAnchorPointForObject(fromObject, fromAnchor) || getObjectCenter(fromObject)
     : {
         x: parseNumber(args.startX, parseNumber(args.x1, 180)),
         y: parseNumber(args.startY, parseNumber(args.y1, 180)),
       }
   const end = toObject
-    ? getObjectCenter(toObject)
+    ? getAnchorPointForObject(toObject, toAnchor) || getObjectCenter(toObject)
     : {
         x: parseNumber(args.endX, parseNumber(args.x2, start.x + 180)),
         y: parseNumber(args.endY, parseNumber(args.y2, start.y + 40)),
@@ -1614,14 +1684,14 @@ const createConnector = async (ctx, args) => {
     id,
     boardId: ctx.boardId,
     type: 'connector',
-    color: toColor(args.color, '#0f172a'),
+    color: toColor(args.color, '#1d4ed8'),
     style,
     start,
     end,
     fromObjectId: fromObject?.id || null,
     toObjectId: toObject?.id || null,
-    fromAnchor: null,
-    toAnchor: null,
+    fromAnchor,
+    toAnchor,
     ...bounds,
     zIndex,
     createdBy: ctx.userId,
@@ -2265,8 +2335,10 @@ const executeLlmToolCall = async (ctx, toolName, rawArgs, options = {}) => {
       await createConnector(ctx, {
         fromId: args.fromId,
         toId: args.toId,
-        color: toColor(args.color, '#0f172a'),
+        color: toColor(args.color, '#1d4ed8'),
         style: args.style,
+        fromAnchor: args.fromAnchor,
+        toAnchor: args.toAnchor,
       })
       return
     case 'moveObject':
@@ -2469,7 +2541,7 @@ const createWorkflowFlowchart = async (ctx, spec = {}) => {
       fromId: createdShapes[index].id,
       toId: createdShapes[index + 1].id,
       style: 'arrow',
-      color: '#0f172a',
+      color: '#1d4ed8',
     })
   }
 

@@ -262,6 +262,80 @@ test('AI-CMDS-020: workflow flowchart commands create labeled shapes and connect
   assert.equal(connectors.length, Math.max(0, shapes.length - 1))
   assert.equal(shapes.every((item) => typeof item.text === 'string' && item.text.trim().length > 0), true)
   assert.equal(shapes.some((item) => item.shapeType === 'diamond'), true)
+  assert.equal(connectors.every((item) => item.color === '#1d4ed8'), true)
+  assert.equal(
+    connectors.every((item) => ['top', 'right', 'bottom', 'left'].includes(item.fromAnchor)),
+    true,
+  )
+  assert.equal(
+    connectors.every((item) => ['top', 'right', 'bottom', 'left'].includes(item.toAnchor)),
+    true,
+  )
+})
+
+test('AI-CMDS-021: LLM connector tool calls default to visible blue and side anchors for object links', async () => {
+  const context = buildContext({
+    state: [
+      {
+        id: 'shape-start',
+        type: 'shape',
+        shapeType: 'rectangle',
+        position: { x: 120, y: 220 },
+        size: { width: 220, height: 140 },
+      },
+      {
+        id: 'shape-end',
+        type: 'shape',
+        shapeType: 'rectangle',
+        position: { x: 520, y: 220 },
+        size: { width: 220, height: 140 },
+      },
+    ],
+  })
+
+  await withMockObjectWriter(
+    async () => {},
+    async () => {
+      await withMockGlmClient(
+        {
+          callGLM: async () => ({
+            choices: [
+              {
+                message: {
+                  content: 'connected',
+                  tool_calls: [
+                    {
+                      id: 'connector-1',
+                      function: {
+                        name: 'createConnector',
+                        arguments: JSON.stringify({
+                          fromId: 'shape-start',
+                          toId: 'shape-end',
+                          style: 'arrow',
+                        }),
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          parseToolCalls: parseToolCallsFromResponse,
+          getTextResponse: (response) => response?.choices?.[0]?.message?.content || '',
+        },
+        async () => {
+          const result = await __test.runCommandPlan(context, 'connect these two steps with an arrow')
+          assert.equal(result.level, undefined)
+        },
+      )
+    },
+  )
+
+  const connectors = context.state.filter((item) => item.type === 'connector')
+  assert.equal(connectors.length, 1)
+  assert.equal(connectors[0].color, '#1d4ed8')
+  assert.equal(connectors[0].fromAnchor, 'right')
+  assert.equal(connectors[0].toAnchor, 'left')
 })
 
 test('AI-CMDS-011: board-mutation prompts trigger a compound-tools retry when first pass is text-only', async () => {
