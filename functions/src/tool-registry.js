@@ -380,6 +380,34 @@ const TOOL_DEFINITIONS = [
   {
     type: 'function',
     function: {
+      name: 'recolorObjects',
+      description: 'Change the color of objects matching specified criteria. Use this for commands like "change yellow stickies to green" or "make all blue shapes red".',
+      parameters: {
+        type: 'object',
+        properties: {
+          sourceColor: {
+            type: 'string',
+            enum: COLOR_OPTIONS,
+            description: 'Source color to filter objects by (optional - if omitted, applies to all objects matching the type criteria).',
+          },
+          targetType: {
+            type: 'string',
+            enum: ['stickyNote', 'shape', 'frame', 'any'],
+            description: 'Object type to filter (stickyNote, shape, frame, or any for all types).',
+          },
+          targetColor: {
+            type: 'string',
+            enum: COLOR_OPTIONS,
+            description: 'Target color to apply.',
+          },
+        },
+        required: ['targetColor'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'getBoardState',
       description: 'Fetch the current board object state snapshot',
       parameters: {
@@ -889,19 +917,20 @@ POSITION OPTIONS: ${POSITION_OPTIONS.join(', ')}
 
 GUIDELINES:
 1. Treat the raw user message as authoritative intent and infer board actions from it.
-2. For board changes, call tools directly. Prefer createObjects, changeColors, deleteObjects for repetitive creation/color/delete work.
-3. For mixed multi-step requests, prefer one executeBatch call that includes dependent tool calls in sequence.
-3. Convert placement language into tool args: use "position" for named regions and x/y for coordinates like "at 640,360" or "x=640 y=360".
-4. Use dedicated layout/template tools when they match intent: arrangeGrid, createStickyGridTemplate (for 2x3-style requests and "N boxes/stickies" layouts), spaceElementsEvenly, createBusinessModelCanvas, createWorkflowFlowchart, createSwotTemplate, createRetrospectiveTemplate, createJourneyMap.
-5. Use groupObjects and ungroupObjects for grouping operations. Use createShapeTemplate for bus/house/tree/person/car/building motifs.
-6. If placement is missing, use client placement hints first, then sensible defaults.
-6. Use existing object IDs from board context. Never invent IDs for existing objects.
-7. Keep sticky text concise, concrete, and varied. Generate distinct high-quality ideas, reasons, or action items.
-8. Requests for board artifacts/frameworks (for example canvas, matrix, map, SWOT, retrospective, journey map) are board-mutation intents: create content on the board with tools, not text-only replies.
-9. Only return plain text with no tool calls when the user clearly asks for chat-only output and does not ask for a board artifact.
-10. For workflow/flowchart requests, create labeled shapes and connect steps using createConnector arrows.
-11. For uncertain intent, make the best reasonable assumption and execute useful board actions.
-12. When returning tool calls, keep assistant text empty or very short (under 12 words).`
+2. For board changes, call tools directly. Prefer createObjects, recolorObjects, deleteObjects for repetitive creation/color/delete work.
+3. For color/delete operations by color or type (e.g., "change yellow stickies to green", "delete all blue shapes"), use recolorObjects or deleteObjects with sourceColor/targetType filters. Use getBoardState only if you need to inspect specific object properties.
+4. For mixed multi-step requests, prefer one executeBatch call that includes dependent tool calls in sequence.
+5. Convert placement language into tool args: use "position" for named regions and x/y for coordinates like "at 640,360" or "x=640 y=360".
+6. Use dedicated layout/template tools when they match intent: arrangeGrid, createStickyGridTemplate (for 2x3-style requests and "N boxes/stickies" layouts), spaceElementsEvenly, createBusinessModelCanvas, createWorkflowFlowchart, createSwotTemplate, createRetrospectiveTemplate, createJourneyMap.
+7. Use groupObjects and ungroupObjects for grouping operations. Use createShapeTemplate for bus/house/tree/person/car/building motifs.
+8. If placement is missing, use client placement hints first, then sensible defaults.
+9. Use existing object IDs from board context. Never invent IDs for existing objects.
+10. Keep sticky text concise, concrete, and varied. Generate distinct high-quality ideas, reasons, or action items.
+11. Requests for board artifacts/frameworks (for example canvas, matrix, map, SWOT, retrospective, journey map) are board-mutation intents: create content on the board with tools, not text-only replies.
+12. Only return plain text with no tool calls when the user clearly asks for chat-only output and does not ask for a board artifact.
+13. For workflow/flowchart requests, create labeled shapes and connect steps using createConnector arrows.
+14. For uncertain intent, make the best reasonable assumption and execute useful board actions.
+15. When returning tool calls, keep assistant text empty or very short (under 12 words).`
 }
 
 module.exports = { TOOL_DEFINITIONS, buildSystemPrompt, COLOR_OPTIONS, SHAPE_TYPES, POSITION_OPTIONS }

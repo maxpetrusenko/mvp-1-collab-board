@@ -709,34 +709,35 @@ const parseBulkColorMutationIntent = (command) => {
     return null
   }
 
-  const objectTypePattern = '(sticky(?:\\s*note)?s?|stickie?s?|notes?|shapes?|frames?|objects?|items?)'
+  const objectTypePattern = 'sticky(?:\\s*note)?s?|stickie?s?|notes?|shapes?|frames?|objects?|items?'
+  const objectTypeGroup = `(${objectTypePattern})`
   const hasMutationVerb = /\b(?:change|changing|changed|set|update|recolor|edit|turn|make)\b/i.test(normalized)
   if (!hasMutationVerb) {
     return null
   }
 
   const allColorThenTypePattern = new RegExp(
-    `\\ball\\s+(${COLOR_OR_HEX_PATTERN})\\s+${objectTypePattern}\\b(?:\\s+(?:to|into|as)\\s+|\\s+color\\s+to\\s+|\\s+to\\s+color\\s+)(?:the\\s+)?(${COLOR_OR_HEX_PATTERN})\\b`,
+    `\\ball\\s+(${COLOR_OR_HEX_PATTERN})\\s+${objectTypeGroup}\\b(?:\\s+(?:to|into|as)\\s+|\\s+color\\s+to\\s+|\\s+to\\s+color\\s+)(?:the\\s+)?(${COLOR_OR_HEX_PATTERN})\\b`,
     'i',
   )
   const allTypeFromToPattern = new RegExp(
-    `\\ball\\s+${objectTypePattern}\\b\\s+from\\s+(${COLOR_OR_HEX_PATTERN})\\s+to\\s+(${COLOR_OR_HEX_PATTERN})\\b`,
+    `\\ball\\s+${objectTypeGroup}\\s+from\\s+(${COLOR_OR_HEX_PATTERN})\\s+to\\s+(${COLOR_OR_HEX_PATTERN})\\b`,
     'i',
   )
   const allTypeToPattern = new RegExp(
-    `\\ball\\s+${objectTypePattern}\\b(?:\\s+(?:to|into|as)\\s+|\\s+color\\s+to\\s+|\\s+to\\s+color\\s+)(?:the\\s+)?(${COLOR_OR_HEX_PATTERN})\\b`,
+    `\\ball\\s+${objectTypeGroup}\\b(?:\\s+(?:to|into|as)\\s+|\\s+color\\s+to\\s+|\\s+to\\s+color\\s+)(?:the\\s+)?(${COLOR_OR_HEX_PATTERN})\\b`,
     'i',
   )
   const verbColorTypeToPattern = new RegExp(
-    `\\b(?:change|changing|changed|set|update|recolor|edit|turn|make)\\s+(?:all\\s+)?(${COLOR_OR_HEX_PATTERN})\\s+(?:color\\s+)?${objectTypePattern}\\b(?:\\s+(?:to|into|as)\\s+|\\s+color\\s+to\\s+|\\s+to\\s+color\\s+)(?:the\\s+)?(${COLOR_OR_HEX_PATTERN})\\b`,
+    `\\b(?:change|changing|changed|set|update|recolor|edit|turn|make)\\s+(?:all\\s+)?(${COLOR_OR_HEX_PATTERN})\\s+(?:color\\s+)?${objectTypeGroup}\\b(?:\\s+(?:to|into|as)\\s+|\\s+color\\s+to\\s+|\\s+to\\s+color\\s+)(?:the\\s+)?(${COLOR_OR_HEX_PATTERN})\\b`,
     'i',
   )
   const verbTypeFromToPattern = new RegExp(
-    `\\b(?:change|changing|changed|set|update|recolor|edit|turn|make)\\s+(?:all\\s+)?${objectTypePattern}\\b\\s+from\\s+(${COLOR_OR_HEX_PATTERN})\\s+to\\s+(${COLOR_OR_HEX_PATTERN})\\b`,
+    `\\b(?:change|changing|changed|set|update|recolor|edit|turn|make)\\s+(?:all\\s+)?${objectTypeGroup}\\b\\s+from\\s+(${COLOR_OR_HEX_PATTERN})\\s+to\\s+(${COLOR_OR_HEX_PATTERN})\\b`,
     'i',
   )
   const verbTypeToPattern = new RegExp(
-    `\\b(?:change|changing|changed|set|update|recolor|edit|turn|make)\\s+(?:all\\s+)?${objectTypePattern}\\b(?:\\s+(?:to|into|as)\\s+|\\s+color\\s+to\\s+|\\s+to\\s+color\\s+)(?:the\\s+)?(${COLOR_OR_HEX_PATTERN})\\b`,
+    `\\b(?:change|changing|changed|set|update|recolor|edit|turn|make)\\s+(?:all\\s+)?${objectTypeGroup}\\b(?:\\s+(?:to|into|as)\\s+|\\s+color\\s+to\\s+|\\s+to\\s+color\\s+)(?:the\\s+)?(${COLOR_OR_HEX_PATTERN})\\b`,
     'i',
   )
 
@@ -781,7 +782,7 @@ const parseBulkColorMutationIntent = (command) => {
 
   const hasBroadScopeCue =
     /\ball\b/i.test(normalized) ||
-    /\b(?:sticky(?:\s*note)?s|stickers|notes|shapes|frames|objects|items)\b/i.test(normalized)
+    /\b(?:sticky(?:\s*note)?s?|stickie?s?|notes?|shapes?|frames?|objects?|items?)\b/i.test(normalized)
   if (!hasBroadScopeCue) {
     return null
   }
@@ -827,7 +828,7 @@ const parseBulkColorMutationIntent = (command) => {
 
   // Pattern: "change [color] [objects] to [color]" - e.g., "change yellow stickies to green"
   const colorObjectTypeToPattern = new RegExp(
-    `\\b(?:change|changing|changed|set|update|recolor|edit|turn|make)\\s+(${COLOR_OR_HEX_PATTERN})\\s+${objectTypePattern}\\b(?:\\s+(?:to|into|as)\\s+|\\s+color\\s+to\\s+|\\s+to\\s+color\\s+)(?:the\\s+)?(${COLOR_OR_HEX_PATTERN})\\b`,
+    `\\b(?:change|changing|changed|set|update|recolor|edit|turn|make)\\s+(${COLOR_OR_HEX_PATTERN})\\s+${objectTypeGroup}\\b(?:\\s+(?:to|into|as)\\s+|\\s+color\\s+to\\s+|\\s+to\\s+color\\s+)(?:the\\s+)?(${COLOR_OR_HEX_PATTERN})\\b`,
     'i',
   )
   const colorObjectTypeToMatch = normalized.match(colorObjectTypeToPattern)
@@ -4288,6 +4289,77 @@ const executeLlmToolCall = async (ctx, toolName, rawArgs, options = {}) => {
       throw error
     }
   }
+
+  const runRecolorObjects = async () => {
+    const targetColor = args?.targetColor
+    if (!targetColor) {
+      return { count: 0 }
+    }
+
+    const targetType = args?.targetType || 'any'
+    const sourceColor = args?.sourceColor || null
+
+    const allowedTypes = targetType === 'any'
+      ? COLOR_MUTABLE_OBJECT_TYPES
+      : new Set([targetType])
+
+    let targets = ctx.state.filter((candidate) => {
+      if (!candidate || !allowedTypes.has(candidate.type)) {
+        return false
+      }
+      if (!sourceColor) {
+        return true
+      }
+      const candidateColor = normalizeResolvedColor(candidate.color || '')
+      const sourceColorNormalized = normalizeResolvedColor(sourceColor)
+      const sourceColorFamily = inferColorFamily(sourceColor)
+
+      if (candidateColor === sourceColorNormalized) {
+        return true
+      }
+      if (sourceColorFamily) {
+        return inferColorFamily(candidateColor) === sourceColorFamily
+      }
+      return false
+    })
+
+    if (targets.length === 0) {
+      return { count: 0 }
+    }
+
+    const targetIds = targets.map(t => t.id)
+
+    if (!bulkColorOperations?.changeColors) {
+      const now = nowMs()
+      let changedCount = 0
+      for (const objectId of targetIds) {
+        const object = ctx.state.find((candidate) => candidate?.id === objectId)
+        if (!object) continue
+
+        const color = toColor(targetColor, object.color || '#e2e8f0')
+        const patch = {
+          color,
+          updatedAt: now,
+          updatedBy: ctx.userId,
+          version: Number.isFinite(Number(object.version)) ? Number(object.version) + 1 : 1,
+        }
+        Object.assign(object, patch)
+        changedCount += 1
+        try {
+          await writeObject({ boardId: ctx.boardId, objectId, payload: patch, merge: true })
+        } catch (writeError) {
+          console.warn('recolorObjects fallback persistence failed:', writeError?.message || writeError)
+        }
+      }
+      ctx.executedTools.push({ tool: 'recolorObjects', count: changedCount, color: targetColor })
+      return { count: changedCount, color: toColor(targetColor, '#86efac') }
+    }
+
+    const result = await bulkColorOperations.changeColors(ctx, { objectIds: targetIds, color: targetColor }, colorOperationDeps)
+    ctx.executedTools.push({ tool: 'recolorObjects', count: result.count, color: targetColor })
+    return result
+  }
+
   const runDeleteObjects = async () => {
     if (!bulkOperations?.applyBatchDelete) {
       // Module not available, use inline fallback
@@ -4484,6 +4556,9 @@ const executeLlmToolCall = async (ctx, toolName, rawArgs, options = {}) => {
       return
     case 'changeColors':
       await runChangeColors()
+      return
+    case 'recolorObjects':
+      await runRecolorObjects()
       return
     case 'deleteObjects':
       await runDeleteObjects()

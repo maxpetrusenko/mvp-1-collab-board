@@ -927,6 +927,63 @@ test('AI-CMDS-048: legacy note rows recolor via sticky bulk fallback', async () 
   assert.equal(changed.length, 1)
 })
 
+test('AI-CMDS-049: no-tool recolor accepts singular "stickie" spelling', async () => {
+  const now = Date.now()
+  const writeCalls = []
+  const context = buildContext({
+    state: [
+      {
+        id: 'sticky-yellow',
+        boardId: 'test-board',
+        type: 'stickyNote',
+        text: 'Legacy spelling',
+        color: '#fde68a',
+        position: { x: 120, y: 120 },
+        size: { width: 180, height: 110 },
+        zIndex: 1,
+        createdBy: 'test-user',
+        createdAt: now,
+        updatedBy: 'test-user',
+        updatedAt: now,
+        version: 1,
+      },
+    ],
+  })
+
+  await withMockObjectWriter(
+    async (payload) => {
+      writeCalls.push(payload)
+    },
+    async () => {
+      await withMockGlmClient(
+        {
+          callGLM: async () => ({
+            choices: [
+              {
+                message: {
+                  content: '',
+                  tool_calls: [],
+                },
+              },
+            ],
+          }),
+          parseToolCalls: () => [],
+          getTextResponse: (response) => response?.choices?.[0]?.message?.content || '',
+        },
+        async () => {
+          const result = await __test.runCommandPlan(context, 'change yellow stickie to green')
+          assert.equal(result.level, undefined)
+          assert.match(result.message, /changed 1 sticky note from yellow to green/i)
+        },
+      )
+    },
+  )
+
+  const changed = context.state.filter((item) => item.color === '#86efac')
+  assert.equal(changed.length, 1)
+  assert.equal(writeCalls.filter((entry) => entry.payload?.color === '#86efac').length, 1)
+})
+
 test('AI-CMDS-033: no-tool bulk color prompts update all matching sticky notes', async () => {
   const now = Date.now()
   const writeCalls = []

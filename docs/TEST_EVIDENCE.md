@@ -20,6 +20,7 @@ Scope:
 Observed:
 - `AI-BULK-009` command path (`create 5 stickies`) completed as success path with `result.level` undefined after in-memory fallback was applied.
 - Production probe context note: local/CI dependency constraints still require project credentials for write persistence; mutation still updates local state in fallback mode.
+- Color mutation resilience note: `change yellow collor stickies to green` now handles legacy `note` object rows in fallback path to avoid no-op on older board payloads.
 
 Evidence link:
 - `test_evidence/2026-02-22.md`
@@ -29,6 +30,7 @@ Evidence link:
 | `create one sticky note hello` | LLM tool-call create path | ~2.25s command runtime | Above `<2s` target |
 | `create 6 boxes with message -` | `executedTools` count observed: 8 (6x `createStickyNote` + template tool entries) | ~3.10s to ~3.20s command runtime | Above `<2s` target |
 | `Generate a Business Model Canvas ...` | `executedTools` count observed: 11 (9x `createStickyNote` + canvas tool entries) | ~3.20s to ~3.35s command runtime | Above `<2s` target |
+| `change yellow stickie to green` | No-tool fallback recovered via bulk color parser, single mutable object recolor path | `result.message: "Changed 1 sticky note from yellow to green."` | Resolved with parser capture-group fix in local mock fallback path |
 
 Indicator note:
 - Repository docs currently contain explicit `<2s` target references.
