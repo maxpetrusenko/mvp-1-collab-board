@@ -36,6 +36,7 @@ const supplementalPaths = [
   path.join(pagesDir, 'useBoardObjectActions.ts'),
   path.join(pagesDir, 'useBoardRuntimeComputedState.ts'),
   path.join(pagesDir, 'useBoardRuntimeLiveActions.ts'),
+  path.join(pagesDir, 'useBoardRuntimeCommandPalette.ts'),
   path.join(pagesDir, 'useBoardSelectionMarqueeEffect.ts'),
   path.join(pagesDir, 'useBoardSpatialInteractions.ts'),
   path.join(pagesDir, 'boardTemplateActions.ts'),

@@ -56,11 +56,10 @@ import {
 } from './boardCommandOverlays'
 import { BoardHeaderBar } from './boardHeaderBar'
 import { BoardBoardsListPanel } from './boardBoardsListPanel'
-import { useBoardKeyboardShortcuts } from './boardKeyboardShortcuts'
 import { useBoardCreationActions } from './useBoardCreationActions'
-import { useBoardCommandPalette } from './useBoardCommandPalette'
 import { useBoardDerivedViewModels } from './useBoardDerivedViewModels'
 import { useBoardObjectActions } from './useBoardObjectActions'
+import { useBoardRuntimeCommandPalette } from './useBoardRuntimeCommandPalette'
 import { useBoardRuntimeComputedState } from './useBoardRuntimeComputedState'
 import { useBoardRuntimeLiveActions } from './useBoardRuntimeLiveActions'
 import { useBoardRealtimeDataEffects } from './useBoardRealtimeDataEffects'
@@ -858,77 +857,55 @@ export const BoardRuntimeController = () => {
     selectionScanRectRef,
   })
 
-  const toggleThemeMode = useCallback(() => {
-    setThemeMode((prev) => (prev === 'dark' ? 'light' : 'dark'))
-  }, [])
   const {
     clampedCommandPaletteActiveIndex,
     closeCommandPalette,
     filteredCommandPaletteCommands,
-    openCommandPalette,
     runCommandPaletteEntry,
-  } = useBoardCommandPalette({
+    toggleThemeMode,
+  } = useBoardRuntimeCommandPalette({
+    activeCreatePopover,
     boardId,
     canEditBoard,
+    clipboardObjectsRef,
     commandPaletteActiveIndex,
     commandPaletteInputRef,
     commandPaletteQuery,
+    copySelectionToClipboard,
     createObject,
+    deleteSelected,
     duplicateBoardMeta,
-    openPalette: showCommandPalette,
+    duplicateObject,
+    duplicateSelected,
+    objectsRef,
+    pasteClipboardObjects,
+    redo,
     roleCanEditBoard,
+    rotateSelectionBy,
+    selectedIds,
+    selectedIdsRef,
+    selectedObject,
     selectionMode,
     setActiveCreatePopover,
     setBoardFormError,
     setCommandPaletteActiveIndex,
     setCommandPaletteQuery,
     setInteractionMode,
-    setOpenPalette: setShowCommandPalette,
-    setSelectionMode,
-    setShowBoardsPanel,
-    setShowShortcuts,
-    setShowTemplateChooser,
-    themeMode,
-    toggleThemeMode,
-    zoomToFit,
-  })
-
-  useBoardKeyboardShortcuts({
-    activeCreatePopover,
-    canEditBoard,
-    closeCommandPalette,
-    commandPaletteActiveIndex: clampedCommandPaletteActiveIndex,
-    setCommandPaletteActiveIndex,
-    copySelectionToClipboard,
-    deleteSelected,
-    duplicateObject,
-    duplicateSelected,
-    filteredCommandPaletteCommands,
-    objectsRef,
-    openCommandPalette,
-    pasteClipboardObjects,
-    redo,
-    roleCanEditBoard,
-    rotateSelectionBy,
-    runCommandPaletteEntry,
-    selectedIds,
-    selectedIdsRef,
-    selectedObject,
-    selectionMode,
-    setActiveCreatePopover,
-    setInteractionMode,
     setSelectedIds,
     setSelectionMode,
+    setShowBoardsPanel,
+    setShowCommandPalette,
     setShowShortcuts,
     setShowTemplateChooser,
+    setThemeMode,
     showCommandPalette,
     showTemplateChooser,
+    themeMode,
     undo,
     zoomIn,
     zoomOut,
     zoomReset,
     zoomToFit,
-    clipboardObjectsRef,
   })
 
   const {
