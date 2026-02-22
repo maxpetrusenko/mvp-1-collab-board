@@ -17,15 +17,18 @@ type UsePresenceArgs = {
   enabled?: boolean
 }
 
-const PRESENCE_STATE_FLUSH_MS = 50
+const PRESENCE_STATE_FLUSH_MS = 16
 const PRESENCE_STALE_THRESHOLD_MS = 2 * 60_000
 const MAX_PRESENCE_ENTRIES = 200
+const CURSOR_PUBLISH_INTERVAL_MS = 16
+const CURSOR_MOVEMENT_EPSILON_PX = 1
 
 export const usePresence = ({ rtdb, boardId, user, enabled = true }: UsePresenceArgs) => {
   const [cursors, setCursors] = useState<Record<string, CursorPresence>>({})
   const presenceRef = useRef<ReturnType<typeof ref> | null>(null)
   const lastCursorPublishAtRef = useRef(0)
   const pendingCursorRef = useRef<Point | null>(null)
+  const lastPublishedCursorRef = useRef<Point | null>(null)
   const publishTimeoutRef = useRef<number | null>(null)
   const pendingCursorsRef = useRef<Record<string, CursorPresence> | null>(null)
   const stateFlushTimeoutRef = useRef<number | null>(null)
@@ -163,6 +166,7 @@ export const usePresence = ({ rtdb, boardId, user, enabled = true }: UsePresence
     pendingCursorRef.current = null
     const publishedAt = Date.now()
     lastCursorPublishAtRef.current = publishedAt
+    lastPublishedCursorRef.current = cursor
 
     void update(presenceRef.current, {
       x: cursor.x,
@@ -186,10 +190,28 @@ export const usePresence = ({ rtdb, boardId, user, enabled = true }: UsePresence
       return
     }
 
+    const queued = pendingCursorRef.current
+    if (
+      queued &&
+      Math.abs(queued.x - point.x) <= CURSOR_MOVEMENT_EPSILON_PX &&
+      Math.abs(queued.y - point.y) <= CURSOR_MOVEMENT_EPSILON_PX
+    ) {
+      return
+    }
+    const published = lastPublishedCursorRef.current
+    if (
+      published &&
+      Math.abs(published.x - point.x) <= CURSOR_MOVEMENT_EPSILON_PX &&
+      Math.abs(published.y - point.y) <= CURSOR_MOVEMENT_EPSILON_PX &&
+      publishTimeoutRef.current === null
+    ) {
+      return
+    }
+
     pendingCursorRef.current = point
     const now = Date.now()
     const elapsedSinceLastPublish = now - lastCursorPublishAtRef.current
-    const minPublishIntervalMs = 50
+    const minPublishIntervalMs = CURSOR_PUBLISH_INTERVAL_MS
 
     if (elapsedSinceLastPublish >= minPublishIntervalMs && publishTimeoutRef.current === null) {
       flushCursorPublish()

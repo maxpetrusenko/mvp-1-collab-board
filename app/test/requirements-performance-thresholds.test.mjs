@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { readBoardPageSource } from './helpers/boardPageSource.mjs'
 
 const aiResponseSource = readFileSync(
   new URL('../e2e/performance/ai-response.spec.ts', import.meta.url),
@@ -31,7 +32,7 @@ const extremeStressSource = readFileSync(
   'utf8',
 )
 const backendPerfSource = readFileSync(new URL('./backend-performance.mjs', import.meta.url), 'utf8')
-const boardPageSource = readFileSync(new URL('../src/pages/BoardPage.tsx', import.meta.url), 'utf8')
+const boardPageSource = readBoardPageSource()
 const objectSyncHookSource = readFileSync(new URL('../src/hooks/useObjectSync.ts', import.meta.url), 'utf8')
 const presenceHookSource = readFileSync(new URL('../src/hooks/usePresence.ts', import.meta.url), 'utf8')
 
@@ -144,7 +145,16 @@ test('NFR-5 stability: object sync hook coalesces snapshots and avoids drag/resi
 })
 
 test('NFR-5 stability: presence hook batches RTDB cursor fan-out and prunes stale entries', () => {
-  assert.equal(presenceHookSource.includes('const PRESENCE_STATE_FLUSH_MS = 50'), true)
+  const stateFlushMatch = presenceHookSource.match(/const PRESENCE_STATE_FLUSH_MS = ([\d_]+)/)
+  assert.ok(stateFlushMatch, 'PRESENCE_STATE_FLUSH_MS declaration missing')
+  const stateFlushMs = Number(stateFlushMatch[1].replaceAll('_', ''))
+  assert.ok(stateFlushMs <= 50, `Expected presence state flush <= 50ms, got ${stateFlushMs}`)
+
+  const cursorPublishMatch = presenceHookSource.match(/const CURSOR_PUBLISH_INTERVAL_MS = ([\d_]+)/)
+  assert.ok(cursorPublishMatch, 'CURSOR_PUBLISH_INTERVAL_MS declaration missing')
+  const cursorPublishMs = Number(cursorPublishMatch[1].replaceAll('_', ''))
+  assert.ok(cursorPublishMs <= 33, `Expected cursor publish interval <= 33ms, got ${cursorPublishMs}`)
+
   assert.equal(presenceHookSource.includes('const PRESENCE_STALE_THRESHOLD_MS = 2 * 60_000'), true)
   assert.equal(presenceHookSource.includes('const MAX_PRESENCE_ENTRIES = 200'), true)
   assert.equal(presenceHookSource.includes('const pendingCursorsRef = useRef<Record<string, CursorPresence> | null>(null)'), true)

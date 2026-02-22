@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { readBoardPageSource } from './helpers/boardPageSource.mjs'
 
-const boardPageSource = readFileSync(new URL('../src/pages/BoardPage.tsx', import.meta.url), 'utf8')
+const boardPageSource = readBoardPageSource()
 const aiPanelSource = readFileSync(new URL('../src/components/AICommandPanel.tsx', import.meta.url), 'utf8')
 const boardEntrySource = readFileSync(new URL('../src/pages/BoardEntryPage.tsx', import.meta.url), 'utf8')
 const appSource = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
@@ -24,7 +25,11 @@ test('TS-012 / RQ-012: board list panel exists for board switching', () => {
   assert.equal(boardPageSource.includes('data-testid="board-list-owned"'), true)
   assert.equal(boardPageSource.includes('data-testid="board-list-shared"'), true)
   assert.equal(boardPageSource.includes('ownedBoards.map((boardMeta) => renderBoardListItem(boardMeta))'), true)
-  assert.equal(boardPageSource.includes('scheduleBoardNavigate(boardMeta.id)'), true)
+  assert.equal(
+    boardPageSource.includes('scheduleBoardNavigate(boardMeta.id)') ||
+      boardPageSource.includes('onScheduleBoardNavigate(boardMeta.id)'),
+    true,
+  )
 })
 
 test('TS-013 / RQ-013: sticky palette is exactly five colors', () => {
@@ -71,7 +76,11 @@ test('TS-018 / FR-7 / RQ-018: bulk move for selected groups uses shared drag sna
   assert.equal(boardPageSource.includes('const beginObjectDrag = useCallback('), true)
   assert.equal(boardPageSource.includes('const moveObjectDrag = useCallback('), true)
   assert.equal(boardPageSource.includes('const endObjectDrag = useCallback('), true)
-  assert.equal(boardPageSource.includes("selectedIds.length > 1 ? 'moved selection'"), true)
+  assert.equal(
+    /selectedIds\.length\s*>\s*1\s*\?\s*'moved selection'/.test(boardPageSource) ||
+      /selectedIdsCount\s*>\s*1\s*\?\s*'moved selection'/.test(boardPageSource),
+    true,
+  )
 })
 
 test('TS-019 / FR-7 / RQ-020: bulk duplicate duplicates every selected object', () => {
@@ -126,7 +135,11 @@ test('TS-025 / AI: submit path resolves auth token defensively for dev bypass se
 
 test('TS-050 / FR-22+FR-16 UX: AI panel submit is disabled when board is not editable', () => {
   assert.equal(boardPageSource.includes('history={aiCommandHistory}'), true)
-  assert.equal(boardPageSource.includes('disabled={!user || !canEditBoard || !hasLiveBoardAccess}'), true)
+  assert.equal(
+    boardPageSource.includes('disabled={!user || !canEditBoard || !hasLiveBoardAccess}') ||
+      boardPageSource.includes('aiDisabled={!user || !canEditBoard || !hasLiveBoardAccess}'),
+    true,
+  )
   assert.equal(aiPanelSource.includes('disabled={disabled || !command.trim()}'), true)
   assert.equal(boardPageSource.includes("throw new Error('Switch to edit mode to run AI commands.')"), true)
 })
@@ -144,8 +157,14 @@ test('TS-058 / AI UX: inline AI messages render only for warnings/errors while s
 test('TS-026 / UX: toolbar exposes explicit Select and Area selection modes', () => {
   assert.equal(boardPageSource.includes('data-testid="selection-mode-select"'), true)
   assert.equal(boardPageSource.includes('data-testid="selection-mode-area"'), true)
-  assert.equal(boardPageSource.includes("setSelectionMode('area')"), true)
-  assert.equal(boardPageSource.includes("setSelectionMode('select')"), true)
+  assert.equal(
+    boardPageSource.includes("setSelectionMode('area')") || boardPageSource.includes("onSetSelectionMode('area')"),
+    true,
+  )
+  assert.equal(
+    boardPageSource.includes("setSelectionMode('select')") || boardPageSource.includes("onSetSelectionMode('select')"),
+    true,
+  )
 })
 
 test('TS-027 / UX: bottom toolbar creation actions open feature-specific popovers', () => {
@@ -220,7 +239,11 @@ test('TS-060 / UX: boards panel uses explicit open/rename actions instead of ope
   assert.equal(boardPageSource.includes('data-testid={`open-board-${boardMeta.id}`}'), true)
   assert.equal(boardPageSource.includes('data-testid={`rename-board-${boardMeta.id}`}'), true)
   assert.equal(boardPageSource.includes('title="Open board"'), true)
-  assert.equal(boardPageSource.includes('onClick={() => scheduleBoardNavigate(boardMeta.id)}'), true)
+  assert.equal(
+    boardPageSource.includes('onClick={() => scheduleBoardNavigate(boardMeta.id)}') ||
+      boardPageSource.includes('onClick={() => onScheduleBoardNavigate(boardMeta.id)}'),
+    true,
+  )
   assert.equal(boardPageSource.includes('className="board-list-link"\n          role="button"'), false)
 })
 
@@ -270,10 +293,15 @@ test('TS-035 / T-068: object hover state is tracked and rendered for board objec
 
 test('TS-049 / T-032 UX: vote badges render icon + numeric count, while comment badges are icon-only', () => {
   assert.equal(boardPageSource.includes('const voteCount = Object.keys(boardObject.votesByUser || {}).length'), true)
-  assert.equal(boardPageSource.includes('const getVoteBadgeWidth = (voteCount: number) => (voteCount > 9 ? 34 : 30)'), true)
-  assert.equal(boardPageSource.includes('const renderVoteBadge = (args: { voteCount: number; x: number; y: number }) => {'), true)
-  assert.equal(boardPageSource.includes('const renderCommentBadge = (args: { commentCount: number; x: number; y: number }) => {'), true)
-  assert.equal(boardPageSource.includes('voteCount > 0'), true)
+  assert.match(boardPageSource, /(export\s+)?const getVoteBadgeWidth = \(voteCount: number\) => \(voteCount > 9 \? 34 : 30\)/)
+  assert.equal(boardPageSource.includes('renderVoteBadge = (args:'), true)
+  assert.equal(boardPageSource.includes('renderCommentBadge = (args:'), true)
+  assert.equal(boardPageSource.includes('voteCount: number'), true)
+  assert.equal(boardPageSource.includes('commentCount: number'), true)
+  assert.equal(
+    boardPageSource.includes('voteCount > 0') || boardPageSource.includes('voteCount <= 0'),
+    true,
+  )
   assert.equal(boardPageSource.includes('String(voteCount)'), true)
   assert.equal(boardPageSource.includes('text={`C${commentCount}`}'), false)
 })
@@ -363,7 +391,11 @@ test('G4-A11Y-001: contrast-aware text colors are used for board objects', () =>
 test('G4-SHARE-001: share button is present in toolbar for board owners', () => {
   assert.equal(boardPageSource.includes('data-testid={`share-board-${boardMeta.id}`}'), true)
   assert.equal(boardPageSource.includes('title="Share board"'), true)
-  assert.equal(boardPageSource.includes('openShareDialog(boardMeta.id)'), true)
+  assert.equal(
+    boardPageSource.includes('openShareDialog(boardMeta.id)') ||
+      boardPageSource.includes('onOpenShareDialog(boardMeta.id)'),
+    true,
+  )
 })
 
 test('G4-SHARE-002: main board header exposes a direct share action for owners', () => {
@@ -538,7 +570,15 @@ test('G4-GLM-002: GLM function handlers implemented in index.js', () => {
 
   // Registered in switch case
   assert.equal(glmIndexSource.includes("case 'rotateObject':"), true)
-  assert.equal(glmIndexSource.includes("await rotateObject(ctx, toolCall.arguments)"), true)
+  assert.equal(
+    glmIndexSource.includes("await rotateObject(ctx, toolCall.arguments)") ||
+      glmIndexSource.includes("await rotateObject(ctx, args)"),
+    true,
+  )
+  assert.equal(
+    glmIndexSource.includes('await executeLlmToolCall(ctx, toolCall.name, toolCall.arguments'),
+    true,
+  )
   assert.equal(glmIndexSource.includes("case 'deleteObject':"), true)
   assert.equal(glmIndexSource.includes("case 'duplicateObject':"), true)
 
