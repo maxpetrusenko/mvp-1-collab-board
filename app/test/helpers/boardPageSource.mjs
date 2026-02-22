@@ -6,6 +6,7 @@ const hooksDir = path.resolve(process.cwd(), 'src/hooks')
 const boardPagePath = path.join(pagesDir, 'BoardPage.tsx')
 const boardPageRuntimePath = path.join(pagesDir, 'BoardPageRuntime.tsx')
 const boardRuntimeControllerPath = path.join(pagesDir, 'boardRuntimeController.tsx')
+const boardRuntimeControllerImplPath = path.join(pagesDir, 'boardRuntimeControllerImpl.tsx')
 const supplementalPaths = [
   path.join(pagesDir, 'boardPageRuntimePrimitives.tsx'),
   path.join(pagesDir, 'boardPanels.tsx'),
@@ -28,6 +29,15 @@ const supplementalPaths = [
   path.join(pagesDir, 'useBoardShareActions.ts'),
   path.join(pagesDir, 'useBoardZoomActions.ts'),
   path.join(pagesDir, 'useBoardHistoryActions.ts'),
+  path.join(pagesDir, 'useBoardInteractionActions.ts'),
+  path.join(pagesDir, 'useBoardCommandPalette.ts'),
+  path.join(pagesDir, 'useBoardRealtimeDataEffects.ts'),
+  path.join(pagesDir, 'useBoardDerivedViewModels.ts'),
+  path.join(pagesDir, 'useBoardObjectActions.ts'),
+  path.join(pagesDir, 'useBoardRuntimeComputedState.ts'),
+  path.join(pagesDir, 'useBoardRuntimeLiveActions.ts'),
+  path.join(pagesDir, 'useBoardSelectionMarqueeEffect.ts'),
+  path.join(pagesDir, 'useBoardSpatialInteractions.ts'),
   path.join(pagesDir, 'boardTemplateActions.ts'),
   path.join(hooksDir, 'useBoardSelection.ts'),
 ]
@@ -42,6 +52,9 @@ export const readBoardPageSource = () => {
   }
   if (existsSync(boardRuntimeControllerPath)) {
     chunks.push(readFileSync(boardRuntimeControllerPath, 'utf8'))
+  }
+  if (existsSync(boardRuntimeControllerImplPath)) {
+    chunks.push(readFileSync(boardRuntimeControllerImplPath, 'utf8'))
   }
 
   for (const filePath of supplementalPaths) {
