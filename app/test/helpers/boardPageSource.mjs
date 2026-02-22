@@ -27,6 +27,7 @@ const supplementalPaths = [
   path.join(pagesDir, 'useBoardWorkspaceActions.ts'),
   path.join(pagesDir, 'useBoardShareActions.ts'),
   path.join(pagesDir, 'useBoardZoomActions.ts'),
+  path.join(pagesDir, 'useBoardHistoryActions.ts'),
   path.join(pagesDir, 'boardTemplateActions.ts'),
   path.join(hooksDir, 'useBoardSelection.ts'),
 ]

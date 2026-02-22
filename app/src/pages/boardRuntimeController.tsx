@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/refs */
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { Navigate, useNavigate, useParams } from 'react-router-dom'
 import { Circle, Group, Layer, Rect, Stage, Text } from 'react-konva'
@@ -83,6 +84,7 @@ import { useBoardSidebarActions } from './useBoardSidebarActions'
 import { useBoardWorkspaceActions } from './useBoardWorkspaceActions'
 import { useBoardShareActions } from './useBoardShareActions'
 import { useBoardZoomActions } from './useBoardZoomActions'
+import { useBoardHistoryActions } from './useBoardHistoryActions'
 import { useConnectionStatus } from '../hooks/useConnectionStatus'
 import { usePresence } from '../hooks/usePresence'
 import { useBoardSelection } from '../hooks/useBoardSelection'
@@ -94,11 +96,9 @@ import {
 } from '../hooks/useObjectSync'
 import {
   clamp,
-  cloneBoardObject,
   normalizeConnectorStyle,
   normalizeShapeKind,
   overlaps,
-  toConnectorBounds,
   type ConnectorPatch,
 } from '../lib/boardGeometry'
 import { nowMs } from '../lib/time'
@@ -125,8 +125,6 @@ import {
   MIN_OBJECT_WIDTH,
   MIN_ZOOM_SCALE,
   normalizeLinkAccessRole,
-  normalizeRotationDegrees,
-  OBJECT_DUPLICATE_OFFSET,
   PRESENCE_AWAY_THRESHOLD_MS,
   RESIZE_HANDLE_SIZE,
   ROTATION_HANDLE_OFFSET,
@@ -189,7 +187,7 @@ export const BoardRuntimeController = () => {
   const [isEditingTimer, setIsEditingTimer] = useState(false)
   const [timerDraft, setTimerDraft] = useState(formatTimerLabel(TIMER_DEFAULT_MS))
   const [inlineEditor, setInlineEditor] = useState<InlineEditorDraft | null>(null)
-  const [nowMsValue, setNowMsValue] = useState(Date.now())
+  const [nowMsValue, setNowMsValue] = useState(() => Date.now())
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [isTimelineReplaying, setIsTimelineReplaying] = useState(false)
   const [replayingEventId, setReplayingEventId] = useState<string | null>(null)
@@ -1201,12 +1199,15 @@ export const BoardRuntimeController = () => {
       return null
     }
 
+    const selectedPosition =
+      selectedObject.type === 'connector' ? null : resolveObjectPosition(selectedObject)
+
     const worldBounds =
       selectedObject.type === 'connector'
         ? getObjectBounds(selectedObject, objectsById)
         : {
-            x: resolveObjectPosition(selectedObject).x,
-            y: resolveObjectPosition(selectedObject).y,
+            x: selectedPosition?.x ?? selectedObject.position.x,
+            y: selectedPosition?.y ?? selectedObject.position.y,
             width: resolveObjectSize(selectedObject).width,
             height: resolveObjectSize(selectedObject).height,
           }
@@ -1931,276 +1932,40 @@ export const BoardRuntimeController = () => {
     }
   }, [inlineEditor, inlineEditorTarget])
 
-  const deleteSelected = useCallback(async () => {
-    if (!db || !user || !hasLiveBoardAccess || !canEditBoard || selectedObjects.length === 0) {
-      return
-    }
-
-    const objectsToDelete = [...selectedObjects]
-    const objectIdsToDelete = new Set(objectsToDelete.map((boardObject) => boardObject.id))
-
-    if (!isApplyingHistoryRef.current) {
-      objectsToDelete.forEach((boardObject) => {
-        pushHistory({ type: 'delete', object: boardObject })
-      })
-    }
-
-    await Promise.all(
-      objectsToDelete.map((boardObject) => deleteBoardObjectById(boardObject.id)),
-    )
-
-    setInlineEditor((prev) => (prev && objectIdsToDelete.has(prev.objectId) ? null : prev))
-    void logActivity({
-      actorId: user.uid,
-      actorName: user.displayName || user.email || 'Anonymous',
-      action: `deleted ${objectsToDelete.length} object${objectsToDelete.length === 1 ? '' : 's'}`,
-      targetId: objectsToDelete[0]?.id || null,
-      targetType: objectsToDelete[0]?.type || null,
-    })
-    setLocalObjectPositions((prev) => {
-      const next = { ...prev }
-      objectIdsToDelete.forEach((objectId) => {
-        delete next[objectId]
-      })
-      return next
-    })
-    setLocalConnectorGeometry((prev) => {
-      const next = { ...prev }
-      objectIdsToDelete.forEach((objectId) => {
-        delete next[objectId]
-      })
-      return next
-    })
-    setLocalObjectSizes((prev) => {
-      const next = { ...prev }
-      objectIdsToDelete.forEach((objectId) => {
-        delete next[objectId]
-      })
-      return next
-    })
-    setSelectedIds([])
-    touchBoard()
-  }, [canEditBoard, deleteBoardObjectById, hasLiveBoardAccess, logActivity, pushHistory, selectedObjects, touchBoard, user])
-
-  const duplicateObject = useCallback(
-    async (source: BoardObject, options?: { selectAfter?: boolean; offset?: number }) => {
-      if (!db || !user || !hasLiveBoardAccess || !canEditBoard) {
-        return null
-      }
-
-      const id = crypto.randomUUID()
-      const now = Date.now()
-      const duplicateOffset = typeof options?.offset === 'number' ? options.offset : OBJECT_DUPLICATE_OFFSET
-      const zIndex = objectsRef.current.reduce(
-        (maxValue, boardObject) => Math.max(maxValue, boardObject.zIndex),
-        0,
-      )
-
-      const duplicate: BoardObject =
-        source.type === 'connector'
-          ? {
-              ...source,
-              id,
-              start: {
-                x: source.start.x + duplicateOffset,
-                y: source.start.y + duplicateOffset,
-              },
-              end: {
-                x: source.end.x + duplicateOffset,
-                y: source.end.y + duplicateOffset,
-              },
-              ...toConnectorBounds(
-                {
-                  x: source.start.x + duplicateOffset,
-                  y: source.start.y + duplicateOffset,
-                },
-                {
-                  x: source.end.x + duplicateOffset,
-                  y: source.end.y + duplicateOffset,
-                },
-              ),
-              fromObjectId: null,
-              toObjectId: null,
-              fromAnchor: null,
-              toAnchor: null,
-              comments: [],
-              votesByUser: {},
-              zIndex: zIndex + 1,
-              createdBy: user.uid,
-              updatedBy: user.uid,
-              createdAt: now,
-              updatedAt: now,
-              version: 1,
-            }
-          : {
-              ...source,
-              frameId: null,
-              id,
-              position: {
-                x: source.position.x + duplicateOffset,
-                y: source.position.y + duplicateOffset,
-              },
-              comments: [],
-              votesByUser: {},
-              zIndex: zIndex + 1,
-              createdBy: user.uid,
-              updatedBy: user.uid,
-              createdAt: now,
-              updatedAt: now,
-              version: 1,
-      }
-
-      await writeBoardObject(duplicate)
-      if (!isApplyingHistoryRef.current) {
-        pushHistory({ type: 'create', object: duplicate })
-      }
-      void logActivity({
-        actorId: user.uid,
-        actorName: user.displayName || user.email || 'Anonymous',
-        action: `duplicated ${source.type}`,
-        targetId: duplicate.id,
-        targetType: duplicate.type,
-      })
-      if (options?.selectAfter !== false) {
-        setSelectedIds([id])
-      }
-      touchBoard()
-      return duplicate
-    },
-    [canEditBoard, hasLiveBoardAccess, logActivity, pushHistory, touchBoard, user, writeBoardObject],
-  )
-
-  const duplicateSelected = useCallback(async () => {
-    if (!canEditBoard) {
-      return
-    }
-
-    const sourceIds = selectedIdsRef.current
-    const sourceObjects = selectedObjects.length > 0
-      ? selectedObjects
-      : sourceIds
-          .map((id) => objectsRef.current.find((boardObject) => boardObject.id === id))
-          .filter((boardObject): boardObject is BoardObject => Boolean(boardObject))
-    if (sourceObjects.length === 0) {
-      return
-    }
-
-    const duplicatedIds: string[] = []
-    for (const boardObject of sourceObjects) {
-      const duplicated = await duplicateObject(boardObject, { selectAfter: false })
-      if (duplicated) {
-        duplicatedIds.push(duplicated.id)
-      }
-    }
-
-    if (duplicatedIds.length > 0) {
-      selectedIdsRef.current = duplicatedIds
-      setSelectedIds(duplicatedIds)
-    }
-  }, [canEditBoard, duplicateObject, selectedObjects])
-
-  const copySelectionToClipboard = useCallback(() => {
-    const sourceIds = selectedIdsRef.current
-    const sourceObjects = sourceIds
-      .map((id) => objectsRef.current.find((boardObject) => boardObject.id === id))
-      .filter((boardObject): boardObject is BoardObject => Boolean(boardObject))
-
-    if (sourceObjects.length === 0) {
-      return false
-    }
-
-    clipboardObjectsRef.current = sourceObjects.map((boardObject) => cloneBoardObject(boardObject))
-    clipboardPasteCountRef.current = 0
-    return true
-  }, [])
-
-  const pasteClipboardObjects = useCallback(async () => {
-    if (!canEditBoard || clipboardObjectsRef.current.length === 0) {
-      return
-    }
-
-    const pasteIteration = clipboardPasteCountRef.current + 1
-    const pasteOffset = OBJECT_DUPLICATE_OFFSET * pasteIteration
-    const duplicatedIds: string[] = []
-    for (const source of clipboardObjectsRef.current) {
-      const duplicated = await duplicateObject(source, { selectAfter: false, offset: pasteOffset })
-      if (duplicated) {
-        duplicatedIds.push(duplicated.id)
-      }
-    }
-
-    if (duplicatedIds.length === 0) {
-      return
-    }
-
-    clipboardPasteCountRef.current = pasteIteration
-    selectedIdsRef.current = duplicatedIds
-    setSelectedIds(duplicatedIds)
-  }, [canEditBoard, duplicateObject])
-
-  const applyHistoryEntry = useCallback(
-    async (entry: HistoryEntry, direction: 'undo' | 'redo') => {
-      if (!user) {
-        return
-      }
-
-      isApplyingHistoryRef.current = true
-      try {
-        if (entry.type === 'create') {
-          if (direction === 'undo') {
-            await deleteBoardObjectById(entry.object.id)
-          } else {
-            await writeBoardObject(entry.object)
-          }
-          setSelectedIds([entry.object.id])
-        } else if (entry.type === 'delete') {
-          if (direction === 'undo') {
-            await writeBoardObject(entry.object)
-          } else {
-            await deleteBoardObjectById(entry.object.id)
-          }
-          setSelectedIds([entry.object.id])
-        } else if (entry.type === 'patch') {
-          await patchObject(entry.objectId, direction === 'undo' ? entry.before : entry.after, {
-            recordHistory: false,
-            logEvent: false,
-          })
-          setSelectedIds([entry.objectId])
-        }
-      } finally {
-        isApplyingHistoryRef.current = false
-      }
-    },
-    [deleteBoardObjectById, patchObject, user, writeBoardObject],
-  )
-
-  const undo = useCallback(async () => {
-    if (!canEditBoard) {
-      return
-    }
-    const entry = historyPastRef.current.at(-1)
-    if (!entry) {
-      return
-    }
-
-    historyPastRef.current = historyPastRef.current.slice(0, -1)
-    historyFutureRef.current = [...historyFutureRef.current, entry]
-    await applyHistoryEntry(entry, 'undo')
-  }, [applyHistoryEntry, canEditBoard])
-
-  const redo = useCallback(async () => {
-    if (!canEditBoard) {
-      return
-    }
-    const entry = historyFutureRef.current.at(-1)
-    if (!entry) {
-      return
-    }
-
-    historyFutureRef.current = historyFutureRef.current.slice(0, -1)
-    historyPastRef.current = [...historyPastRef.current, entry]
-    await applyHistoryEntry(entry, 'redo')
-  }, [applyHistoryEntry, canEditBoard])
+  const {
+    copySelectionToClipboard,
+    deleteSelected,
+    duplicateObject,
+    duplicateSelected,
+    pasteClipboardObjects,
+    redo,
+    rotateSelectionBy,
+    undo,
+  } = useBoardHistoryActions({
+    canEditBoard,
+    db,
+    deleteBoardObjectById,
+    hasLiveBoardAccess,
+    historyFutureRef,
+    historyPastRef,
+    isApplyingHistoryRef,
+    logActivity,
+    objectsRef,
+    patchObject,
+    pushHistory,
+    selectedIdsRef,
+    selectedObjects,
+    setInlineEditor,
+    setLocalConnectorGeometry,
+    setLocalObjectPositions,
+    setLocalObjectSizes,
+    setSelectedIds,
+    touchBoard,
+    user,
+    writeBoardObject,
+    clipboardObjectsRef,
+    clipboardPasteCountRef,
+  })
 
   const {
     zoomIn,
@@ -2258,27 +2023,6 @@ export const BoardRuntimeController = () => {
     }
   }, [selectionBox?.active])
 
-  const rotateSelectionBy = useCallback(
-    async (deltaDegrees: number) => {
-      const rotatableObjects = selectedObjects.filter((candidate) => candidate.type !== 'connector')
-      if (rotatableObjects.length === 0) {
-        return
-      }
-
-      for (let index = 0; index < rotatableObjects.length; index += 1) {
-        const boardObject = rotatableObjects[index]
-        const nextRotation = normalizeRotationDegrees((boardObject.rotation || 0) + deltaDegrees)
-        await patchObject(
-          boardObject.id,
-          { rotation: nextRotation },
-          index === 0
-            ? { actionLabel: `rotated ${rotatableObjects.length === 1 ? boardObject.type : 'selection'}` }
-            : { recordHistory: false, logEvent: false },
-        )
-      }
-    },
-    [patchObject, selectedObjects],
-  )
   const closeCommandPalette = useCallback(() => {
     setShowCommandPalette(false)
     setCommandPaletteQuery('')
