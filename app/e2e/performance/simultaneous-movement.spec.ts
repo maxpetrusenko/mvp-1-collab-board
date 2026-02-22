@@ -1,6 +1,12 @@
 import { expect, test, type TestInfo } from '@playwright/test'
 
-import { cleanupTestUser, createOrReuseTestUser, loginWithEmail } from '../helpers/auth'
+import {
+  cleanupTestUser,
+  createOrReuseTestUser,
+  getUserIdFromIdToken,
+  loadAuthTestConfig,
+  loginWithEmail,
+} from '../helpers/auth'
 import { fetchBoardObjects } from '../helpers/firestore'
 import { seedBoardObjects } from '../helpers/performance'
 
@@ -30,8 +36,8 @@ const simulateConcurrentObjectMoves = async (
   durationMs: number,
   updatesPerSecond: number,
 ): Promise<{ updatesCompleted: number; avgUpdateLatency: number }> => {
-  const { doc, getFirestore, updateDoc } = await import('firebase/firestore')
-  const db = getFirestore()
+  const { firebaseProjectId } = loadAuthTestConfig()
+  const updatedBy = getUserIdFromIdToken(idToken)
 
   const startTime = Date.now()
   let updatesCompleted = 0
@@ -39,7 +45,6 @@ const simulateConcurrentObjectMoves = async (
 
   // Create update promises for concurrent execution
   const updatePromises = objectIds.map(async (objectId, index) => {
-    const objectRef = doc(db, 'boards', boardId, 'objects', objectId)
     const intervalMs = 1000 / updatesPerSecond
     let localUpdates = 0
 
@@ -52,11 +57,33 @@ const simulateConcurrentObjectMoves = async (
       const dy = Math.round(Math.sin(angle) * 20)
 
       try {
-        await updateDoc(objectRef, {
-          'position.x': dx + (index * 50), // Spread objects across x-axis
-          'position.y': dy + (index * 30), // Spread objects across y-axis
-          updatedAt: Date.now(),
+        const endpoint =
+          `https://firestore.googleapis.com/v1/projects/${firebaseProjectId}/databases/(default)/documents/boards/${boardId}/objects/${objectId}` +
+          '?updateMask.fieldPaths=position.x&updateMask.fieldPaths=position.y&updateMask.fieldPaths=updatedAt&updateMask.fieldPaths=updatedBy'
+        const response = await fetch(endpoint, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({
+            fields: {
+              position: {
+                mapValue: {
+                  fields: {
+                    x: { integerValue: String(dx + (index * 50)) }, // Spread objects across x-axis
+                    y: { integerValue: String(dy + (index * 30)) }, // Spread objects across y-axis
+                  },
+                },
+              },
+              updatedAt: { integerValue: String(Date.now()) },
+              updatedBy: { stringValue: updatedBy },
+            },
+          }),
         })
+        if (!response.ok) {
+          throw new Error(`Patch failed with status ${response.status}`)
+        }
 
         const updateEnd = Date.now()
         latencies.push(updateEnd - updateStart)

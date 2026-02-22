@@ -10,7 +10,7 @@ type AICommandPanelProps = {
 type AICommandHistoryItem = {
   id: string
   command: string
-  status: 'queued' | 'running' | 'success' | 'error'
+  status: 'queued' | 'running' | 'success' | 'warning' | 'error'
   queuedAt?: number
   completedAt?: number
   error?: string

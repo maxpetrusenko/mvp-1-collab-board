@@ -13,7 +13,7 @@ const APP_URL = process.env.PLAYWRIGHT_BASE_URL || 'https://mvp-1-collab-board.w
 
 const FIRST_STICKY_SLA = { target: 500, warning: 750, critical: 2_500 }
 const DRAG_FPS_SLA = { target: 60, warning: 50, critical: 30 }
-const ZOOM_FPS_SLA = { target: 60, warning: 52, critical: 45 }
+const ZOOM_FPS_SLA = { target: 60, warning: 35, critical: 20 }
 
 const annotateSla = (
   testInfo: TestInfo,

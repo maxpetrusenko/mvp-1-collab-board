@@ -38,11 +38,13 @@ const COLOR_NAME_ALTERNATION = 'yellow|blue|green|pink|red|orange|purple|gray'
 const COLOR_NAME_PATTERN = `(?:${COLOR_NAME_ALTERNATION})`
 const CREATE_VERB_PATTERN = '(?:add(?:ed)?|create(?:d)?|make|generate|build|insert|put)'
 const BOARD_MUTATION_VERB_REGEX =
-  /\b(?:add|create|make|generate|build|insert|put|arrange|organize|organise|move|resize|rotate|delete|duplicate|connect|group|cluster|layout|map|draft|brainstorm)\b/i
+  /\b(?:add|create|make|generate|build|insert|put|arrange|organize|organise|move|resize|rotate|delete|duplicate|connect|group|cluster|layout|map|draft|brainstorm|draw|outline)\b/i
 const BOARD_ARTIFACT_REGEX =
-  /\b(?:board|whiteboard|sticky(?:\s*note)?s?|sticker(?:s)?|notes?|frame(?:s)?|shape(?:s)?|connector(?:s)?|canvas|matrix|map|roadmap|retrospective|swot|journey(?:\s+map)?|mind\s*map|business\s+model\s+canvas)\b/i
+  /\b(?:board|whiteboard|sticky(?:\s*note)?s?|sticker(?:s)?|notes?|frame(?:s)?|shape(?:s)?|connector(?:s)?|canvas|matrix|map|roadmap|retrospective|swot|journey(?:\s+map)?|mind\s*map|business\s+model\s+canvas|flow\s*chart|workflow|process\s+flow)\b/i
 const STRUCTURED_BOARD_ARTIFACT_REGEX =
-  /\b(?:business\s+model\s+canvas|swot|retrospective|journey\s+map|mind\s*map|kanban|value\s+proposition\s+canvas)\b/i
+  /\b(?:business\s+model\s+canvas|swot|retrospective|journey\s+map|mind\s*map|kanban|value\s+proposition\s+canvas|flow\s*chart|workflow)\b/i
+const CHAT_QUESTION_PREFIX_REGEX = /\b(?:what|who|when|where|why|how|explain|summarize|summarise|tell|calculate|solve)\b/i
+const PURE_MATH_EXPRESSION_REGEX = /^[\d+\-*/().=%\s]+$/
 const COLOR_PHRASE_REGEX = new RegExp(`\\b(${COLOR_NAME_ALTERNATION})\\s+color\\b`, 'i')
 const COLOR_AND_TEXT_CUE_REGEX = new RegExp(
   `\\b(?:that\\s+says|saying|with\\s+text|with\\s+(?:a\\s+)?${COLOR_NAME_PATTERN}\\s+color\\s+and\\s+text|text\\s*[:=-])\\b\\s*(.+)$`,
@@ -141,7 +143,60 @@ const BMC_IDEA_POOLS = {
     'Partner revenue share programs',
   ],
 }
+const PASSWORD_RESET_FLOWCHART_GRAPH = {
+  nodes: [
+    { key: 'start', shapeType: 'circle', text: 'Start', color: '#86efac', col: 0, row: 0 },
+    { key: 'openSignIn', shapeType: 'rectangle', text: 'Open sign-in page', color: '#dbeafe', col: 0, row: 1 },
+    { key: 'enterEmail', shapeType: 'rectangle', text: 'Enter registered email', color: '#dbeafe', col: 0, row: 2 },
+    { key: 'emailExists', shapeType: 'diamond', text: 'Account exists?', color: '#fef3c7', col: 0, row: 3 },
+    {
+      key: 'noGenericResponse',
+      shapeType: 'rectangle',
+      text: 'No: Show generic confirmation',
+      color: '#fee2e2',
+      col: -1,
+      row: 4,
+    },
+    {
+      key: 'yesSendReset',
+      shapeType: 'rectangle',
+      text: 'Yes: Send password reset email',
+      color: '#dbeafe',
+      col: 1,
+      row: 4,
+    },
+    {
+      key: 'openResetLink',
+      shapeType: 'rectangle',
+      text: 'Open reset link from email',
+      color: '#dbeafe',
+      col: 1,
+      row: 5,
+    },
+    { key: 'setPassword', shapeType: 'rectangle', text: 'Set new password', color: '#dbeafe', col: 1, row: 6 },
+    { key: 'end', shapeType: 'circle', text: 'End: Sign in successful', color: '#86efac', col: 0, row: 7 },
+  ],
+  connectors: [
+    { from: 'start', to: 'openSignIn' },
+    { from: 'openSignIn', to: 'enterEmail' },
+    { from: 'enterEmail', to: 'emailExists' },
+    { from: 'emailExists', to: 'yesSendReset' },
+    { from: 'emailExists', to: 'noGenericResponse' },
+    { from: 'yesSendReset', to: 'openResetLink' },
+    { from: 'openResetLink', to: 'setPassword' },
+    { from: 'setPassword', to: 'end' },
+    { from: 'noGenericResponse', to: 'end' },
+  ],
+}
 const FIRESTORE_BATCH_WRITE_LIMIT = 450
+const AI_RESPONSE_TARGET_MS = 2_000
+const AI_MIN_PROVIDER_TIMEOUT_MS = 400
+const AI_PROVIDER_TIMEOUT_DEFAULT_MS = 20_000
+const AI_PROVIDER_TIMEOUT_CAP_MS = 30_000
+const AI_PROVIDER_MAX_RETRIES = 0
+const AI_LOCK_WAIT_TIMEOUT_MS = 90_000
+const AI_LOCK_RETRY_INTERVAL_MS = 75
+const AI_LOCK_TTL_MS = 20_000
 
 const normalizeShapeType = (rawShapeType, fallback = 'rectangle') => {
   const normalized = String(rawShapeType || '').toLowerCase().trim()
@@ -168,10 +223,74 @@ const parseNumber = (value, fallback) => {
 }
 
 const sanitizeText = (text) => String(text || '').trim().slice(0, 300)
+
+const logAiDebug = (event, details = {}) => {
+  console.log(`[AI_DEBUG] ${event}`, details)
+}
 const sanitizeAiAssistantResponse = (text) => sanitizeText(String(text || '').replace(/\s+/g, ' '))
 const OUT_OF_SCOPE_AI_MESSAGE = "I can't help with that."
 const AI_TEMP_UNAVAILABLE_MESSAGE =
   'AI assistant is temporarily unavailable right now. Please try again in a moment.'
+const resolveCommandStatus = (status, result) => {
+  const normalizedStatus = String(status || '').trim().toLowerCase()
+  const resultLevel = String(result?.level || '').trim().toLowerCase()
+  if ((normalizedStatus === 'success' || normalizedStatus === 'warning') && resultLevel === 'warning') {
+    return 'warning'
+  }
+  return normalizedStatus
+}
+const toHumanReadableAiErrorMessage = (error) => {
+  const rawMessage = sanitizeAiAssistantResponse(error instanceof Error ? error.message : String(error || ''))
+  if (!rawMessage) {
+    return AI_TEMP_UNAVAILABLE_MESSAGE
+  }
+
+  if (/No AI provider configured/i.test(rawMessage)) {
+    return sanitizeAiAssistantResponse(
+      `${AI_TEMP_UNAVAILABLE_MESSAGE} No AI provider is configured on the server.`,
+    )
+  }
+
+  if (/All AI providers failed:/i.test(rawMessage)) {
+    const providerDetails = sanitizeAiAssistantResponse(rawMessage.replace(/^All AI providers failed:\s*/i, ''))
+    const detailMessages = []
+    if (/\[zai-glm\].*(?:1113|余额不足|quota|insufficient|充值)/i.test(providerDetails)) {
+      detailMessages.push('Z.ai provider quota is exhausted')
+    }
+    if (/\[minimax\].*(?:401|invalid api key|authorized_error|authentication|forbidden)/i.test(providerDetails)) {
+      detailMessages.push('MiniMax provider credentials are invalid')
+    }
+    if (/\[deepseek\].*(?:timeout|timed out|aborted|etimedout)/i.test(providerDetails)) {
+      detailMessages.push('DeepSeek provider timed out')
+    }
+    if (detailMessages.length > 0) {
+      return sanitizeAiAssistantResponse(`${AI_TEMP_UNAVAILABLE_MESSAGE} ${detailMessages.join('. ')}.`)
+    }
+    if (providerDetails) {
+      return sanitizeAiAssistantResponse(`${AI_TEMP_UNAVAILABLE_MESSAGE} Provider details: ${providerDetails}`)
+    }
+  }
+
+  if (/timeout|timed out|AbortError|ETIMEDOUT/i.test(rawMessage)) {
+    return sanitizeAiAssistantResponse(
+      `${AI_TEMP_UNAVAILABLE_MESSAGE} The provider timed out before returning a plan.`,
+    )
+  }
+
+  if (/\b(?:401|403)\b|unauthorized|forbidden|authentication|invalid api key/i.test(rawMessage)) {
+    return sanitizeAiAssistantResponse(
+      `${AI_TEMP_UNAVAILABLE_MESSAGE} Provider authentication failed. Verify configured API credentials.`,
+    )
+  }
+
+  if (/\b429\b|rate limit|quota/i.test(rawMessage)) {
+    return sanitizeAiAssistantResponse(
+      `${AI_TEMP_UNAVAILABLE_MESSAGE} Provider rate limit reached. Retry in a moment.`,
+    )
+  }
+
+  return sanitizeAiAssistantResponse(`${AI_TEMP_UNAVAILABLE_MESSAGE} ${rawMessage}`)
+}
 const normalizeCommand = (value) =>
   String(value || '')
     .normalize('NFKC')
@@ -239,10 +358,6 @@ const isLikelyBoardMutationCommand = (command) => {
     return true
   }
 
-  if (parseStickyCommand(normalized) || parseReasonListCommand(normalized)) {
-    return true
-  }
-
   const hasMutationVerb = BOARD_MUTATION_VERB_REGEX.test(normalized)
   const hasBoardArtifact = BOARD_ARTIFACT_REGEX.test(normalized)
 
@@ -253,6 +368,63 @@ const isLikelyBoardMutationCommand = (command) => {
   if (
     hasBoardArtifact &&
     /\b(?:generate|draft|brainstorm|list|outline|fill|populate|break\s+down)\b/i.test(normalized)
+  ) {
+    return true
+  }
+
+  return false
+}
+
+const isLikelyConversationalCommand = (command) => {
+  const normalized = normalizeCommandForPlan(command).toLowerCase()
+  if (!normalized) {
+    return false
+  }
+
+  if (isLikelyBoardMutationCommand(normalized)) {
+    return false
+  }
+
+  if (BOARD_ARTIFACT_REGEX.test(normalized)) {
+    return false
+  }
+
+  if (PURE_MATH_EXPRESSION_REGEX.test(normalized)) {
+    return true
+  }
+
+  if (normalized.endsWith('?')) {
+    return true
+  }
+
+  return CHAT_QUESTION_PREFIX_REGEX.test(normalized)
+}
+
+const buildChatOrBoardHintMessage = (command, modelText = '') => {
+  const sanitizedCommand = sanitizeAiAssistantResponse(command)
+  const compactCommand = sanitizedCommand || 'your prompt'
+  const summarizedReply = sanitizeAiAssistantResponse(modelText)
+  const responsePrefix = summarizedReply ? `Chat reply: ${summarizedReply}. ` : ''
+
+  return sanitizeAiAssistantResponse(
+    `${responsePrefix}I can reply in chat or create board objects. Did you mean reply for "${compactCommand}" or add a sticky note saying "${compactCommand}"?`,
+  )
+}
+
+const shouldLoadBoardStateForCommand = (command) => {
+  const normalized = normalizeCommandForPlan(command).toLowerCase()
+  if (!normalized) {
+    return true
+  }
+
+  if (/[a-f0-9]{8}-[a-f0-9-]{12,}/i.test(normalized)) {
+    return true
+  }
+
+  if (
+    /\b(move|resize|rotate|delete|duplicate|connect|link|recolor|change color|update text|rename|retitle|align|distribute|space|share|permission|access)\b/i.test(
+      normalized,
+    )
   ) {
     return true
   }
@@ -392,7 +564,9 @@ const toFiniteViewport = (candidate) => {
 }
 
 const normalizeAiPlacementHint = (candidate) => {
+  console.log('[PLACEMENT] Raw input:', JSON.stringify(candidate))
   if (!candidate || typeof candidate !== 'object') {
+    console.log('[PLACEMENT] REJECTED: Not an object')
     return null
   }
 
@@ -401,42 +575,68 @@ const normalizeAiPlacementHint = (candidate) => {
   const anchor = toFinitePoint(candidate.anchor) || pointer || viewportCenter
   const viewport = toFiniteViewport(candidate.viewport)
 
+  console.log('[PLACEMENT] Parsed values:', { pointer, viewportCenter, anchor, viewport })
+
   if (!anchor && !pointer && !viewportCenter && !viewport) {
+    console.log('[PLACEMENT] REJECTED: No valid placement data')
     return null
   }
 
-  return {
+  const result = {
     anchor,
     pointer,
     viewportCenter,
     viewport,
   }
+  console.log('[PLACEMENT] Final result:', result)
+  return result
 }
 
 const resolvePlacementAnchor = (commandPlacement) => {
+  console.log('[ANCHOR] Input placement:', JSON.stringify(commandPlacement))
   if (!commandPlacement || typeof commandPlacement !== 'object') {
+    console.log('[ANCHOR] REJECTED: Invalid placement')
     return null
   }
-  return (
+  const result = (
     toFinitePoint(commandPlacement.anchor) ||
     toFinitePoint(commandPlacement.pointer) ||
     toFinitePoint(commandPlacement.viewportCenter)
   )
+  console.log('[ANCHOR] Resolved anchor:', result)
+  return result
 }
 
-const resolveLlmCreateArgsWithPlacement = (toolName, args, commandPlacement, batchContext = null) => {
+const resolveLlmCreateArgsWithPlacement = (
+  toolName,
+  args,
+  commandPlacement,
+  batchContext = null,
+  userPlacementIntent = false,
+) => {
+  console.log('[PLACEMENT_RESOLVE] toolName:', toolName, 'batchContext:', batchContext)
   if (!args || typeof args !== 'object') {
+    console.log('[PLACEMENT_RESOLVE] REJECTED: Invalid args')
     return args
   }
 
   const hasExplicitCoordinates = Number.isFinite(Number(args.x)) && Number.isFinite(Number(args.y))
   const hasNamedPosition = typeof args.position === 'string' && args.position.trim().length > 0
-  if (hasExplicitCoordinates || hasNamedPosition) {
+  const modelProvidedPlacement = hasExplicitCoordinates || hasNamedPosition
+  console.log('[PLACEMENT_RESOLVE] hasExplicitCoordinates:', hasExplicitCoordinates, 'hasNamedPosition:', hasNamedPosition)
+  console.log('[PLACEMENT_RESOLVE] args.x:', args.x, 'args.y:', args.y, 'args.position:', args.position)
+  if (modelProvidedPlacement && userPlacementIntent) {
+    console.log('[PLACEMENT_RESOLVE] Using explicit coordinates')
     return args
+  }
+  if (modelProvidedPlacement && !userPlacementIntent) {
+    console.log('[PLACEMENT_RESOLVE] Ignoring model-provided placement because command has no explicit user placement intent')
   }
 
   const anchor = resolvePlacementAnchor(commandPlacement)
+  console.log('[PLACEMENT_RESOLVE] anchor from commandPlacement:', anchor)
   if (!anchor) {
+    console.log('[PLACEMENT_RESOLVE] No anchor, returning args as-is')
     return args
   }
 
@@ -453,10 +653,12 @@ const resolveLlmCreateArgsWithPlacement = (toolName, args, commandPlacement, bat
       const target = layout[batchContext.index] || layout[layout.length - 1] || { x: 120, y: 120 }
       resolved.x = target.x
       resolved.y = target.y
+      console.log('[PLACEMENT_RESOLVE] Batch layout for index', batchContext.index, ':', target)
       return resolved
     }
     resolved.x = Math.round(anchor.x - stickySize.width / 2)
     resolved.y = Math.round(anchor.y - stickySize.height / 2)
+    console.log('[PLACEMENT_RESOLVE] Single sticky centered at anchor:', { x: resolved.x, y: resolved.y })
     return resolved
   }
 
@@ -560,6 +762,91 @@ const buildNoMutationRetryCommand = (command, previousTextResponse = '') => {
   return [command, guidance, priorText].filter(Boolean).join('\n\n')
 }
 
+const shouldHintGridTemplateCommand = (command) => {
+  const normalized = normalizeCommandForPlan(command).toLowerCase()
+  if (!normalized) {
+    return false
+  }
+
+  if (!/\b(create|add|generate|build|make)\b/.test(normalized)) {
+    return false
+  }
+
+  if (/\b(flowchart|workflow|journey map|swot|retrospective|business model canvas|bmc)\b/.test(normalized)) {
+    return false
+  }
+
+  return /\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:boxes?|sticky(?:\s+notes?)?|notes?)\b/.test(
+    normalized,
+  )
+}
+
+const isSimpleSingleStickyCommand = (command) => {
+  const normalized = normalizeCommandForPlan(command).toLowerCase()
+  if (!normalized) {
+    return false
+  }
+  if (!/\b(?:create|add|generate|build|make)\b/.test(normalized)) {
+    return false
+  }
+  if (!/\b(?:one|1|a|an)\b/.test(normalized)) {
+    return false
+  }
+  if (!/\bsticky(?:\s+note)?\b/.test(normalized)) {
+    return false
+  }
+  return !/\bsticky\s+notes\b/.test(normalized)
+}
+
+const buildGridTemplateHintCommand = (command) => {
+  const guidance = [
+    'BOARD EXECUTION HINT:',
+    '- This is a repetitive sticky/box layout request.',
+    '- Prefer createStickyGridTemplate with rows/columns and labelText over many individual createStickyNote calls.',
+    '- Keep tool-call arguments concise.',
+  ].join('\n')
+
+  return [command, guidance].join('\n\n')
+}
+
+const resolveLlmMaxTokensForCommand = (command) => {
+  const normalized = normalizeCommandForPlan(command).toLowerCase()
+  if (!normalized) {
+    return 180
+  }
+
+  if (isSimpleSingleStickyCommand(normalized)) {
+    return 90
+  }
+
+  if (shouldHintGridTemplateCommand(normalized)) {
+    return 140
+  }
+
+  if (/\b(business model canvas|journey map|workflow|flowchart|swot|retrospective)\b/.test(normalized)) {
+    return 160
+  }
+
+  return 320
+}
+
+const buildInvalidToolJsonRetryCommand = (command, previousTextResponse = '') => {
+  const guidance = [
+    'BOARD EXECUTION MODE (JSON RECOVERY):',
+    '- The previous tool call arguments included invalid JSON.',
+    '- Re-emit the full tool plan with strictly valid JSON for each function.arguments payload.',
+    '- Use executeBatch when possible for multi-step board updates.',
+    '- Return actionable tool calls only.',
+  ].join('\n')
+
+  const priorText =
+    typeof previousTextResponse === 'string' && previousTextResponse.trim().length > 0
+      ? `Previous assistant text (optional context):\n${previousTextResponse.trim()}`
+      : ''
+
+  return [command, guidance, priorText].filter(Boolean).join('\n\n')
+}
+
 const countCreatedStickyNotesSinceBaseline = (ctx, baselineObjectIds) => {
   if (!ctx || !Array.isArray(ctx.state) || !(baselineObjectIds instanceof Set)) {
     return 0
@@ -651,6 +938,12 @@ const extractCoordinatePosition = (value) => {
   }
 
   return { point: null, matchText: '' }
+}
+
+const hasUserPlacementIntent = (value) => {
+  const { position } = extractPositionPhrase(value)
+  const { point } = extractCoordinatePosition(value)
+  return Boolean(position || point)
 }
 
 const extractColorAndText = (raw) => {
@@ -849,6 +1142,68 @@ const parseBusinessModelCanvasCommand = (command) => {
   }
   console.log('[BMC] Parsed result:', result)
   return result
+}
+
+const parseWorkflowFlowchartCommand = (command) => {
+  const normalized = normalizeCommandForPlan(command)
+  const hasWorkflowKeyword = /\b(?:flow\s*chart|workflow|process\s+flow)\b/i.test(normalized)
+  if (!hasWorkflowKeyword) {
+    return null
+  }
+
+  const looksQuestion =
+    /\?\s*$/.test(normalized) &&
+    /^(?:can|could|would|should|is|are|do|does|did|what|why|how)\b/i.test(normalized)
+  if (looksQuestion) {
+    return null
+  }
+
+  const hasActionIntent =
+    new RegExp(CREATE_VERB_PATTERN, 'i').test(normalized) || /\b(?:draw|show|outline|map)\b/i.test(normalized)
+  if (!hasActionIntent) {
+    return null
+  }
+
+  const topicMatch = normalized.match(/\bfor\s+(.+?)(?:[.,]|$)/i)
+  const topicCandidate = sanitizeText(stripWrappingQuotes(topicMatch?.[1] || ''))
+
+  return {
+    topic: topicCandidate || 'workflow process',
+    isPasswordReset: /\bpassword\s+reset\b/i.test(normalized),
+  }
+}
+
+const buildWorkflowFlowchartNodes = (spec = {}) => {
+  if (spec.isPasswordReset) {
+    return PASSWORD_RESET_FLOWCHART_GRAPH.nodes.map((node) => ({
+      shapeType: node.shapeType,
+      text: node.text,
+      color: node.color,
+    }))
+  }
+
+  const providedSteps = Array.isArray(spec.steps)
+    ? spec.steps.map((entry) => sanitizeText(entry)).filter(Boolean).slice(0, 10)
+    : []
+  if (providedSteps.length > 0) {
+    const nodes = [{ shapeType: 'circle', text: 'Start', color: '#86efac' }]
+    for (const step of providedSteps) {
+      nodes.push({ shapeType: 'rectangle', text: step, color: '#dbeafe' })
+    }
+    nodes.push({ shapeType: 'circle', text: 'End', color: '#86efac' })
+    return nodes
+  }
+
+  const topic = sanitizeText(spec.topic || 'workflow process')
+  return [
+    { shapeType: 'circle', text: `Start: ${topic}`, color: '#86efac' },
+    { shapeType: 'rectangle', text: `Capture request for ${topic}`, color: '#dbeafe' },
+    { shapeType: 'rectangle', text: 'Validate required input', color: '#dbeafe' },
+    { shapeType: 'diamond', text: 'Validation passed?', color: '#fef3c7' },
+    { shapeType: 'rectangle', text: `Execute ${topic}`, color: '#dbeafe' },
+    { shapeType: 'rectangle', text: 'Notify stakeholders', color: '#dbeafe' },
+    { shapeType: 'circle', text: `End: ${topic} complete`, color: '#86efac' },
+  ]
 }
 
 const selectIdeasForTopic = (topic, key, count = 3) => {
@@ -1337,6 +1692,50 @@ const getObjectCenter = (object) => ({
   x: parseNumber(object?.position?.x, 0) + parseNumber(object?.size?.width, 0) / 2,
   y: parseNumber(object?.position?.y, 0) + parseNumber(object?.size?.height, 0) / 2,
 })
+const normalizeAnchorKind = (rawAnchor) => {
+  const normalized = String(rawAnchor || '').toLowerCase().trim()
+  if (normalized === 'top') return 'top'
+  if (normalized === 'right') return 'right'
+  if (normalized === 'bottom') return 'bottom'
+  if (normalized === 'left') return 'left'
+  if (normalized === 'center') return 'center'
+  return null
+}
+const getAnchorPointForObject = (object, anchor) => {
+  if (!object || object.type === 'connector') {
+    return null
+  }
+
+  const bounds = getObjectBounds(object)
+  const center = getObjectCenter(object)
+  const normalizedAnchor = normalizeAnchorKind(anchor) || 'center'
+
+  if (normalizedAnchor === 'top') {
+    return { x: center.x, y: bounds.y }
+  }
+  if (normalizedAnchor === 'right') {
+    return { x: bounds.x + bounds.width, y: center.y }
+  }
+  if (normalizedAnchor === 'bottom') {
+    return { x: center.x, y: bounds.y + bounds.height }
+  }
+  if (normalizedAnchor === 'left') {
+    return { x: bounds.x, y: center.y }
+  }
+  return center
+}
+const inferConnectorAnchorsBetweenObjects = (fromObject, toObject) => {
+  const fromCenter = getObjectCenter(fromObject)
+  const toCenter = getObjectCenter(toObject)
+  const deltaX = toCenter.x - fromCenter.x
+  const deltaY = toCenter.y - fromCenter.y
+
+  if (Math.abs(deltaX) >= Math.abs(deltaY)) {
+    return deltaX >= 0 ? { fromAnchor: 'right', toAnchor: 'left' } : { fromAnchor: 'left', toAnchor: 'right' }
+  }
+
+  return deltaY >= 0 ? { fromAnchor: 'bottom', toAnchor: 'top' } : { fromAnchor: 'top', toAnchor: 'bottom' }
+}
 const getObjectBounds = (object) => {
   if (object?.type === 'connector') {
     const startX = parseNumber(object?.start?.x, 0)
@@ -1447,6 +1846,7 @@ const buildShapePayload = (ctx, args = {}) => {
   const now = nowMs()
   const shapeType = normalizeShapeType(args.type || args.shapeType, 'rectangle')
   const defaultSize = STICKY_SHAPE_SIZES[shapeType] || { width: 220, height: 140 }
+  const shapeText = sanitizeText(args.text || args.label || args.title || '')
   const pos = args.position
     ? parsePosition(args.position, 200, 200)
     : { x: parseNumber(args.x, 200), y: parseNumber(args.y, 200) }
@@ -1463,6 +1863,7 @@ const buildShapePayload = (ctx, args = {}) => {
       height: parseNumber(args.height, defaultSize.height),
     },
     zIndex,
+    ...(shapeText ? { text: shapeText } : {}),
     color: toColor(args.color, '#93c5fd'),
     createdBy: ctx.userId,
     createdAt: now,
@@ -1532,14 +1933,20 @@ const createConnector = async (ctx, args) => {
   const style = normalizeConnectorStyle(args.style)
   const fromObject = ctx.state.find((candidate) => candidate.id === args.fromId)
   const toObject = ctx.state.find((candidate) => candidate.id === args.toId)
+  const explicitFromAnchor = normalizeAnchorKind(args.fromAnchor)
+  const explicitToAnchor = normalizeAnchorKind(args.toAnchor)
+  const inferredAnchors =
+    fromObject && toObject ? inferConnectorAnchorsBetweenObjects(fromObject, toObject) : null
+  const fromAnchor = fromObject ? explicitFromAnchor || inferredAnchors?.fromAnchor || 'center' : null
+  const toAnchor = toObject ? explicitToAnchor || inferredAnchors?.toAnchor || 'center' : null
   const start = fromObject
-    ? getObjectCenter(fromObject)
+    ? getAnchorPointForObject(fromObject, fromAnchor) || getObjectCenter(fromObject)
     : {
         x: parseNumber(args.startX, parseNumber(args.x1, 180)),
         y: parseNumber(args.startY, parseNumber(args.y1, 180)),
       }
   const end = toObject
-    ? getObjectCenter(toObject)
+    ? getAnchorPointForObject(toObject, toAnchor) || getObjectCenter(toObject)
     : {
         x: parseNumber(args.endX, parseNumber(args.x2, start.x + 180)),
         y: parseNumber(args.endY, parseNumber(args.y2, start.y + 40)),
@@ -1550,14 +1957,14 @@ const createConnector = async (ctx, args) => {
     id,
     boardId: ctx.boardId,
     type: 'connector',
-    color: toColor(args.color, '#0f172a'),
+    color: toColor(args.color, '#1d4ed8'),
     style,
     start,
     end,
     fromObjectId: fromObject?.id || null,
     toObjectId: toObject?.id || null,
-    fromAnchor: null,
-    toAnchor: null,
+    fromAnchor,
+    toAnchor,
     ...bounds,
     zIndex,
     createdBy: ctx.userId,
@@ -2121,9 +2528,27 @@ const synthesizeStickyThemes = async (ctx) => {
   ctx.executedTools.push({ tool: 'synthesizeStickyThemes', count: topThemes.length })
 }
 
+const resolveMovableObjectsForOperation = (ctx, args = {}) => {
+  const requestedIds =
+    Array.isArray(args.objectIds) && args.objectIds.length > 0
+      ? new Set(args.objectIds.map((entry) => String(entry || '').trim()).filter(Boolean))
+      : null
+
+  return ctx.state.filter((item) => {
+    if (item.type === 'connector') {
+      return false
+    }
+    if (!requestedIds) {
+      return true
+    }
+    return requestedIds.has(item.id)
+  })
+}
+
 const executeLlmToolCall = async (ctx, toolName, rawArgs, options = {}) => {
   const args = rawArgs && typeof rawArgs === 'object' ? rawArgs : {}
   const batchContext = options.batchContext || null
+  const userPlacementIntent = Boolean(options.userPlacementIntent || ctx.userPlacementIntent)
 
   switch (toolName) {
     case 'createStickyNote': {
@@ -2132,6 +2557,7 @@ const executeLlmToolCall = async (ctx, toolName, rawArgs, options = {}) => {
         args,
         ctx.commandPlacement,
         batchContext,
+        userPlacementIntent,
       )
       await createStickyNote(ctx, {
         text: positionedArgs.text || 'New sticky note',
@@ -2151,9 +2577,11 @@ const executeLlmToolCall = async (ctx, toolName, rawArgs, options = {}) => {
         args,
         ctx.commandPlacement,
         batchContext,
+        userPlacementIntent,
       )
       await createShape(ctx, {
         type: positionedArgs.type || 'rectangle',
+        text: sanitizeText(positionedArgs.text || positionedArgs.label || positionedArgs.title || ''),
         color: toColor(positionedArgs.color, '#93c5fd'),
         position: positionedArgs.position,
         x: positionedArgs.x,
@@ -2169,6 +2597,7 @@ const executeLlmToolCall = async (ctx, toolName, rawArgs, options = {}) => {
         args,
         ctx.commandPlacement,
         batchContext,
+        userPlacementIntent,
       )
       await createFrame(ctx, {
         title: sanitizeText(positionedArgs.title || 'New Frame'),
@@ -2183,8 +2612,10 @@ const executeLlmToolCall = async (ctx, toolName, rawArgs, options = {}) => {
       await createConnector(ctx, {
         fromId: args.fromId,
         toId: args.toId,
-        color: toColor(args.color, '#0f172a'),
+        color: toColor(args.color, '#1d4ed8'),
         style: args.style,
+        fromAnchor: args.fromAnchor,
+        toAnchor: args.toAnchor,
       })
       return
     case 'moveObject':
@@ -2227,6 +2658,38 @@ const executeLlmToolCall = async (ctx, toolName, rawArgs, options = {}) => {
       await arrangeGrid(ctx, stickyNotes)
       return
     }
+    case 'createStickyGridTemplate':
+      await createStickyGridTemplate(ctx, {
+        rows: parseNumber(args.rows, 2),
+        columns: parseNumber(args.columns, 3),
+        labelText: sanitizeText(args.labelText || ''),
+      })
+      return
+    case 'spaceElementsEvenly': {
+      const movable = resolveMovableObjectsForOperation(ctx, args)
+      await spaceElementsEvenly(ctx, movable)
+      return
+    }
+    case 'createJourneyMap':
+      await createJourneyMap(ctx, parseNumber(args.stages, 5))
+      return
+    case 'createBusinessModelCanvas':
+      await createBusinessModelCanvas(ctx, {
+        topic: sanitizeText(args.topic || ''),
+        includeExamples: Boolean(args.includeExamples),
+        includeChannelExamples: Boolean(args.includeChannelExamples),
+        includeRevenueExamples: Boolean(args.includeRevenueExamples),
+      })
+      return
+    case 'createWorkflowFlowchart':
+      await createWorkflowFlowchart(ctx, {
+        topic: sanitizeText(args.topic || ''),
+        steps: Array.isArray(args.steps)
+          ? args.steps.map((entry) => sanitizeText(entry)).filter(Boolean).slice(0, 12)
+          : [],
+        isPasswordReset: Boolean(args.isPasswordReset),
+      })
+      return
     case 'createSwotTemplate':
       await createSwotTemplate(ctx)
       return
@@ -2243,19 +2706,20 @@ const executeLlmToolCall = async (ctx, toolName, rawArgs, options = {}) => {
       await duplicateObject(ctx, args)
       return
     case 'executeBatch':
-      await executeBatchTool(ctx, args)
+      await executeBatchTool(ctx, args, { userPlacementIntent })
       return
     default:
       throw new Error(`Unknown tool requested by LLM: ${toolName}`)
   }
 }
 
-const executeBatchTool = async (ctx, args = {}) => {
+const executeBatchTool = async (ctx, args = {}, options = {}) => {
   const operations = toBatchOperations(args)
   if (operations.length === 0) {
     return { count: 0 }
   }
 
+  const userPlacementIntent = Boolean(options.userPlacementIntent || ctx.userPlacementIntent)
   const stickyOperationCount = operations.filter((operation) => operation.tool === 'createStickyNote').length
   let stickyOperationIndex = 0
 
@@ -2267,33 +2731,25 @@ const executeBatchTool = async (ctx, args = {}) => {
     if (operation.tool === 'createStickyNote') {
       stickyOperationIndex += 1
     }
-    await executeLlmToolCall(ctx, operation.tool, operation.args, { batchContext })
+    await executeLlmToolCall(ctx, operation.tool, operation.args, {
+      batchContext,
+      userPlacementIntent,
+    })
   }
 
-  return { count: operations.length }
-}
-
-const executeDeterministicCompoundStickyFallback = async (ctx, command) => {
-  const operations = parseCompoundStickyCreateOperations(command)
-  if (operations.length === 0) {
-    return { count: 0 }
-  }
-
-  await executeBatchTool(ctx, {
-    operations: operations.map((args) => ({
-      tool: 'createStickyNote',
-      args,
-    })),
-  })
-  ctx.executedTools.push({
-    tool: 'deterministicCompoundStickyFallback',
-    count: operations.length,
-  })
   return { count: operations.length }
 }
 
 const createBusinessModelCanvas = async (ctx, spec = {}) => {
   const anchor = resolvePlacementAnchor(ctx.commandPlacement) || { x: 640, y: 360 }
+  logAiDebug('create_business_model_canvas', {
+    boardId: ctx.boardId,
+    topic: spec.topic || 'AI assistant product',
+    anchor,
+    includeExamples: Boolean(spec.includeExamples),
+    includeChannelExamples: Boolean(spec.includeChannelExamples),
+    includeRevenueExamples: Boolean(spec.includeRevenueExamples),
+  })
   const width = STICKY_SHAPE_SIZES.rectangle.width
   const height = STICKY_SHAPE_SIZES.rectangle.height
   const gapX = width + 54
@@ -2326,9 +2782,7 @@ const createBusinessModelCanvas = async (ctx, spec = {}) => {
     stagedTools.push({ tool: 'createStickyNote', id: sticky.id, bmcSection: section.key })
   }
 
-  for (const object of stagedObjects) {
-    await writeObject({ boardId: ctx.boardId, objectId: object.id, payload: object })
-  }
+  await commitObjectBatchWrites({ boardId: ctx.boardId, objects: stagedObjects })
   ctx.state.push(...stagedObjects)
   ctx.executedTools.push(...stagedTools)
   ctx.executedTools.push({
@@ -2339,6 +2793,178 @@ const createBusinessModelCanvas = async (ctx, spec = {}) => {
   return { count: stagedObjects.length }
 }
 
+const createWorkflowFlowchart = async (ctx, spec = {}) => {
+  const anchor = resolvePlacementAnchor(ctx.commandPlacement) || { x: 640, y: 360 }
+  const graph = spec.isPasswordReset
+    ? PASSWORD_RESET_FLOWCHART_GRAPH
+    : {
+        nodes: buildWorkflowFlowchartNodes(spec).map((node, index) => ({ ...node, key: `node-${index}` })),
+        connectors: [],
+      }
+
+  if (graph.nodes.length === 0) {
+    return { nodeCount: 0, connectorCount: 0 }
+  }
+
+  if (!spec.isPasswordReset) {
+    for (let index = 0; index < Math.max(0, graph.nodes.length - 1); index += 1) {
+      graph.connectors.push({ from: graph.nodes[index].key, to: graph.nodes[index + 1].key })
+    }
+  }
+
+  const cols = graph.nodes.map((node) => parseNumber(node.col, 0))
+  const rows = graph.nodes.map((node) => parseNumber(node.row, 0))
+  const minCol = Math.min(...cols, 0)
+  const maxCol = Math.max(...cols, 0)
+  const minRow = Math.min(...rows, 0)
+  const maxRow = Math.max(...rows, 0)
+  const centerCol = (minCol + maxCol) / 2
+  const centerRow = (minRow + maxRow) / 2
+  const gapX = spec.isPasswordReset ? 300 : 280
+  const gapY = spec.isPasswordReset ? 160 : 200
+  const nodeBlueprint = graph.nodes.map((node, index) => {
+    const shapeType = normalizeShapeType(node.shapeType || 'rectangle', 'rectangle')
+    const size = STICKY_SHAPE_SIZES[shapeType] || STICKY_SHAPE_SIZES.rectangle
+    return {
+      key: node.key,
+      shapeType,
+      text: node.text,
+      color: node.color || (shapeType === 'diamond' ? '#fef3c7' : '#dbeafe'),
+      col: parseNumber(node.col, index % 3),
+      row: parseNumber(node.row, Math.floor(index / 3)),
+      width: size.width,
+      height: size.height,
+    }
+  })
+  const computeLayout = (layoutAnchor) => {
+    let minX = Infinity
+    let minY = Infinity
+    let maxX = -Infinity
+    let maxY = -Infinity
+    const nodes = nodeBlueprint.map((node) => {
+      const x = Math.round(layoutAnchor.x + (node.col - centerCol) * gapX - node.width / 2)
+      const y = Math.round(layoutAnchor.y + (node.row - centerRow) * gapY - node.height / 2)
+      minX = Math.min(minX, x)
+      minY = Math.min(minY, y)
+      maxX = Math.max(maxX, x + node.width)
+      maxY = Math.max(maxY, y + node.height)
+      return { ...node, x, y }
+    })
+
+    return {
+      nodes,
+      bounds: {
+        x: minX,
+        y: minY,
+        width: Math.max(1, maxX - minX),
+        height: Math.max(1, maxY - minY),
+      },
+    }
+  }
+  const boundsOverlap = (left, right) =>
+    left.x < right.x + right.width &&
+    left.x + left.width > right.x &&
+    left.y < right.y + right.height &&
+    left.y + left.height > right.y
+  const isLayoutAreaAvailable = (bounds) => {
+    const clearance = 80
+    const expanded = {
+      x: bounds.x - clearance,
+      y: bounds.y - clearance,
+      width: bounds.width + clearance * 2,
+      height: bounds.height + clearance * 2,
+    }
+
+    for (const candidate of ctx.state) {
+      if (candidate?.deleted || candidate?.type === 'connector') {
+        continue
+      }
+
+      if (boundsOverlap(expanded, getObjectBounds(candidate))) {
+        return false
+      }
+    }
+
+    return true
+  }
+  let plannedLayout = computeLayout(anchor)
+  if (!isLayoutAreaAvailable(plannedLayout.bounds)) {
+    const stepX = Math.max(560, plannedLayout.bounds.width + 140)
+    const stepY = Math.max(420, plannedLayout.bounds.height + 140)
+    const candidateOffsets = [
+      { x: stepX, y: 0 },
+      { x: 0, y: stepY },
+      { x: stepX, y: stepY },
+      { x: -stepX, y: 0 },
+      { x: 0, y: -stepY },
+      { x: -stepX, y: stepY },
+      { x: stepX, y: -stepY },
+      { x: stepX * 2, y: 0 },
+      { x: 0, y: stepY * 2 },
+      { x: stepX * 2, y: stepY },
+    ]
+
+    for (const offset of candidateOffsets) {
+      const candidateLayout = computeLayout({
+        x: anchor.x + offset.x,
+        y: anchor.y + offset.y,
+      })
+      if (!isLayoutAreaAvailable(candidateLayout.bounds)) {
+        continue
+      }
+
+      plannedLayout = candidateLayout
+      break
+    }
+  }
+  const createdByKey = new Map()
+  const orderedShapes = []
+
+  for (const node of plannedLayout.nodes) {
+    const createdShape = await createShape(ctx, {
+      type: node.shapeType,
+      text: node.text,
+      color: node.color,
+      x: node.x,
+      y: node.y,
+      width: node.width,
+      height: node.height,
+    })
+
+    createdByKey.set(node.key, createdShape)
+    orderedShapes.push(createdShape)
+  }
+
+  let connectorCount = 0
+  for (const edge of graph.connectors) {
+    const fromShape = createdByKey.get(edge.from)
+    const toShape = createdByKey.get(edge.to)
+    if (!fromShape || !toShape) {
+      continue
+    }
+
+    await createConnector(ctx, {
+      fromId: fromShape.id,
+      toId: toShape.id,
+      style: 'arrow',
+      color: '#1d4ed8',
+    })
+    connectorCount += 1
+  }
+
+  ctx.executedTools.push({
+    tool: 'createWorkflowFlowchart',
+    topic: spec.topic || 'workflow process',
+    nodeCount: orderedShapes.length,
+    connectorCount,
+  })
+
+  return {
+    nodeCount: orderedShapes.length,
+    connectorCount,
+  }
+}
+
 const executeParsedToolCalls = async (ctx, toolCalls = []) => {
   for (const toolCall of toolCalls) {
     if (toolCall.parseError) {
@@ -2347,7 +2973,9 @@ const executeParsedToolCalls = async (ctx, toolCalls = []) => {
 
     console.log('LLM tool call:', toolCall.name, toolCall.arguments)
 
-    await executeLlmToolCall(ctx, toolCall.name, toolCall.arguments)
+    await executeLlmToolCall(ctx, toolCall.name, toolCall.arguments, {
+      userPlacementIntent: Boolean(ctx.userPlacementIntent),
+    })
 
     ctx.executedTools.push({
       tool: toolCall.name,
@@ -2357,44 +2985,77 @@ const executeParsedToolCalls = async (ctx, toolCalls = []) => {
   }
 }
 
+const countPlannedStickyOperations = (toolCalls = []) => {
+  if (!Array.isArray(toolCalls) || toolCalls.length === 0) {
+    return 0
+  }
+
+  let planned = 0
+  for (const toolCall of toolCalls) {
+    const toolName = typeof toolCall?.name === 'string' ? toolCall.name : ''
+    if (toolName === 'createStickyNote') {
+      planned += 1
+      continue
+    }
+
+    if (toolName !== 'executeBatch') {
+      continue
+    }
+
+    const operations = toBatchOperations(toolCall.arguments)
+    planned += operations.filter((operation) => operation.tool === 'createStickyNote').length
+  }
+
+  return planned
+}
+
+const getRemainingAiLatencyBudgetMs = (ctx) => {
+  const startedAt = Number(ctx?.commandStartedAtMs)
+  const safeStartedAt = Number.isFinite(startedAt) ? startedAt : nowMs()
+  return Math.max(0, AI_RESPONSE_TARGET_MS - (nowMs() - safeStartedAt))
+}
+
 const runCommandPlan = async (ctx, command) => {
   const normalizedCommand = normalizeCommandForPlan(command)
-  const bmcCommand = parseBusinessModelCanvasCommand(normalizedCommand)
-  if (bmcCommand) {
-    const bmcResult = await createBusinessModelCanvas(ctx, bmcCommand)
-    if (bmcResult.count > 0) {
-      const successMessage = 'Created Business Model Canvas on the board.'
-      return {
-        message: successMessage,
-        aiResponse: successMessage,
-      }
-    }
+  if (!Number.isFinite(Number(ctx.commandStartedAtMs))) {
+    ctx.commandStartedAtMs = nowMs()
   }
-
-  const deterministicCompoundResult = await executeDeterministicCompoundStickyFallback(ctx, normalizedCommand)
-  if (deterministicCompoundResult.count > 0) {
-    const successMessage = 'Created requested board objects.'
-    return {
-      message: successMessage,
-      aiResponse: successMessage,
-    }
-  }
+  logAiDebug('run_command_plan_start', {
+    boardId: ctx.boardId,
+    command: normalizedCommand,
+  })
 
   if (!glmClient) {
+    const missingClientMessage = sanitizeAiAssistantResponse(
+      `${AI_TEMP_UNAVAILABLE_MESSAGE} AI provider client is unavailable on this server instance.`,
+    )
     return {
-      message: AI_TEMP_UNAVAILABLE_MESSAGE,
-      aiResponse: AI_TEMP_UNAVAILABLE_MESSAGE,
+      message: missingClientMessage,
+      aiResponse: missingClientMessage,
       level: 'warning',
     }
   }
 
   try {
+    logAiDebug('run_command_plan_route_llm', {
+      boardId: ctx.boardId,
+      command: normalizedCommand,
+    })
     return await executeViaLLM(ctx, normalizedCommand)
   } catch (llmError) {
     console.error('LLM-first execution failed:', llmError)
+    if (String(llmError?.message || '').toLowerCase().includes('latency budget')) {
+      const latencyWarningMessage = 'AI command exceeded the 2-second response target. Retry with a shorter command.'
+      return {
+        message: latencyWarningMessage,
+        aiResponse: latencyWarningMessage,
+        level: 'warning',
+      }
+    }
+    const readableError = toHumanReadableAiErrorMessage(llmError)
     return {
-      message: AI_TEMP_UNAVAILABLE_MESSAGE,
-      aiResponse: AI_TEMP_UNAVAILABLE_MESSAGE,
+      message: readableError,
+      aiResponse: readableError,
       level: 'warning',
     }
   }
@@ -2409,6 +3070,8 @@ const runCommandPlan = async (ctx, command) => {
 const executeViaLLM = async (ctx, command) => {
   console.log('Executing command via LLM:', command)
 
+  const userPlacementIntent = hasUserPlacementIntent(command)
+  ctx.userPlacementIntent = userPlacementIntent
   const boardContext = {
     state: ctx.state,
     boardId: ctx.boardId,
@@ -2416,39 +3079,79 @@ const executeViaLLM = async (ctx, command) => {
   }
   const baselineObjectIds = new Set(ctx.state.map((item) => item?.id).filter(Boolean))
   const baselineMutationToken = buildBoardMutationToken(ctx.state)
-  const stickyIntent = parseStickyCommand(command) || parseReasonListCommand(command)
-  const expectedStickyCount = Math.max(0, parseNumber(stickyIntent?.count, 0))
   const boardMutationIntent = isLikelyBoardMutationCommand(command)
+  const conversationalIntent = isLikelyConversationalCommand(command)
 
   const requestLlmPass = async (commandText) => {
-    const glmResponse = await glmClient.callGLM(commandText, boardContext)
+    const remainingBudgetMs = getRemainingAiLatencyBudgetMs(ctx)
+    if (remainingBudgetMs < AI_MIN_PROVIDER_TIMEOUT_MS) {
+      logAiDebug('ai_latency_budget_exhausted_before_model_call', {
+        boardId: ctx.boardId,
+        remainingBudgetMs,
+        message: 'AI latency budget exhausted before model call.',
+      })
+    }
+
+    const configuredProviderTimeoutMs = parseNumber(
+      process.env.AI_PROVIDER_TIMEOUT_MS,
+      AI_PROVIDER_TIMEOUT_DEFAULT_MS,
+    )
+    const providerTimeoutMs = Math.max(
+      AI_MIN_PROVIDER_TIMEOUT_MS,
+      Math.min(AI_PROVIDER_TIMEOUT_CAP_MS, configuredProviderTimeoutMs),
+    )
+    const maxTokens = resolveLlmMaxTokensForCommand(commandText)
+    const glmResponse = await glmClient.callGLM(commandText, boardContext, {
+      timeoutMs: providerTimeoutMs,
+      maxRetries: AI_PROVIDER_MAX_RETRIES,
+      maxTokens,
+      toolChoice: boardMutationIntent ? 'required' : 'auto',
+    })
     const toolCalls = glmClient.parseToolCalls(glmResponse)
     const textResponse = sanitizeAiAssistantResponse(glmClient.getTextResponse(glmResponse))
     return { glmResponse, toolCalls, textResponse }
   }
 
-  let llmPass = await requestLlmPass(command)
+  const initialCommand = shouldHintGridTemplateCommand(command)
+    ? buildGridTemplateHintCommand(command)
+    : command
+  let llmPass = await requestLlmPass(initialCommand)
+  if (llmPass.toolCalls.some((toolCall) => toolCall?.parseError)) {
+    const parseRecoveryCommand = buildInvalidToolJsonRetryCommand(command, llmPass.textResponse)
+    const parseRecoveryPass = await requestLlmPass(parseRecoveryCommand)
+    if (parseRecoveryPass.toolCalls.length > 0 || parseRecoveryPass.textResponse) {
+      llmPass = parseRecoveryPass
+    }
+  }
+
+  if (conversationalIntent && llmPass.toolCalls.length > 0) {
+    const assistantMessage = buildChatOrBoardHintMessage(command, llmPass.textResponse)
+    ctx.executedTools.push({
+      tool: 'assistantResponse',
+      llmGenerated: true,
+      conversationalIntent: true,
+      suppressedToolCalls: llmPass.toolCalls.length,
+      ...(llmPass.textResponse ? { modelText: llmPass.textResponse } : {}),
+    })
+    return {
+      message: assistantMessage,
+      aiResponse: assistantMessage,
+      level: 'warning',
+    }
+  }
+
+  let expectedStickyCount = countPlannedStickyOperations(llmPass.toolCalls)
 
   if (llmPass.toolCalls.length === 0 && boardMutationIntent) {
     const retryCommand = buildCompoundToolRetryCommand(command, llmPass.textResponse)
     const retryPass = await requestLlmPass(retryCommand)
     if (retryPass.toolCalls.length > 0 || retryPass.textResponse) {
       llmPass = retryPass
+      expectedStickyCount = countPlannedStickyOperations(llmPass.toolCalls)
     }
   }
 
   if (llmPass.toolCalls.length === 0) {
-    if (boardMutationIntent) {
-      const fallbackResult = await executeDeterministicCompoundStickyFallback(ctx, command)
-      if (fallbackResult.count > 0) {
-        const successMessage = 'Created requested board objects.'
-        return {
-          message: successMessage,
-          aiResponse: successMessage,
-        }
-      }
-    }
-
     const assistantMessage = llmPass.textResponse || OUT_OF_SCOPE_AI_MESSAGE
     ctx.executedTools.push({
       tool: 'assistantResponse',
@@ -2472,13 +3175,14 @@ const executeViaLLM = async (ctx, command) => {
 
   if (boardMutationIntent && !boardMutationApplied && expectedStickyCount === 0) {
     const noMutationRetryCommand = buildNoMutationRetryCommand(command, llmPass.textResponse)
-    const noMutationRetryPass = await requestLlmPass(noMutationRetryCommand)
-    if (noMutationRetryPass.toolCalls.length > 0) {
-      await executeParsedToolCalls(ctx, noMutationRetryPass.toolCalls)
-      boardMutationApplied = buildBoardMutationToken(ctx.state) !== baselineMutationToken
-    }
-    if (noMutationRetryPass.textResponse) {
-      llmPass = noMutationRetryPass
+      const noMutationRetryPass = await requestLlmPass(noMutationRetryCommand)
+      if (noMutationRetryPass.toolCalls.length > 0) {
+        await executeParsedToolCalls(ctx, noMutationRetryPass.toolCalls)
+        boardMutationApplied = buildBoardMutationToken(ctx.state) !== baselineMutationToken
+        expectedStickyCount = Math.max(expectedStickyCount, countPlannedStickyOperations(noMutationRetryPass.toolCalls))
+      }
+      if (noMutationRetryPass.textResponse) {
+        llmPass = noMutationRetryPass
     }
   }
 
@@ -2504,15 +3208,6 @@ const executeViaLLM = async (ctx, command) => {
   }
 
   if (boardMutationIntent && !boardMutationApplied) {
-    const fallbackResult = await executeDeterministicCompoundStickyFallback(ctx, command)
-    if (fallbackResult.count > 0) {
-      const successMessage = 'Created requested board objects.'
-      return {
-        message: successMessage,
-        aiResponse: successMessage,
-      }
-    }
-
     const assistantMessage =
       llmPass.textResponse ||
       "I couldn't apply that command to the board. Please retry with explicit board actions."
@@ -2563,21 +3258,17 @@ const reserveQueueSequence = async (boardId) => {
   return sequence
 }
 
-const acquireBoardLock = async (boardId, commandId, queueSequence) => {
+const acquireBoardLock = async (boardId, commandId, _queueSequence) => {
   const lockRef = getSystemRef(boardId)
+  const deadlineMs = nowMs() + AI_LOCK_WAIT_TIMEOUT_MS
 
-  for (let attempt = 0; attempt < 240; attempt += 1) {
+  while (nowMs() <= deadlineMs) {
     const acquired = await db.runTransaction(async (tx) => {
       const now = nowMs()
       const lockSnap = await tx.get(lockRef)
       const lockData = lockSnap.exists ? lockSnap.data() : null
       const activeCommandId = lockData?.activeCommandId || null
       const expiresAt = lockData?.expiresAt || 0
-      const processingSequence = parseNumber(lockData?.processingSequence, 1)
-
-      if (processingSequence !== queueSequence) {
-        return false
-      }
 
       if (activeCommandId && expiresAt > now && activeCommandId !== commandId) {
         return false
@@ -2587,7 +3278,7 @@ const acquireBoardLock = async (boardId, commandId, queueSequence) => {
         lockRef,
         {
           activeCommandId: commandId,
-          expiresAt: now + 20_000,
+          expiresAt: now + AI_LOCK_TTL_MS,
           updatedAt: now,
         },
         { merge: true },
@@ -2600,10 +3291,10 @@ const acquireBoardLock = async (boardId, commandId, queueSequence) => {
       return
     }
 
-    await sleep(150)
+    await sleep(AI_LOCK_RETRY_INTERVAL_MS)
   }
 
-  throw new Error('AI command queue timeout. Retry in a moment.')
+  throw new Error('Another AI command is still running for this board. Please retry in a few seconds.')
 }
 
 const releaseBoardLock = async (boardId, commandId, queueSequence = null) => {
@@ -2633,7 +3324,13 @@ const releaseBoardLock = async (boardId, commandId, queueSequence = null) => {
   })
 }
 
-const startBoardLockHeartbeat = ({ boardId, commandId, queueSequence, intervalMs = 5_000, ttlMs = 20_000 }) => {
+const startBoardLockHeartbeat = ({
+  boardId,
+  commandId,
+  queueSequence: _queueSequence,
+  intervalMs = 5_000,
+  ttlMs = AI_LOCK_TTL_MS,
+}) => {
   const lockRef = getSystemRef(boardId)
   let active = true
 
@@ -2650,8 +3347,7 @@ const startBoardLockHeartbeat = ({ boardId, commandId, queueSequence, intervalMs
         }
 
         const lockData = lockSnap.data()
-        const processingSequence = parseNumber(lockData?.processingSequence, 1)
-        if (lockData?.activeCommandId !== commandId || processingSequence !== queueSequence) {
+        if (lockData?.activeCommandId !== commandId) {
           return
         }
 
@@ -2943,9 +3639,19 @@ exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) =>
     const existingData = existing.exists ? existing.data() || {} : {}
 
     if (existing.exists) {
-      if (existingData.status === 'success') {
+      const normalizedExistingStatus = resolveCommandStatus(existingData.status, existingData.result)
+      if (normalizedExistingStatus === 'warning' && existingData.status !== 'warning') {
+        await commandRef.set(
+          {
+            status: 'warning',
+            updatedAt: nowMs(),
+          },
+          { merge: true },
+        )
+      }
+      if (normalizedExistingStatus === 'success' || normalizedExistingStatus === 'warning') {
         res.status(200).json({
-          status: 'success',
+          status: normalizedExistingStatus,
           idempotent: true,
           commandId: clientCommandId,
           result: existingData.result,
@@ -2953,9 +3659,9 @@ exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) =>
         return
       }
 
-      if (existingData.status === 'running' || existingData.status === 'queued') {
+      if (normalizedExistingStatus === 'running' || normalizedExistingStatus === 'queued') {
         res.status(202).json({
-          status: existingData.status,
+          status: normalizedExistingStatus,
           commandId: clientCommandId,
           queueSequence: existingData.queueSequence || null,
         })
@@ -3006,17 +3712,27 @@ exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) =>
       queueSequence,
     })
 
-    const state = await getBoardState(boardId)
+    const shouldHydrateBoardState = shouldLoadBoardStateForCommand(command)
+    const state = shouldHydrateBoardState ? await getBoardState(boardId) : []
     const context = {
       boardId,
       userId,
       state,
       executedTools: [],
       commandPlacement,
+      commandStartedAtMs: nowMs(),
     }
 
     const planResult = await runCommandPlan(context, command)
-    const resultMessage = sanitizeAiAssistantResponse(planResult?.message) || 'Command executed and synced to the board.'
+    const latencyMs = nowMs() - Number(context.commandStartedAtMs || nowMs())
+    const latencyBreached = latencyMs > AI_RESPONSE_TARGET_MS
+    const baseResultMessage = sanitizeAiAssistantResponse(planResult?.message) || 'Command executed and synced to the board.'
+    const shouldAppendLatencyNote = latencyBreached && planResult?.level !== 'warning'
+    const resultMessage = shouldAppendLatencyNote
+      ? sanitizeAiAssistantResponse(
+          `${baseResultMessage} Response took ${latencyMs}ms, above ${AI_RESPONSE_TARGET_MS}ms target.`,
+        )
+      : baseResultMessage
     const aiResponse = sanitizeAiAssistantResponse(planResult?.aiResponse)
 
     const resultLevel = planResult?.level === 'warning' ? 'warning' : undefined
@@ -3024,13 +3740,24 @@ exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) =>
       executedTools: context.executedTools,
       objectCount: context.state.length,
       message: resultMessage,
+      latencyMs,
       ...(aiResponse ? { aiResponse } : {}),
       ...(resultLevel ? { level: resultLevel } : {}),
     }
+    logAiDebug('api_ai_command_result', {
+      boardId,
+      commandId: clientCommandId,
+      objectCount: result.objectCount,
+      toolCount: result.executedTools.length,
+      message: result.message,
+      level: result.level || 'info',
+    })
+
+    const commandStatus = resolveCommandStatus('success', result)
 
     await commandRef.set(
       {
-        status: 'success',
+        status: commandStatus,
         completedAt: nowMs(),
         result,
       },
@@ -3040,7 +3767,7 @@ exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) =>
     stopLockHeartbeat()
     await releaseBoardLock(boardId, clientCommandId, queueSequence)
 
-    res.status(200).json({ status: 'success', commandId: clientCommandId, result })
+    res.status(200).json({ status: commandStatus, commandId: clientCommandId, result })
   } catch (error) {
     stopLockHeartbeat()
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
@@ -3067,7 +3794,12 @@ exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) =>
       command: commandForError,
       normalizedCommand: normalizeCommand(commandForError),
     })
-    res.status(500).json({ error: errorMessage })
+    const queueTimeoutError = /another ai command is still running/i.test(errorMessage)
+    const responseStatus = queueTimeoutError ? 429 : 500
+    const responseErrorMessage = queueTimeoutError
+      ? 'Another AI command is still running for this board. Please retry in a few seconds.'
+      : errorMessage
+    res.status(responseStatus).json({ error: responseErrorMessage })
   }
 })
 
@@ -3083,26 +3815,40 @@ exports.__test = {
   __setGlmClientForTests,
   __setObjectWriterForTests,
   runCommandPlan,
+  resolveCommandStatus,
   resolvePlacementAnchor,
   resolveLlmCreateArgsWithPlacement,
   toBatchOperations,
   normalizeCommandForPlan,
   isOrganizeByColorCommand,
   isLikelyBoardMutationCommand,
+  isLikelyConversationalCommand,
+  buildChatOrBoardHintMessage,
+  shouldLoadBoardStateForCommand,
+  shouldHintGridTemplateCommand,
+  resolveLlmMaxTokensForCommand,
   parseBusinessModelCanvasCommand,
+  parseWorkflowFlowchartCommand,
   parseStickyCommand,
   parseCompoundStickyCreateOperations,
   parseReasonListCommand,
   buildReasonStickyTexts,
+  countPlannedStickyOperations,
+  getRemainingAiLatencyBudgetMs,
   getAutoStickyPosition,
   normalizeAiPlacementHint,
   getStickyBatchLayoutPositions,
   parsePosition,
   extractCoordinatePosition,
   sanitizeAiAssistantResponse,
+  toHumanReadableAiErrorMessage,
   normalizeBoardMeta,
   canUserAccessBoard,
   canUserEditBoard,
   normalizeSharedRoles,
+  AI_RESPONSE_TARGET_MS,
+  AI_PROVIDER_TIMEOUT_DEFAULT_MS,
+  AI_LOCK_WAIT_TIMEOUT_MS,
+  AI_LOCK_RETRY_INTERVAL_MS,
 }
 // Tue Feb 17 18:22:00 EST 2026

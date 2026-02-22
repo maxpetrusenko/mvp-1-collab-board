@@ -315,13 +315,19 @@ R2="$(cat "$OUT_DIR/resp-$CID_2.json")"
 
 S1="$(echo "$R1" | jq -r '.status // "unknown"')"
 S2="$(echo "$R2" | jq -r '.status // "unknown"')"
+L1="$(echo "$R1" | jq -r '.result.level // "info"')"
+L2="$(echo "$R2" | jq -r '.result.level // "info"')"
+T1="$(echo "$R1" | jq -r '(.result.executedTools // []) | length')"
+T2="$(echo "$R2" | jq -r '(.result.executedTools // []) | length')"
 
-log "Simultaneous run complete in ${ELAPSED_MS}ms (statuses: $S1, $S2)"
+log "Simultaneous run complete in ${ELAPSED_MS}ms (statuses: $S1/$S2, levels: $L1/$L2, tool counts: $T1/$T2)"
 
 log "Running 5-user concurrent AI command burst"
 declare -a BURST_PIDS=()
 declare -a BURST_CIDS=()
 declare -a BURST_STATUSES=()
+declare -a BURST_LEVELS=()
+declare -a BURST_TOOL_COUNTS=()
 
 for i in $(seq 1 "$USER_COUNT"); do
   IDX=$((i - 1))
@@ -342,8 +348,12 @@ done
 PASS_FIVE_USERS="true"
 for cid in "${BURST_CIDS[@]}"; do
   status="$(jq -r '.status // "unknown"' "$OUT_DIR/resp-$cid.json")"
+  level="$(jq -r '.result.level // "info"' "$OUT_DIR/resp-$cid.json")"
+  tool_count="$(jq -r '(.result.executedTools // []) | length' "$OUT_DIR/resp-$cid.json")"
   BURST_STATUSES+=("$status")
-  if [[ "$status" != "success" ]]; then
+  BURST_LEVELS+=("$level")
+  BURST_TOOL_COUNTS+=("$tool_count")
+  if [[ "$status" != "success" || "$level" == "warning" || "$tool_count" -le 0 ]]; then
     PASS_FIVE_USERS="false"
   fi
 done
@@ -386,8 +396,34 @@ QUEUE_INFO="$(echo "$CMD_DOCS_RAW" | jq -c '
   }) | sort_by(.queueSequence, .startedAt)
 ')"
 
+log "Querying Firestore objects for mutation evidence"
+OBJECT_DOCS_RAW="$(curl -sS -X GET \
+  "https://firestore.googleapis.com/v1/projects/$PROJECT_ID/databases/(default)/documents/boards/$BOARD_ID/objects" \
+  -H "Authorization: Bearer $ID_TOKEN_1")"
+
+OBJECT_EVIDENCE="$(echo "$OBJECT_DOCS_RAW" | jq -c --arg ts "$TS" '
+  (.documents // []) as $docs |
+  {
+    totalObjects: ($docs | length),
+    alphaStickyCount: (
+      $docs
+      | map(.fields)
+      | map(select((.type.stringValue // "") == "stickyNote"))
+      | map(select((.text.stringValue // "") | contains("alpha-" + $ts)))
+      | length
+    ),
+    burstStickyCount: (
+      $docs
+      | map(.fields)
+      | map(select((.type.stringValue // "") == "stickyNote"))
+      | map(select((.text.stringValue // "") | contains("burst-")))
+      | length
+    )
+  }
+')"
+
 PASS_SIMULTANEOUS="false"
-if [[ "$S1" == "success" && "$S2" == "success" ]]; then
+if [[ "$S1" == "success" && "$S2" == "success" && "$L1" != "warning" && "$L2" != "warning" && "$T1" -gt 0 && "$T2" -gt 0 ]]; then
   PASS_SIMULTANEOUS="true"
 fi
 
@@ -401,12 +437,25 @@ if [[ "$THROTTLE_EXIT" != "0" && ( "$THROTTLE_RETRY_STATUS" == "success" || "$TH
   PASS_THROTTLE_RETRY="true"
 fi
 
+PASS_MUTATION_OBJECTS="false"
+if [[ "$(echo "$OBJECT_EVIDENCE" | jq -r '.totalObjects // 0')" -ge 2 && \
+      "$(echo "$OBJECT_EVIDENCE" | jq -r '.alphaStickyCount // 0')" -ge 1 && \
+      "$(echo "$OBJECT_EVIDENCE" | jq -r '.burstStickyCount // 0')" -ge 1 ]]; then
+  PASS_MUTATION_OBJECTS="true"
+fi
+
 OVERALL_PASS="true"
-if [[ "$PASS_SIMULTANEOUS" != "true" || "$PASS_FIVE_USERS" != "true" || "$PASS_IDEMPOTENT" != "true" || "$PASS_THROTTLE_RETRY" != "true" ]]; then
+if [[ "$PASS_SIMULTANEOUS" != "true" || \
+      "$PASS_FIVE_USERS" != "true" || \
+      "$PASS_IDEMPOTENT" != "true" || \
+      "$PASS_THROTTLE_RETRY" != "true" || \
+      "$PASS_MUTATION_OBJECTS" != "true" ]]; then
   OVERALL_PASS="false"
 fi
 
 BURST_STATUSES_JSON="$(printf '%s\n' "${BURST_STATUSES[@]}" | jq -R . | jq -sc .)"
+BURST_LEVELS_JSON="$(printf '%s\n' "${BURST_LEVELS[@]}" | jq -R . | jq -sc .)"
+BURST_TOOL_COUNTS_JSON="$(printf '%s\n' "${BURST_TOOL_COUNTS[@]}" | jq -R 'tonumber' | jq -sc .)"
 
 jq -n \
   --arg timestamp "$TS" \
@@ -414,30 +463,45 @@ jq -n \
   --arg elapsedMs "$ELAPSED_MS" \
   --arg status1 "$S1" \
   --arg status2 "$S2" \
+  --arg level1 "$L1" \
+  --arg level2 "$L2" \
+  --arg tools1 "$T1" \
+  --arg tools2 "$T2" \
   --arg passFiveUsers "$PASS_FIVE_USERS" \
   --arg idempotent "$IDEMP_OK" \
   --arg throttleExit "$THROTTLE_EXIT" \
   --arg throttleRetryStatus "$THROTTLE_RETRY_STATUS" \
   --arg throttleRetryIdempotent "$THROTTLE_RETRY_IDEMP" \
   --argjson burstStatuses "$BURST_STATUSES_JSON" \
+  --argjson burstLevels "$BURST_LEVELS_JSON" \
+  --argjson burstToolCounts "$BURST_TOOL_COUNTS_JSON" \
   --argjson queue "$QUEUE_INFO" \
+  --argjson objectEvidence "$OBJECT_EVIDENCE" \
   --arg passSimultaneous "$PASS_SIMULTANEOUS" \
   --arg passIdempotent "$PASS_IDEMPOTENT" \
   --arg passThrottleRetry "$PASS_THROTTLE_RETRY" \
+  --arg passMutationObjects "$PASS_MUTATION_OBJECTS" \
   --arg overallPass "$OVERALL_PASS" \
   '{
     timestamp: ($timestamp | tonumber),
     boardId: $boardId,
     checks: {
-      simultaneousAiCommands: { pass: ($passSimultaneous == "true"), statuses: [$status1, $status2], elapsedMs: ($elapsedMs|tonumber) },
-      fiveAuthUsersBurst: { pass: ($passFiveUsers == "true"), statuses: $burstStatuses },
+      simultaneousAiCommands: {
+        pass: ($passSimultaneous == "true"),
+        statuses: [$status1, $status2],
+        levels: [$level1, $level2],
+        toolCounts: [($tools1 | tonumber), ($tools2 | tonumber)],
+        elapsedMs: ($elapsedMs|tonumber)
+      },
+      fiveAuthUsersBurst: { pass: ($passFiveUsers == "true"), statuses: $burstStatuses, levels: $burstLevels, toolCounts: $burstToolCounts },
       idempotency: { pass: ($passIdempotent == "true"), duplicateResponseIdempotent: ($idempotent == "true") },
       throttleDisconnectRetry: {
         pass: ($passThrottleRetry == "true"),
         firstRequestCurlExit: ($throttleExit | tonumber),
         retryStatus: $throttleRetryStatus,
         retryIdempotent: ($throttleRetryIdempotent == "true")
-      }
+      },
+      mutationObjectEvidence: { pass: ($passMutationObjects == "true"), evidence: $objectEvidence }
     },
     overallPass: ($overallPass == "true"),
     queueEvidence: $queue

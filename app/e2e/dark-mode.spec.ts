@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 import { cleanupTestUser, createOrReuseTestUser, loginWithEmail } from './helpers/auth'
+import { fetchBoardObjects, newestObjectByType } from './helpers/firestore'
 
 const APP_URL = process.env.PLAYWRIGHT_BASE_URL || 'https://mvp-1-collab-board.web.app'
 
@@ -49,17 +50,34 @@ test.describe('Dark mode toggle', () => {
       await page.getByRole('button', { name: /sticky/i }).click()
       await page.mouse.click(400, 300)
 
-      // Wait for sticky note to be created
-      await expect(page.locator('.sticky-note')).toBeVisible()
+      let stickyId = ''
+      await expect
+        .poll(async () => {
+          stickyId = newestObjectByType(await fetchBoardObjects(boardId, user.idToken), 'stickyNote')?.id || ''
+          return stickyId
+        })
+        .not.toBe('')
 
-      // Select the sticky note to enable comments panel
-      await page.locator('.sticky-note').click()
+      const sticky = (await fetchBoardObjects(boardId, user.idToken)).find((object) => object.id === stickyId)
+      if (!sticky?.position || !sticky?.size) {
+        throw new Error('Sticky note bounds unavailable for comments test')
+      }
+
+      const canvasBox = await page.locator('.board-stage canvas').first().boundingBox()
+      if (!canvasBox) {
+        throw new Error('Canvas bounds unavailable for comments test')
+      }
+
+      const stickyCenterX = canvasBox.x + sticky.position.x + sticky.size.width / 2
+      const stickyCenterY = canvasBox.y + sticky.position.y + sticky.size.height / 2
+      await page.mouse.click(stickyCenterX, stickyCenterY)
+      await page.getByRole('button', { name: 'Comments' }).click()
 
       // Wait for comments panel to appear
       await expect(page.locator('.side-panel')).toBeVisible()
 
       // Find the comment input textarea
-      const commentInput = page.locator('textarea.ai-input.comment-input')
+      const commentInput = page.locator('textarea.comment-input')
       await expect(commentInput).toBeVisible()
 
       // Type in the comment input

@@ -1,7 +1,0 @@
-# Keep only stable summary artifacts in git
-*
-!latest-critical-checks.json
-!latest-critical-checks.log
-!latest-submission-qa.json
-!manual-oauth-throttle-reconnect-2026-02-17.md
-!.gitignore

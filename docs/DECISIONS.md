@@ -285,6 +285,168 @@ Purpose: log system decisions, alternatives, rationale, and change history.
 - Consequences: Added new CI/deploy workflows, a Lighthouse budget config + script, and introduced archive indirection for historical task evidence.
 - Revisit Trigger: If workflow runtime or maintenance overhead materially slows delivery versus current manual flow.
 
+### D-031
+- Date: 2026-02-20
+- Status: Accepted
+- Decision: Refactor `BoardPage.tsx` incrementally by extracting pure geometry/util helpers and page-local type declarations into dedicated modules (`app/src/lib/boardGeometry.ts`, `app/src/pages/boardPageTypes.ts`) while preserving behavior-critical inline guards in `BoardPage.tsx`.
+- Alternatives Considered: Single large rewrite/split of `BoardPage.tsx` into multiple components/hooks in one pass.
+- Rationale: Reduces file complexity and reuse friction with lower regression risk under strict source-string guardrail tests.
+- Consequences: `BoardPage.tsx` line count decreases without UI/behavior changes; connector-boundary logic remains local to satisfy current guardrails.
+- Revisit Trigger: After guardrail tests migrate away from strict source-string matching and permit deeper component extraction.
+
+### D-032
+- Date: 2026-02-20
+- Status: Accepted
+- Decision: Continue `BoardPage.tsx` reduction using guardrail-compatible helper modules for unguarded logic (`boardPageViewModels.ts`, `boardSharingHelpers.ts`, `boardActionHelpers.ts`) while keeping tested source markers in `BoardPage.tsx`.
+- Alternatives Considered: Pause refactor until tests are rewritten; move all logic into hooks/components immediately and patch tests afterward.
+- Rationale: Preserves momentum on file-size reduction and modularity without destabilizing the current source-string regression suite.
+- Consequences: Business/view utility logic is more reusable and testable in isolated modules; `BoardPage.tsx` still retains guarded interaction/render paths until guardrail tests are modernized.
+- Revisit Trigger: Once guardrails assert behavior via runtime tests instead of source matching, proceed with deeper component/hook extraction (selection/transforms/canvas split).
+
+### D-033
+- Date: 2026-02-21
+- Status: Accepted
+- Decision: Use Firestore batched writes for AI template object creation paths, with chunked commits capped below Firestore limits.
+- Alternatives Considered: Sequential per-object writes with `await`; parallel per-object writes with `Promise.all`.
+- Rationale: Template creation writes were queue-bound and I/O-bound; batching reduces command wall time and lock hold duration while keeping writes deterministic.
+- Consequences: Template builders now stage object payloads before commit, with helper complexity for batch chunking and status accounting.
+- Revisit Trigger: If per-object transactional semantics or per-write side effects become required for template generation paths.
+
+### D-034
+- Date: 2026-02-21
+- Status: Accepted
+- Decision: Renew board AI command lock TTL with a heartbeat while the command is in `running` state.
+- Alternatives Considered: Static lock TTL only; larger one-shot lock TTL values.
+- Rationale: Long-running commands under contention can outlive a fixed TTL and permit overlapping execution; heartbeat renewal preserves single-run ownership for the active command.
+- Consequences: Queue execution now includes heartbeat start/stop lifecycle handling and lock cleanup on both success and error paths.
+- Revisit Trigger: If queue throughput goals require lock partitioning or per-command scoped concurrency beyond board-level FIFO.
+
+### D-035
+- Date: 2026-02-21
+- Status: Accepted
+- Decision: Extend AI position parsing to support explicit coordinate extraction (`x=... y=...`, `at 640,360`) and propagate coordinates through sticky/shape/frame execution paths.
+- Alternatives Considered: Phrase-only placement parsing (`top left`, `center`) and fallback defaults.
+- Rationale: Closing position ambiguity increases command determinism and reduces retries for layout-centric prompts.
+- Consequences: Parser and execution plumbing are broader, with new tests for coordinate variants and cleaned-text extraction.
+- Revisit Trigger: If natural-language placement quality targets demand semantic scene understanding beyond explicit coordinates and phrase mapping.
+
+### D-036
+- Date: 2026-02-21
+- Status: Accepted
+- Decision: Tune cursor publish cadence to 33ms with movement duplicate suppression while preserving existing presence flush guardrails.
+- Alternatives Considered: Keep 50ms publish cadence without dedupe; push to ultra-high frequency without suppression.
+- Rationale: The target path needs lower end-to-end cursor delay with controlled write pressure; dedupe limits redundant emits during high-frequency input.
+- Consequences: Presence hook now tracks last-published cursor state and avoids near-identical publishes, improving transport efficiency under motion bursts.
+- Revisit Trigger: If strict runtime SLA still misses target under representative load, or if RTDB write volume rises beyond budget thresholds.
+
+### D-037
+- Date: 2026-02-21
+- Status: Accepted
+- Decision: Continue Board runtime modularization via guardrail-safe extractions only; extract shared timing helpers first while preserving source-marker-constrained logic in place.
+- Alternatives Considered: Full runtime split in one pass; pause extraction entirely until guardrails change.
+- Rationale: This path reduces module size and duplication while keeping current regression guardrails stable.
+- Consequences: `app/src/lib/time.ts` now owns shared timing helpers, and high-risk guarded logic remains local until guardrail modernization lands.
+- Revisit Trigger: When guardrails move from source-string assertions to behavior assertions, proceed with deeper runtime hook/component extraction.
+
+### D-038
+- Date: 2026-02-21
+- Status: Accepted
+- Decision: Harden gate/test execution to avoid local E2E collisions by adding dynamic preview port selection in `scripts/run-full-gate.sh` and run-scoped Playwright artifact directories (script-level and default config-level).
+- Alternatives Considered: Keep fixed port `4173` with implicit Vite fallback behavior; keep shared default Playwright `test-results` output.
+- Rationale: Fixed-port assumptions and shared artifact directories caused false negatives (`ERR_CONNECTION_REFUSED`, trace/archive `ENOENT`, cross-run worker conflicts) during parallel verification.
+- Consequences: Full-gate runs now stay aligned on a resolved preview URL and avoid output collisions; ad-hoc Playwright runs also write to per-process directories by default.
+- Revisit Trigger: If CI uses a dedicated isolated runner and these local-collision guards add unnecessary complexity.
+
+### D-039
+- Date: 2026-02-22
+- Status: Accepted
+- Decision: Run AI command interpretation through a fully LLM-first planning path for board intent, removing deterministic sticky-parser gating from runtime command execution.
+- Alternatives Considered: Keep deterministic sticky/reason parser as primary shortcut with LLM fallback.
+- Rationale: Open-ended user prompts vary widely and deterministic parsing created brittle behavior and repetitive outputs; LLM-first intent handling with full board/placement context provides broader command coverage.
+- Consequences: Runtime now forwards normalized user prompts to the model for intent resolution, while server-side placement and batching guardrails remain enforced during tool execution.
+- Revisit Trigger: If production telemetry shows reliability regressions that require selective deterministic safeties for specific high-volume intents.
+
+### D-040
+- Date: 2026-02-22
+- Status: Accepted
+- Decision: Expose layout/complex capabilities as explicit callable tools (`createStickyGridTemplate`, `spaceElementsEvenly`, `createJourneyMap`) and enforce runtime AI latency budgets through bounded lock wait and per-pass provider timeout budgeting.
+- Alternatives Considered: Keep helper functions private to runtime internals and rely on implicit model behavior; keep long queue wait windows with provider default timeout only.
+- Rationale: Requirements call out 2x3 layouts, space-evenly layout, and journey maps as first-class capabilities, and performance targets require concrete budget controls in execution code.
+- Consequences: Tool schema breadth increased, dispatcher routing expanded, queue wait duration is bounded, and LLM requests receive budget-aware timeout overrides.
+- Revisit Trigger: If command completion quality drops under heavy contention and requires adaptive per-board queue budgets or multi-tier latency classes.
+
+### D-041
+- Date: 2026-02-22
+- Status: Accepted
+- Decision: Extract `BoardPageRuntime` constants and pure utility helpers into `app/src/pages/boardPageRuntimePrimitives.tsx` while preserving runtime behavior and source-based requirement guardrails via shared source aggregation.
+- Alternatives Considered: Keep all primitives inline in `BoardPageRuntime.tsx`; perform a larger runtime split in one pass.
+- Rationale: The runtime file remains over-size and hard to maintain; extracting pure helpers cuts file surface safely with low behavior risk and keeps incremental refactor momentum.
+- Consequences: `BoardPageRuntime.tsx` shrinks and dependency boundaries become clearer, while source-string tests now read both runtime and extracted helper modules through `app/test/helpers/boardPageSource.mjs`.
+- Revisit Trigger: Once guardrails are fully behavior-based, continue deeper extraction (`useTransforms`, canvas command handlers, share panel composition) in larger chunks.
+
+### D-042
+- Date: 2026-02-22
+- Status: Accepted
+- Decision: Extract boards-side UI slices from `BoardPageRuntime` into reusable view components (`BoardCreateForm`, `BoardSharingCard`) in `app/src/pages/boardPanels.tsx`.
+- Alternatives Considered: Keep inline boards-side JSX in runtime; split all boards panel logic in one step.
+- Rationale: This gives immediate file-size reduction with low behavior risk and produces reusable, testable view components with controlled props.
+- Consequences: `BoardPageRuntime.tsx` keeps orchestration state/actions while form/share rendering lives in dedicated components; guardrail source aggregation now includes `boardPanels.tsx`.
+- Revisit Trigger: Continue with command-palette, shortcuts modal, and right-sidebar panel extraction until runtime stays under the LOC target.
+
+### D-043
+- Date: 2026-02-22
+- Status: Accepted
+- Decision: Keep AI object creation on the LLM execution path and harden failure handling with explicit, human-readable provider error messages plus bounded provider timeout/retry controls.
+- Alternatives Considered: Add deterministic sticky fallback creation when the provider fails; keep generic “temporarily unavailable” warnings with no provider diagnostics.
+- Rationale: LLM-first intent execution stays consistent with runtime architecture while clearer error messages and bounded provider call controls improve operator debugging and user trust when provider failures occur.
+- Consequences: Runtime now passes explicit provider timeout/retry overrides to the LLM client, warning responses include actionable failure context, and warning responses keep clean messaging without appending latency-budget text.
+- Revisit Trigger: If telemetry shows persistent provider failures that require queue-tiered retry policy or dynamic provider timeout classes by command type.
+
+### D-044
+- Date: 2026-02-22
+- Status: Accepted
+- Decision: Increase AI board lock wait budget to `90s` and return a clear board-busy response when the queue wait exceeds the budget.
+- Alternatives Considered: Keep sub-2s lock wait budget with frequent timeout failures; remove board lock queueing altogether.
+- Rationale: Real provider latency regularly exceeds the prior lock wait budget, causing user-visible queue timeout failures on normal sequential commands.
+- Consequences: Sequential commands now wait long enough for in-flight command completion, timeout responses are explicit (`Another AI command is still running...`), and timeout HTTP status uses `429`.
+- Revisit Trigger: If queue depth or tail latency grows materially, requiring queue-drain workers or per-board parallelism controls.
+
+### D-045
+- Date: 2026-02-22
+- Status: Accepted
+- Decision: Raise provider timeout default to `12s` for LLM tool-plan calls and prioritize aggregated provider-chain diagnostics over single-provider auth heuristics.
+- Alternatives Considered: Keep `6s` timeout budget and generic auth-first error messaging; add deterministic fallback object creation.
+- Rationale: Multi-object prompts can exceed a 6-second deepseek response window, and mixed provider failures were surfacing misleading auth-only messaging.
+- Consequences: Complex create commands complete reliably through the working provider path, and warning responses now report provider-chain context (`quota`, `invalid credentials`, `timeout`) in human-readable form.
+- Revisit Trigger: If median command latency remains above target under healthy providers, add provider-priority controls or circuit-breaker suppression for known-bad providers.
+
+### D-046
+- Date: 2026-02-22
+- Status: Accepted
+- Decision: Support explicit AI backend endpoint split by runtime mode (`VITE_AI_API_BASE_URL_DEV` for local/dev, `VITE_AI_API_BASE_URL_PROD` for production) with shared fallback.
+- Alternatives Considered: Keep a single `VITE_AI_API_BASE_URL` for all environments.
+- Rationale: Shared endpoint configuration couples local and production behavior, making debugging and rollout isolation difficult.
+- Consequences: Local Vite sessions can target a separate dev/staging backend without changing production URL settings.
+- Revisit Trigger: If endpoint routing moves to reverse-proxy or environment-specific build pipelines that make client-side endpoint branching unnecessary.
+
+### D-047
+- Date: 2026-02-22
+- Status: Accepted
+- Decision: Add provider-priority routing and provider cooldown suppression in the LLM client, and reduce default max token budget for command planning responses.
+- Alternatives Considered: Keep static provider order with no health memory and high token ceiling per request.
+- Rationale: Repeated attempts to known-bad providers increased latency and made command UX feel slower under partial provider outages.
+- Consequences: Providers with auth/quota/timeout failures are skipped for a cooldown window, provider order can be configured via `AI_PROVIDER_PRIORITY`, and default token budget is lowered to reduce response latency.
+- Revisit Trigger: If command quality degrades due token limits or if provider health stabilizes and cooldown tuning needs adjustment.
+
+### D-048
+- Date: 2026-02-22
+- Status: Accepted
+- Decision: Route AI planning through command profiles with compact system prompts + reduced tool schemas for repetitive and structured creation commands, and force tool-call mode (`tool_choice=required`) for board-mutation intent.
+- Alternatives Considered: Keep one full system prompt and broad tool schema for every command; add deterministic non-LLM command handlers for high-volume prompts.
+- Rationale: Full-context prompt + broad schema added measurable latency for compound create commands while LLM-first execution remained mandatory.
+- Consequences: Added dedicated LLM-exposed artifact tools (`createBusinessModelCanvas`, `createWorkflowFlowchart`), introduced grid/artifact prompt+tool fast paths, and moved live prod compound commands into low-3-second runtime range with stable tool-call execution.
+- Revisit Trigger: If strict sub-3s runtime on every compound command is mandatory, evaluate lower-latency model tier or asynchronous multi-object write acknowledgement strategy.
+
 ## Change Log
 - 2026-02-16: Initial decision set created.
 - 2026-02-16: Added auth provider, deployment URL strategy, and error recovery UX decisions.
@@ -302,3 +464,21 @@ Purpose: log system decisions, alternatives, rationale, and change history.
 - 2026-02-20: Added two-tier gate policy (fast dev gate + parallel pre-prod full gate).
 - 2026-02-20: Added AI warning-only inline messaging + board access metadata fallback gating decision.
 - 2026-02-20: Added lean sprint-control process decision (TASKS split, E2E-first rule, CI deploy + Lighthouse PR budgets).
+- 2026-02-20: Added incremental BoardPage extraction decision for geometry/helpers + types modules.
+- 2026-02-20: Added guardrail-compatible BoardPage helper-module extraction decision for view-models, sharing flows, and action utilities.
+- 2026-02-21: Added batched template-write decision for AI object generation paths.
+- 2026-02-21: Added queue lock heartbeat decision for long-running AI command ownership.
+- 2026-02-21: Added AI coordinate parsing and execution propagation decision.
+- 2026-02-21: Added cursor publish cadence + duplicate suppression decision.
+- 2026-02-21: Added guardrail-safe runtime timing-helper extraction decision.
+- 2026-02-21: Added full-gate stabilization decision for dynamic preview ports and isolated Playwright outputs.
+- 2026-02-22: Added LLM-first runtime planning decision for board intent handling.
+- 2026-02-22: Added explicit advanced layout/journey tool exposure and runtime latency-budget enforcement decision.
+- 2026-02-22: Added BoardPageRuntime primitive-helper extraction decision with refactor-safe source guardrail aggregation.
+- 2026-02-22: Added boards-side reusable component extraction decision for board create/share UI.
+- 2026-02-22: Added LLM-only create-path reliability decision with human-readable provider failure messaging and bounded provider retry controls.
+- 2026-02-22: Added AI queue wait-budget decision with explicit board-busy timeout response semantics.
+- 2026-02-22: Added provider-timeout and provider-chain diagnostic decision for multi-object command reliability.
+- 2026-02-22: Added runtime AI endpoint split decision for local/dev and production isolation.
+- 2026-02-22: Added provider-priority and cooldown suppression decision to reduce degraded-provider latency impact.
+- 2026-02-22: Added command-profiled compact prompt/tool-routing decision with required tool-call mode for fast compound AI execution.

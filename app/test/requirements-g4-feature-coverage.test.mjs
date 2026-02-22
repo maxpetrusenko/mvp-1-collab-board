@@ -35,7 +35,11 @@ test('TS-013 / RQ-013: sticky palette is exactly five colors', () => {
 })
 
 test('TS-014 / RQ-014: AI command history is collected and rendered in the panel', () => {
-  assert.equal(boardPageSource.includes("collection(db, 'boards', boardId, 'aiCommands')"), true)
+  assert.equal(
+    boardPageSource.includes("collection(db, 'boards', boardId, 'aiCommands')") ||
+      boardPageSource.includes("collection(dbInstance, 'boards', boardId, 'aiCommands')"),
+    true,
+  )
   assert.equal(boardPageSource.includes('history={aiCommandHistory}'), true)
   assert.equal(aiPanelSource.includes('data-testid="ai-command-history"'), true)
 })
@@ -472,8 +476,15 @@ test('G4-ROTATION-001: Miro-style drag-to-rotate handle is present', () => {
   assert.equal(boardPageSource.includes('cursor="grab"'), true)
 
   // Rotation handle has Line stem and Circle handle
-  assert.equal(boardPageSource.includes('y2={-ROTATION_HANDLE_OFFSET}'), true)
-  assert.equal(boardPageSource.includes('radius={ROTATION_HANDLE_SIZE / 2}'), true)
+  assert.equal(
+    boardPageSource.includes('y2={-ROTATION_HANDLE_OFFSET}') || boardPageSource.includes('y2={-rotationHandleOffset}'),
+    true,
+  )
+  assert.equal(
+    boardPageSource.includes('radius={ROTATION_HANDLE_SIZE / 2}') ||
+      boardPageSource.includes('radius={rotationHandleSize / 2}'),
+    true,
+  )
 
   // Drag handlers calculate angle from mouse position and normalize it
   assert.equal(boardPageSource.includes('Math.atan2(mouseY - centerY, mouseX - centerX)'), true)

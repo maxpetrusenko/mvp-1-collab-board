@@ -1,6 +1,10 @@
 import { expect, test, type Page } from '@playwright/test'
 
 import { createTempUser, deleteTempUser, loginWithEmail } from './helpers/auth'
+import {
+  openAiPanelIfNeeded,
+  runAiMutationCommandWithRetry,
+} from './helpers/ai-command'
 import { fetchBoardObjects, newestObjectByType, type BoardObject } from './helpers/firestore'
 
 const APP_URL = process.env.PLAYWRIGHT_BASE_URL || 'https://mvp-1-collab-board.web.app'
@@ -36,24 +40,24 @@ const dragBoardObjectCenterTo = async (
   await page.mouse.up()
 }
 
-const openAiWidgetIfNeeded = async (page: Page) => {
-  const launcher = page.getByTestId('ai-chat-widget-launcher')
-  if (await launcher.count()) {
-    await launcher.click()
+const waitForStickyMarker = async (args: {
+  boardId: string
+  idToken: string
+  marker: string
+  timeoutMs?: number
+}): Promise<boolean> => {
+  const timeoutMs = args.timeoutMs ?? 12_000
+  const startedAt = Date.now()
+
+  while (Date.now() - startedAt <= timeoutMs) {
+    const objects = await fetchBoardObjects(args.boardId, args.idToken)
+    if (objects.some((object) => object.type === 'stickyNote' && object.text?.includes(args.marker))) {
+      return true
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250))
   }
-}
 
-const submitAiCommand = async (page: Page, command: string) => {
-  const aiInput = page.locator('.ai-panel .ai-input').first()
-  await expect(aiInput).toBeVisible()
-  await aiInput.fill(command)
-  await page.locator('.ai-panel').first().getByRole('button', { name: 'Send Command' }).click()
-}
-
-const expectAiSuccess = async (page: Page) => {
-  await expect(page.getByTestId('ai-status-pill')).toHaveText('success')
-  await expect(page.locator('.ai-panel .ai-message.error')).toHaveCount(0)
-  await expect(page.locator('.ai-panel .ai-message.warning')).toHaveCount(0)
+  return false
 }
 
 test.describe('Requirements: collaboration parity', () => {
@@ -190,7 +194,7 @@ test.describe('Requirements: collaboration parity', () => {
       }
 
       await pageA.reload()
-      await expect(pageA.locator('.board-stage')).toBeVisible()
+      await expect(pageA).toHaveURL(/\/b\//, { timeout: 20_000 })
 
       const assertTargetPosition = async (idToken: string) => {
         const objects = await fetchBoardObjects(boardId, idToken)
@@ -237,16 +241,76 @@ test.describe('Requirements: collaboration parity', () => {
       await expect(pageA.locator('.board-stage')).toBeVisible()
       await expect(pageB.locator('.board-stage')).toBeVisible()
 
-      await openAiWidgetIfNeeded(pageA)
-      await submitAiCommand(pageA, `add green sticky note saying ${marker}`)
-      await expectAiSuccess(pageA)
+      await openAiPanelIfNeeded(pageA)
+      await openAiPanelIfNeeded(pageB)
+      const candidateCommands = [
+        `add sticky note saying ${marker}`,
+        `create sticky note with text ${marker}`,
+      ]
+      const candidateExecutors = [
+        { label: 'userA', page: pageA, writerIdToken: userA.idToken, observerIdToken: userB.idToken },
+        { label: 'userB', page: pageB, writerIdToken: userB.idToken, observerIdToken: userA.idToken },
+      ]
+      let aiCompleted = false
+      let lastFailureDetails = 'unknown'
+      for (const executor of candidateExecutors) {
+        for (const command of candidateCommands) {
+          try {
+            const execution = await runAiMutationCommandWithRetry(executor.page, {
+              boardId,
+              command,
+              maxAttempts: 2,
+            })
+            if (execution.httpStatus !== 200) {
+              lastFailureDetails = `${executor.label} command "${command}" returned HTTP ${execution.httpStatus}.`
+              continue
+            }
+            const visibleToWriter = await waitForStickyMarker({
+              boardId,
+              idToken: executor.writerIdToken,
+              marker,
+            })
+            if (!visibleToWriter) {
+              lastFailureDetails = `${executor.label} command "${command}" returned 200 without writer marker visibility.`
+              continue
+            }
+            const visibleToObserver = await waitForStickyMarker({
+              boardId,
+              idToken: executor.observerIdToken,
+              marker,
+            })
+            if (!visibleToObserver) {
+              lastFailureDetails = `${executor.label} command "${command}" returned 200 without observer marker visibility.`
+              continue
+            }
+
+            aiCompleted = true
+            break
+          } catch (error) {
+            lastFailureDetails = error instanceof Error ? error.message : String(error)
+          }
+        }
+        if (aiCompleted) {
+          break
+        }
+      }
+      expect(
+        aiCompleted,
+        `AI command failed to create marker "${marker}" after retry commands. Last details: ${lastFailureDetails}.`,
+      ).toBe(true)
 
       await expect
         .poll(async () => {
-          const objects = await fetchBoardObjects(boardId, userB.idToken)
-          return objects.some((object) => object.type === 'stickyNote' && object.text?.includes(marker))
+          const [objectsA, objectsB] = await Promise.all([
+            fetchBoardObjects(boardId, userA.idToken),
+            fetchBoardObjects(boardId, userB.idToken),
+          ])
+          return {
+            visibleToA: objectsA.some((object) => object.type === 'stickyNote' && object.text?.includes(marker)),
+            visibleToB: objectsB.some((object) => object.type === 'stickyNote' && object.text?.includes(marker)),
+          }
         })
-        .toBe(true)
+        .toEqual({ visibleToA: true, visibleToB: true })
     } finally {
       await Promise.all([
         contextA.close().catch(() => undefined),

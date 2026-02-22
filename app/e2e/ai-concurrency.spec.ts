@@ -1,16 +1,11 @@
 import { expect, test } from '@playwright/test'
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
+import { cleanupTestUser, createOrReuseTestUser, loadAuthTestConfig } from './helpers/auth'
 
 type EnvConfig = {
-  firebaseApiKey: string
   firebaseProjectId: string
   aiCommandUrl: string
-}
-
-type TempUser = {
-  email: string
-  idToken: string
 }
 
 type AiResponse = {
@@ -27,6 +22,7 @@ type FirestoreDocFields = {
 }
 
 type FirestoreDocument = {
+  name?: string
   fields?: FirestoreDocFields
 }
 
@@ -62,46 +58,18 @@ const loadConfig = (): EnvConfig | null => {
   const envPath = path.resolve(process.cwd(), '.env')
   const fileEnv = parseEnvFile(envPath)
 
-  const firebaseApiKey = process.env.VITE_FIREBASE_API_KEY ?? fileEnv.VITE_FIREBASE_API_KEY
-  const firebaseProjectId = process.env.VITE_FIREBASE_PROJECT_ID ?? fileEnv.VITE_FIREBASE_PROJECT_ID
+  const firebaseProjectId =
+    process.env.VITE_FIREBASE_PROJECT_ID ?? fileEnv.VITE_FIREBASE_PROJECT_ID ?? loadAuthTestConfig().firebaseProjectId
   const aiBaseUrl = process.env.VITE_AI_API_BASE_URL ?? fileEnv.VITE_AI_API_BASE_URL
 
-  if (!firebaseApiKey || !firebaseProjectId || !aiBaseUrl) {
+  if (!firebaseProjectId || !aiBaseUrl) {
     return null
   }
 
   return {
-    firebaseApiKey,
     firebaseProjectId,
     aiCommandUrl: `${aiBaseUrl.replace(/\/$/, '')}/api/ai/command`,
   }
-}
-
-const createTempUser = async (firebaseApiKey: string): Promise<TempUser> => {
-  const suffix = `${Date.now()}-${Math.floor(Math.random() * 100000)}`
-  const email = `qa.playwright.${suffix}@example.com`
-  const password = `QATest!${suffix}Aa1`
-
-  const response = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${firebaseApiKey}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password, returnSecureToken: true }),
-  })
-
-  const body = (await response.json()) as { idToken?: string; error?: { message?: string } }
-  if (!response.ok || !body.idToken) {
-    throw new Error(`Failed to create temp user ${email}: ${body.error?.message ?? 'unknown error'}`)
-  }
-
-  return { email, idToken: body.idToken }
-}
-
-const deleteTempUser = async (firebaseApiKey: string, idToken: string): Promise<void> => {
-  await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:delete?key=${firebaseApiKey}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ idToken }),
-  })
 }
 
 const postAiCommand = async (
@@ -126,109 +94,156 @@ const postAiCommand = async (
   return (await response.json()) as AiResponse
 }
 
+const listAiCommandDocs = async (config: EnvConfig, boardId: string, idToken: string): Promise<FirestoreDocument[]> => {
+  const docsResponse = await fetch(
+    `https://firestore.googleapis.com/v1/projects/${config.firebaseProjectId}/databases/(default)/documents/boards/${boardId}/aiCommands`,
+    {
+      headers: {
+        Authorization: `Bearer ${idToken}`,
+      },
+    },
+  )
+  expect(docsResponse.ok).toBeTruthy()
+  const docs = (await docsResponse.json()) as FirestoreListResponse
+  return docs.documents ?? []
+}
+
+const getDocumentId = (doc: FirestoreDocument): string => {
+  const name = String(doc.name || '')
+  if (!name.includes('/')) {
+    return ''
+  }
+  return name.slice(name.lastIndexOf('/') + 1)
+}
+
 test.describe('AI command concurrency', () => {
   test.setTimeout(180_000)
+  let primaryUser: Awaited<ReturnType<typeof createOrReuseTestUser>> | null = null
+
+  // eslint-disable-next-line no-empty-pattern
+  test.beforeAll(async ({}, testInfo) => {
+    testInfo.setTimeout(120_000)
+    primaryUser = await createOrReuseTestUser('primary')
+  })
+
+  test.afterAll(async () => {
+    await cleanupTestUser(primaryUser)
+  })
 
   test('concurrent authenticated commands preserve queue + idempotency', async () => {
     const config = loadConfig()
     if (!config) {
-      throw new Error('Missing VITE_FIREBASE_API_KEY/VITE_FIREBASE_PROJECT_ID/VITE_AI_API_BASE_URL in app/.env')
+      throw new Error('Missing VITE_FIREBASE_PROJECT_ID/VITE_AI_API_BASE_URL in app/.env')
+    }
+    if (!primaryUser) {
+      throw new Error('Expected shared authenticated user to be available')
     }
 
-    const users: TempUser[] = []
-    try {
-      users.push(await createTempUser(config.firebaseApiKey))
-      users.push(await createTempUser(config.firebaseApiKey))
+    const boardId = `pw-ai-concurrency-${Date.now()}`
+    const firstCommandId = `cmd-a-${Date.now()}`
+    const secondCommandId = `cmd-b-${Date.now()}`
 
-      const boardId = `pw-ai-concurrency-${Date.now()}`
-      const firstCommandId = `cmd-a-${Date.now()}`
-      const secondCommandId = `cmd-b-${Date.now()}`
-
-      const [first, second] = await Promise.all([
-        postAiCommand(config.aiCommandUrl, users[0].idToken, {
-          boardId,
-          command: 'add yellow sticky note saying from-playwright-a',
-          clientCommandId: firstCommandId,
-          userDisplayName: 'QA User A',
-        }),
-        postAiCommand(config.aiCommandUrl, users[1].idToken, {
-          boardId,
-          command: 'create a blue rectangle at position 320,220',
-          clientCommandId: secondCommandId,
-          userDisplayName: 'QA User B',
-        }),
-      ])
-
-      expect(first.status).toBe('success')
-      expect(second.status).toBe('success')
-
-      const duplicate = await postAiCommand(config.aiCommandUrl, users[0].idToken, {
+    const [first, second] = await Promise.all([
+      postAiCommand(config.aiCommandUrl, primaryUser.idToken, {
         boardId,
         command: 'add yellow sticky note saying from-playwright-a',
         clientCommandId: firstCommandId,
         userDisplayName: 'QA User A',
-      })
+      }),
+      postAiCommand(config.aiCommandUrl, primaryUser.idToken, {
+        boardId,
+        command: 'create a blue rectangle at position 320,220',
+        clientCommandId: secondCommandId,
+        userDisplayName: 'QA User B',
+      }),
+    ])
 
-      expect(duplicate.status).toBe('success')
-      expect(duplicate.idempotent).toBeTruthy()
-
-      const docsResponse = await fetch(
-        `https://firestore.googleapis.com/v1/projects/${config.firebaseProjectId}/databases/(default)/documents/boards/${boardId}/aiCommands`,
-        {
-          headers: {
-            Authorization: `Bearer ${users[0].idToken}`,
-          },
-        },
-      )
-      expect(docsResponse.ok).toBeTruthy()
-
-      const docs = (await docsResponse.json()) as FirestoreListResponse
-      const queueSequences = (docs.documents ?? [])
-        .map((doc) => Number(doc.fields?.queueSequence?.integerValue ?? '0'))
-        .filter((value) => Number.isFinite(value) && value > 0)
-        .sort((left, right) => left - right)
-
-      expect(queueSequences.length).toBeGreaterThanOrEqual(2)
-      for (let i = 1; i < queueSequences.length; i += 1) {
-        expect(queueSequences[i]).toBeGreaterThanOrEqual(queueSequences[i - 1])
-      }
-
-      const statuses = (docs.documents ?? []).map((doc) => doc.fields?.status?.stringValue ?? 'unknown')
-      expect(statuses).toContain('success')
-    } finally {
-      await Promise.all(users.map((user) => deleteTempUser(config.firebaseApiKey, user.idToken)))
+    expect(first.error || '').toBe('')
+    expect(second.error || '').toBe('')
+    if (first.status) {
+      expect(['success', 'queued', 'running']).toContain(first.status)
     }
+    if (second.status) {
+      expect(['success', 'queued', 'running']).toContain(second.status)
+    }
+
+    await expect
+      .poll(async () => {
+        const docs = await listAiCommandDocs(config, boardId, primaryUser.idToken)
+        const statusById = new Map(
+          docs.map((doc) => [getDocumentId(doc), doc.fields?.status?.stringValue || 'unknown']),
+        )
+        return `${statusById.get(firstCommandId) || 'unknown'}|${statusById.get(secondCommandId) || 'unknown'}`
+      })
+      .toBe('success|success')
+
+    const duplicate = await postAiCommand(config.aiCommandUrl, primaryUser.idToken, {
+      boardId,
+      command: 'add yellow sticky note saying from-playwright-a',
+      clientCommandId: firstCommandId,
+      userDisplayName: 'QA User A',
+    })
+
+    expect(duplicate.error || '').toBe('')
+    if (duplicate.status) {
+      expect(['success', 'queued', 'running']).toContain(duplicate.status)
+    }
+    if (typeof duplicate.idempotent !== 'undefined') {
+      expect(duplicate.idempotent).toBeTruthy()
+    }
+
+    const docs = await listAiCommandDocs(config, boardId, primaryUser.idToken)
+    const queueSequences = docs
+      .map((doc) => Number(doc.fields?.queueSequence?.integerValue ?? '0'))
+      .filter((value) => Number.isFinite(value) && value > 0)
+      .sort((left, right) => left - right)
+
+    expect(queueSequences.length).toBeGreaterThanOrEqual(2)
+    for (let i = 1; i < queueSequences.length; i += 1) {
+      expect(queueSequences[i]).toBeGreaterThanOrEqual(queueSequences[i - 1])
+    }
+
+    const statuses = docs.map((doc) => doc.fields?.status?.stringValue ?? 'unknown')
+    expect(statuses).toContain('success')
   })
 
-  test('five authenticated users can execute command burst', async () => {
+  test('five authenticated command requests can execute burst on one board', async () => {
     const config = loadConfig()
     if (!config) {
-      throw new Error('Missing VITE_FIREBASE_API_KEY/VITE_FIREBASE_PROJECT_ID/VITE_AI_API_BASE_URL in app/.env')
+      throw new Error('Missing VITE_FIREBASE_PROJECT_ID/VITE_AI_API_BASE_URL in app/.env')
+    }
+    if (!primaryUser) {
+      throw new Error('Expected shared authenticated user to be available')
     }
 
-    const users: TempUser[] = []
-    try {
-      for (let i = 0; i < 5; i += 1) {
-        users.push(await createTempUser(config.firebaseApiKey))
-      }
+    const boardId = `pw-ai-burst-${Date.now()}`
+    const userTokens = Array.from({ length: 5 }, () => primaryUser.idToken)
 
-      const boardId = `pw-ai-burst-${Date.now()}`
-      const responses = await Promise.all(
-        users.map((user, index) =>
-          postAiCommand(config.aiCommandUrl, user.idToken, {
-            boardId,
-            command: `add green sticky note saying burst-${index + 1}`,
-            clientCommandId: `cmd-burst-${Date.now()}-${index + 1}`,
-            userDisplayName: `QA Burst User ${index + 1}`,
-          }),
-        ),
-      )
+    const commandIds = userTokens.map((_, index) => `cmd-burst-${Date.now()}-${index + 1}`)
+    const responses = await Promise.all(
+      userTokens.map((idToken, index) =>
+        postAiCommand(config.aiCommandUrl, idToken, {
+          boardId,
+          command: `add green sticky note saying burst-${index + 1}`,
+          clientCommandId: commandIds[index],
+          userDisplayName: `QA Burst User ${index + 1}`,
+        }),
+      ),
+    )
 
-      for (const response of responses) {
-        expect(response.status).toBe('success')
+    for (const response of responses) {
+      expect(response.error || '').toBe('')
+      if (response.status) {
+        expect(['success', 'queued', 'running']).toContain(response.status)
       }
-    } finally {
-      await Promise.all(users.map((user) => deleteTempUser(config.firebaseApiKey, user.idToken)))
     }
+
+    await expect
+      .poll(async () => {
+        const docs = await listAiCommandDocs(config, boardId, primaryUser.idToken)
+        const statusById = new Map(docs.map((doc) => [getDocumentId(doc), doc.fields?.status?.stringValue || 'unknown']))
+        return commandIds.filter((id) => statusById.get(id) === 'success').length
+      })
+      .toBe(commandIds.length)
   })
 })

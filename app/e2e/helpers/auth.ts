@@ -1,5 +1,5 @@
 import { expect, type Page } from '@playwright/test'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 type EnvConfig = {
@@ -21,6 +21,10 @@ type TestUser = {
 }
 
 type ReusableCredentialSlot = 'primary' | 'secondary' | 'tertiary' | 'quaternary'
+type CredentialPair = { email: string; password: string }
+
+const AUTH_CACHE_PATH = path.resolve(process.cwd(), '.e2e-auth-cache.json')
+const runtimeCredentialCache = new Map<ReusableCredentialSlot, CredentialPair>()
 
 const decodeJwtPayload = (token: string): Record<string, unknown> => {
   const [, payload] = token.split('.')
@@ -90,6 +94,32 @@ const loadRawEnv = (): Record<string, string> => {
   return {
     ...fileEnv,
     ...Object.fromEntries(Object.entries(process.env).filter(([, value]) => typeof value === 'string')),
+  }
+}
+
+const loadCachedCredential = (): CredentialPair | null => {
+  if (!existsSync(AUTH_CACHE_PATH)) {
+    return null
+  }
+  try {
+    const raw = JSON.parse(readFileSync(AUTH_CACHE_PATH, 'utf8')) as { email?: unknown; password?: unknown }
+    const email = typeof raw.email === 'string' ? raw.email.trim() : ''
+    const password = typeof raw.password === 'string' ? raw.password.trim() : ''
+    if (!email || !password) {
+      return null
+    }
+    return { email, password }
+  } catch {
+    return null
+  }
+}
+
+const saveCachedCredential = (credential: CredentialPair): void => {
+  try {
+    const payload = JSON.stringify({ email: credential.email, password: credential.password }, null, 2)
+    writeFileSync(AUTH_CACHE_PATH, payload, 'utf8')
+  } catch {
+    // Best-effort cache persistence only.
   }
 }
 
@@ -170,7 +200,10 @@ export const createTempUser = async (): Promise<TempUser> => {
     }
 
     lastErrorMessage = body.error?.message ?? `HTTP_${response.status}`
-    const isRateLimited = lastErrorMessage === 'TOO_MANY_ATTEMPTS_TRY_LATER' || response.status === 429
+    const isRateLimited =
+      lastErrorMessage === 'TOO_MANY_ATTEMPTS_TRY_LATER' ||
+      /visibility check was unavailable/i.test(lastErrorMessage) ||
+      response.status === 429
     if (!isRateLimited || attempt === maxAttempts) {
       break
     }
@@ -192,23 +225,57 @@ export const deleteTempUser = async (idToken: string): Promise<void> => {
 }
 
 export const createOrReuseTestUser = async (slot: ReusableCredentialSlot = 'primary'): Promise<TestUser> => {
-  const reusable = getReusableCredentialPair(slot)
-  if (reusable) {
-    const idToken = await signInWithEmailPassword(reusable.email, reusable.password)
+  const envCredential = getReusableCredentialPair(slot)
+  if (envCredential) {
+    const idToken = await signInWithEmailPassword(envCredential.email, envCredential.password)
     if (idToken) {
       return {
-        email: reusable.email,
-        password: reusable.password,
+        email: envCredential.email,
+        password: envCredential.password,
         idToken,
         ephemeral: false,
       }
     }
   }
 
+  const runtimeCredential = runtimeCredentialCache.get(slot)
+  if (runtimeCredential) {
+    const idToken = await signInWithEmailPassword(runtimeCredential.email, runtimeCredential.password)
+    if (idToken) {
+      return {
+        email: runtimeCredential.email,
+        password: runtimeCredential.password,
+        idToken,
+        ephemeral: false,
+      }
+    }
+  }
+
+  if (slot === 'primary') {
+    const cachedCredential = loadCachedCredential()
+    if (cachedCredential) {
+      const idToken = await signInWithEmailPassword(cachedCredential.email, cachedCredential.password)
+      if (idToken) {
+        runtimeCredentialCache.set(slot, cachedCredential)
+        return {
+          email: cachedCredential.email,
+          password: cachedCredential.password,
+          idToken,
+          ephemeral: false,
+        }
+      }
+    }
+  }
+
   const tempUser = await createTempUser()
+  const credential = { email: tempUser.email, password: tempUser.password }
+  runtimeCredentialCache.set(slot, credential)
+  if (slot === 'primary') {
+    saveCachedCredential(credential)
+  }
   return {
     ...tempUser,
-    ephemeral: true,
+    ephemeral: false,
   }
 }
 
@@ -220,9 +287,24 @@ export const cleanupTestUser = async (user: TestUser | null): Promise<void> => {
 }
 
 export const loginWithEmail = async (page: Page, appUrl: string, email: string, password: string): Promise<void> => {
-  await page.goto(`${appUrl}/login?qaAuth=1`)
-  await page.getByTestId('qa-email-input').fill(email)
-  await page.getByTestId('qa-password-input').fill(password)
-  await page.getByTestId('qa-email-submit').click()
-  await expect(page).toHaveURL(/\/b\//, { timeout: 20_000 })
+  const maxAttempts = 2
+  let lastError: Error | null = null
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await page.goto(`${appUrl}/login?qaAuth=1`)
+      await page.getByTestId('qa-email-input').fill(email)
+      await page.getByTestId('qa-password-input').fill(password)
+      await page.getByTestId('qa-email-submit').click()
+      await expect(page).toHaveURL(/\/b\//, { timeout: 40_000 })
+      return
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error))
+      if (attempt < maxAttempts) {
+        await page.waitForTimeout(1_000)
+      }
+    }
+  }
+
+  throw lastError || new Error('Login did not reach board route.')
 }

@@ -53,6 +53,7 @@ export type CursorPresence = {
 }
 
 export type BoardPresenceMap = Record<string, CursorPresence>
+const TRANSIENT_FETCH_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504])
 
 const parseEnvFile = (filePath: string): Record<string, string> => {
   if (!existsSync(filePath)) {
@@ -88,6 +89,8 @@ const waitForCondition = async (condition: () => Promise<boolean>, timeoutMs: nu
 
   throw new Error(`Condition not met within ${timeoutMs}ms`)
 }
+
+const sleepMs = async (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 const toFirestoreEncodedValue = (value: unknown): FirestoreEncodedValue => {
   if (value === null || value === undefined) {
@@ -328,24 +331,42 @@ export const seedBoardObjects = async (
 
   const writeObject = async (boardObject: BoardObject) => {
     const endpoint = `https://firestore.googleapis.com/v1/projects/${firebaseProjectId}/databases/(default)/documents/boards/${boardId}/objects?documentId=${encodeURIComponent(boardObject.id)}`
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${idToken}`,
-      },
-      body: JSON.stringify({
-        fields: toFirestoreFields(boardObject as Record<string, unknown>),
-      }),
-    })
+    const maxAttempts = 3
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({
+            fields: toFirestoreFields(boardObject as Record<string, unknown>),
+          }),
+        })
 
-    if (!response.ok) {
-      const body = await response.text().catch(() => '')
-      throw new Error(`Failed to seed object ${boardObject.id} (${response.status}): ${body.slice(0, 200)}`)
+        if (response.ok) {
+          return
+        }
+
+        const body = await response.text().catch(() => '')
+        const message = `Failed to seed object ${boardObject.id} (${response.status}): ${body.slice(0, 200)}`
+        if (attempt < maxAttempts && TRANSIENT_FETCH_STATUSES.has(response.status)) {
+          await sleepMs(200 * attempt)
+          continue
+        }
+        throw new Error(message)
+      } catch (error) {
+        if (attempt < maxAttempts) {
+          await sleepMs(200 * attempt)
+          continue
+        }
+        throw error
+      }
     }
   }
 
-  const batchSize = 20
+  const batchSize = 10
   for (let i = 0; i < objects.length; i += batchSize) {
     await Promise.all(objects.slice(i, i + batchSize).map((boardObject) => writeObject(boardObject)))
   }
@@ -403,23 +424,40 @@ export const writeCursorPresence = async (args: {
   const databaseUrl = getRealtimeDatabaseUrl()
   const endpoint = `${databaseUrl}/presence/${encodeURIComponent(args.boardId)}/${encodeURIComponent(args.userId)}.json?auth=${encodeURIComponent(args.idToken)}`
   const now = Date.now()
-  const response = await fetch(endpoint, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      boardId: args.boardId,
-      userId: args.userId,
-      displayName: args.displayName,
-      x: args.x,
-      y: args.y,
-      lastSeen: now,
-      connectionId: args.connectionId || `perf-${now}`,
-    }),
-  })
+  const maxAttempts = 4
 
-  if (!response.ok) {
-    const body = await response.text().catch(() => '')
-    throw new Error(`Failed to write cursor presence (${response.status}): ${body.slice(0, 200)}`)
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      const response = await fetch(endpoint, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          boardId: args.boardId,
+          userId: args.userId,
+          displayName: args.displayName,
+          x: args.x,
+          y: args.y,
+          lastSeen: now,
+          connectionId: args.connectionId || `perf-${now}`,
+        }),
+      })
+
+      if (response.ok) {
+        return
+      }
+
+      const body = await response.text().catch(() => '')
+      const transientStatus = TRANSIENT_FETCH_STATUSES.has(response.status)
+      if (!transientStatus || attempt === maxAttempts - 1) {
+        throw new Error(`Failed to write cursor presence (${response.status}): ${body.slice(0, 200)}`)
+      }
+    } catch (error) {
+      if (attempt === maxAttempts - 1) {
+        throw error
+      }
+    }
+
+    await sleepMs(80 * (attempt + 1))
   }
 }
 
@@ -497,22 +535,26 @@ export const requestBestEffortGc = async (page: Page) => {
 }
 
 export const measureAiCommandLatency = async (page: Page, command: string): Promise<{ elapsedMs: number; success: boolean }> => {
-  const aiInput = page.locator('.ai-input textarea, .ai-input').first()
-  const submitButton = page.locator('button[title*="Send"], button[aria-label*="Send"], .ai-submit-button').first()
-  const messagesContainer = page.locator('.ai-messages, .chat-messages').first()
+  const aiTab = page.getByRole('button', { name: 'AI' })
+  if ((await aiTab.getAttribute('aria-pressed')) !== 'true') {
+    await aiTab.click()
+  }
 
-  const initialMessageCount = await messagesContainer.locator('.message, .chat-message').count()
+  const aiPanel = page.locator('.ai-panel-sidebar .ai-panel').first()
+  const aiInput = aiPanel.locator('.ai-input').first()
+  const submitButton = aiPanel.getByRole('button', { name: 'Send Command' })
+  const historyItems = page.locator('.ai-history-item')
+  const initialHistoryCount = await historyItems.count()
 
   const startedAt = Date.now()
   await aiInput.fill(command)
   await submitButton.click()
 
-  await page.waitForTimeout(600)
-
   await waitForCondition(
     async () => {
-      const currentCount = await messagesContainer.locator('.message, .chat-message').count()
-      return currentCount > initialMessageCount
+      const status = (await page.getByTestId('ai-status-pill').textContent())?.trim().toLowerCase() || ''
+      const currentHistoryCount = await historyItems.count()
+      return status !== 'running' && currentHistoryCount > initialHistoryCount
     },
     25_000,
     150,
@@ -520,8 +562,9 @@ export const measureAiCommandLatency = async (page: Page, command: string): Prom
 
   const elapsedMs = Date.now() - startedAt
 
-  const hasErrorMessage = await page.locator('.error-message, .ai-error').count().then((c) => c > 0)
-  const success = !hasErrorMessage
+  const status = (await page.getByTestId('ai-status-pill').textContent())?.trim().toLowerCase() || ''
+  const hasErrorMessage = await page.locator('.ai-panel .ai-message.error').count().then((count) => count > 0)
+  const success = (status === 'success' || status === 'warning') && !hasErrorMessage
 
   return { elapsedMs, success }
 }
@@ -611,10 +654,11 @@ export const calculateMemoryGrowthOverCycles = async (args: {
 }
 
 export const waitForAiPanelReady = async (page: Page): Promise<void> => {
-  const launcher = page.getByTestId('ai-chat-widget-launcher')
-  if (await launcher.count()) {
-    await launcher.click()
+  const aiTab = page.getByRole('button', { name: 'AI' })
+  await expect(aiTab).toBeVisible({ timeout: 8000 })
+  if ((await aiTab.getAttribute('aria-pressed')) !== 'true') {
+    await aiTab.click()
   }
-  await expect(page.getByTestId('ai-chat-widget')).toBeVisible({ timeout: 8000 })
-  await expect(page.locator('.ai-input textarea, .ai-input')).first().toBeVisible({ timeout: 8000 })
+  await expect(page.locator('.ai-panel-sidebar .ai-panel')).toBeVisible({ timeout: 8000 })
+  await expect(page.locator('.ai-panel-sidebar .ai-input')).first().toBeVisible({ timeout: 8000 })
 }

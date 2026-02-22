@@ -5,6 +5,7 @@
 const COLOR_OPTIONS = ['yellow', 'blue', 'green', 'pink', 'red', 'orange', 'purple', 'gray']
 const SHAPE_TYPES = ['rectangle', 'circle', 'diamond', 'triangle']
 const POSITION_OPTIONS = ['top left', 'top right', 'bottom left', 'bottom right', 'center', 'top', 'bottom', 'left', 'right']
+const ANCHOR_OPTIONS = ['top', 'right', 'bottom', 'left', 'center']
 
 const TOOL_DEFINITIONS = [
   {
@@ -81,6 +82,10 @@ const TOOL_DEFINITIONS = [
             enum: COLOR_OPTIONS,
             description: 'Fill color of the shape (optional, defaults to blue)'
           },
+          text: {
+            type: 'string',
+            description: 'Optional text label to render inside the shape'
+          },
           position: {
             type: 'string',
             enum: POSITION_OPTIONS,
@@ -119,6 +124,11 @@ const TOOL_DEFINITIONS = [
             type: 'number',
             description: 'Height in pixels (optional, defaults to 300)'
           },
+          position: {
+            type: 'string',
+            enum: POSITION_OPTIONS,
+            description: 'Relative position on the board (optional, e.g., "top left", "center", "bottom right")'
+          },
           x: {
             type: 'number',
             description: 'X position in pixels (optional, defaults to 120)'
@@ -151,12 +161,22 @@ const TOOL_DEFINITIONS = [
           color: {
             type: 'string',
             enum: COLOR_OPTIONS,
-            description: 'Color of the connector line (optional, defaults to dark)'
+            description: 'Color of the connector line (optional, defaults to blue)'
           },
           style: {
             type: 'string',
             enum: ['arrow', 'line'],
             description: 'Connector style (optional, defaults to arrow)'
+          },
+          fromAnchor: {
+            type: 'string',
+            enum: ANCHOR_OPTIONS,
+            description: 'Optional source-side anchor (top/right/bottom/left/center)'
+          },
+          toAnchor: {
+            type: 'string',
+            enum: ANCHOR_OPTIONS,
+            description: 'Optional target-side anchor (top/right/bottom/left/center)'
           }
         },
         required: ['fromId', 'toId']
@@ -307,6 +327,126 @@ const TOOL_DEFINITIONS = [
   {
     type: 'function',
     function: {
+      name: 'createStickyGridTemplate',
+      description: 'Create a sticky-note grid template. Use for requests like "create 2x3 layout".',
+      parameters: {
+        type: 'object',
+        properties: {
+          rows: {
+            type: 'number',
+            description: 'Number of rows (1-6)'
+          },
+          columns: {
+            type: 'number',
+            description: 'Number of columns (1-6)'
+          },
+          labelText: {
+            type: 'string',
+            description: 'Optional label seed. Comma-separated labels are distributed across cells.'
+          }
+        },
+        required: []
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'spaceElementsEvenly',
+      description: 'Space movable objects evenly on the horizontal axis.',
+      parameters: {
+        type: 'object',
+        properties: {
+          objectIds: {
+            type: 'array',
+            description: 'Optional subset of object IDs to space. Omit to use all movable objects.',
+            items: {
+              type: 'string'
+            }
+          }
+        },
+        required: []
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'createJourneyMap',
+      description: 'Create a user journey map template with staged columns and labels.',
+      parameters: {
+        type: 'object',
+        properties: {
+          stages: {
+            type: 'number',
+            description: 'Number of journey stages (3-10)'
+          }
+        },
+        required: []
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'createBusinessModelCanvas',
+      description:
+        'Create a 9-section Business Model Canvas with topic-aware section text and optional example channels/revenue streams.',
+      parameters: {
+        type: 'object',
+        properties: {
+          topic: {
+            type: 'string',
+            description: 'Optional product/topic focus for the canvas content'
+          },
+          includeExamples: {
+            type: 'boolean',
+            description: 'Include concrete examples across sections'
+          },
+          includeChannelExamples: {
+            type: 'boolean',
+            description: 'Include concrete examples in Channels section'
+          },
+          includeRevenueExamples: {
+            type: 'boolean',
+            description: 'Include concrete examples in Revenue Streams section'
+          }
+        },
+        required: []
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'createWorkflowFlowchart',
+      description: 'Create a connected workflow flowchart with labeled steps and arrows.',
+      parameters: {
+        type: 'object',
+        properties: {
+          topic: {
+            type: 'string',
+            description: 'Optional workflow topic (for example onboarding, checkout, incident triage)'
+          },
+          steps: {
+            type: 'array',
+            description: 'Optional ordered list of step labels to shape the flowchart',
+            items: {
+              type: 'string'
+            }
+          },
+          isPasswordReset: {
+            type: 'boolean',
+            description: 'Set true for the built-in password reset flowchart'
+          }
+        },
+        required: []
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'createSwotTemplate',
       description: 'Create a SWOT analysis template with 4 quadrants (Strengths, Weaknesses, Opportunities, Threats)',
       parameters: {
@@ -390,8 +530,135 @@ const TOOL_DEFINITIONS = [
         required: ['objectId']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'executeBatch',
+      description: 'Execute a batch of board operations in one call. Prefer for multi-object creation or mixed multi-step actions.',
+      parameters: {
+        type: 'object',
+        properties: {
+          operations: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 40,
+            description: 'Ordered operations to execute. Each entry should include tool and args.',
+            items: {
+              type: 'object',
+              properties: {
+                tool: {
+                  type: 'string',
+                  description: 'Tool name to execute for this operation'
+                },
+                args: {
+                  type: 'object',
+                  description: 'Arguments payload for the tool'
+                }
+              },
+              required: ['tool']
+            }
+          }
+        },
+        required: ['operations']
+      }
+    }
   }
 ]
+
+const toFiniteNumber = (value, fallback = 0) => {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+const sanitizeSnippet = (value, maxLength = 80) =>
+  String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength)
+
+const describeBoardObject = (object) => {
+  if (!object || typeof object !== 'object') {
+    return 'invalid-object'
+  }
+
+  const id = sanitizeSnippet(object.id, 48) || 'unknown-id'
+  const type = sanitizeSnippet(object.type, 24) || 'unknown-type'
+  const color = sanitizeSnippet(object.color, 20) || 'none'
+  const text = sanitizeSnippet(object.text || object.title, 64)
+
+  if (type === 'connector') {
+    const startX = toFiniteNumber(object.start?.x, 0)
+    const startY = toFiniteNumber(object.start?.y, 0)
+    const endX = toFiniteNumber(object.end?.x, 0)
+    const endY = toFiniteNumber(object.end?.y, 0)
+    const fromId = sanitizeSnippet(object.fromObjectId, 32) || 'none'
+    const toId = sanitizeSnippet(object.toObjectId, 32) || 'none'
+    return `- id=${id} type=${type} color=${color} from=${fromId} to=${toId} start=(${Math.round(startX)},${Math.round(startY)}) end=(${Math.round(endX)},${Math.round(endY)})`
+  }
+
+  const x = toFiniteNumber(object.position?.x, 0)
+  const y = toFiniteNumber(object.position?.y, 0)
+  const width = toFiniteNumber(object.size?.width, 0)
+  const height = toFiniteNumber(object.size?.height, 0)
+
+  return `- id=${id} type=${type} color=${color} position=(${Math.round(x)},${Math.round(y)}) size=(${Math.round(width)}x${Math.round(height)})${text ? ` text="${text}"` : ''}`
+}
+
+const buildObjectSnapshot = (state, maxItems = 24) => {
+  if (!Array.isArray(state) || state.length === 0) {
+    return '- (no objects on board)'
+  }
+
+  const safeMaxItems = Math.max(1, Math.min(40, maxItems))
+  const preview = state.slice(0, safeMaxItems).map((item) => describeBoardObject(item))
+  if (state.length > safeMaxItems) {
+    preview.push(`- ... ${state.length - safeMaxItems} more objects omitted`)
+  }
+  return preview.join('\n')
+}
+
+const buildPlacementSummary = (boardContext) => {
+  const placement = boardContext?.commandPlacement
+  if (!placement || typeof placement !== 'object') {
+    return '- No placement hint provided by client.'
+  }
+
+  const anchor = placement.anchor
+  const pointer = placement.pointer
+  const viewportCenter = placement.viewportCenter
+  const viewport = placement.viewport
+  const parts = []
+
+  if (anchor && Number.isFinite(Number(anchor.x)) && Number.isFinite(Number(anchor.y))) {
+    parts.push(`- Anchor hint: (${Math.round(Number(anchor.x))}, ${Math.round(Number(anchor.y))})`)
+  }
+  if (pointer && Number.isFinite(Number(pointer.x)) && Number.isFinite(Number(pointer.y))) {
+    parts.push(`- Pointer hint: (${Math.round(Number(pointer.x))}, ${Math.round(Number(pointer.y))})`)
+  }
+  if (
+    viewportCenter &&
+    Number.isFinite(Number(viewportCenter.x)) &&
+    Number.isFinite(Number(viewportCenter.y))
+  ) {
+    parts.push(
+      `- Viewport center hint: (${Math.round(Number(viewportCenter.x))}, ${Math.round(Number(viewportCenter.y))})`,
+    )
+  }
+  if (
+    viewport &&
+    Number.isFinite(Number(viewport.x)) &&
+    Number.isFinite(Number(viewport.y)) &&
+    Number.isFinite(Number(viewport.width)) &&
+    Number.isFinite(Number(viewport.height))
+  ) {
+    parts.push(
+      `- Viewport bounds: x=${Math.round(Number(viewport.x))}, y=${Math.round(Number(viewport.y))}, width=${Math.round(Number(viewport.width))}, height=${Math.round(Number(viewport.height))}`,
+    )
+  }
+
+  return parts.length > 0 ? parts.join('\n') : '- Placement hint payload was present but empty.'
+}
 
 // Helper to build system prompt with board context
 function buildSystemPrompt(boardContext) {
@@ -400,9 +667,12 @@ function buildSystemPrompt(boardContext) {
   const shapeCount = state.filter(o => o.type === 'shape').length
   const frameCount = state.filter(o => o.type === 'frame').length
   const connectorCount = state.filter(o => o.type === 'connector').length
+  const objectSnapshot = buildObjectSnapshot(state)
+  const placementSummary = buildPlacementSummary(boardContext)
 
-  return `You are an AI assistant for a collaborative whiteboard application called CollabBoard.
-Your job is to interpret user commands and call the appropriate tools to manipulate the board.
+  return `You are CollabBoard's board note creator AI agent.
+Your job is to understand user intent for board work and call tools to apply the right board updates.
+You decide how many tool calls are needed and in which order.
 
 CURRENT BOARD STATE:
 - Total objects: ${state.length}
@@ -411,19 +681,29 @@ CURRENT BOARD STATE:
 - Frames: ${frameCount}
 - Connectors: ${connectorCount}
 
+PLACEMENT HINTS FROM CLIENT:
+${placementSummary}
+
+OBJECT SNAPSHOT:
+${objectSnapshot}
+
 AVAILABLE COLORS: ${COLOR_OPTIONS.join(', ')}
 SHAPE TYPES: ${SHAPE_TYPES.join(', ')}
+POSITION OPTIONS: ${POSITION_OPTIONS.join(', ')}
 
 GUIDELINES:
-1. Call one tool by default, but if the user explicitly asks for multiple objects (for example "add 5 stickies"), call the creation tool once per object
-2. Use sensible defaults for optional parameters (x=120, y=120 for new objects)
-3. Don't invent object IDs - use existing ones from the board context when referencing objects
-4. If the command is ambiguous, make a reasonable assumption based on context
-5. Position new objects at (120, 120) if the user doesn't specify a location
-6. For "arrange" commands without specifics, prefer arrangeGrid for stickies
-7. Color names should be lowercase and match the available options exactly
-8. When user says "sticker" or "sticky note", use createStickyNote
-9. If the request is conversational (for example math, explanation, or general chat) and does not need board changes, reply with plain text and do not call tools.`
+1. Treat the raw user message as authoritative intent and infer board actions from it.
+2. For board changes, call tools directly. Prefer executeBatch for mixed multi-step requests, and prefer dedicated bulk tools for repetitive layouts.
+3. Convert placement language into tool args: use "position" for named regions and x/y for coordinates like "at 640,360" or "x=640 y=360".
+4. Use dedicated layout/template tools when they match intent: arrangeGrid, createStickyGridTemplate (for 2x3-style requests and "N boxes/stickies" layouts), spaceElementsEvenly, createBusinessModelCanvas, createWorkflowFlowchart, createSwotTemplate, createRetrospectiveTemplate, createJourneyMap.
+5. If placement is missing, use client placement hints first, then sensible defaults.
+6. Use existing object IDs from board context. Never invent IDs for existing objects.
+7. Keep sticky text concise, concrete, and varied. Generate distinct high-quality ideas, reasons, or action items.
+8. Requests for board artifacts/frameworks (for example canvas, matrix, map, SWOT, retrospective, journey map) are board-mutation intents: create content on the board with tools, not text-only replies.
+9. Only return plain text with no tool calls when the user clearly asks for chat-only output and does not ask for a board artifact.
+10. For workflow/flowchart requests, create labeled shapes and connect steps using createConnector arrows.
+11. For uncertain intent, make the best reasonable assumption and execute useful board actions.
+12. When returning tool calls, keep assistant text empty or very short (under 12 words).`
 }
 
 module.exports = { TOOL_DEFINITIONS, buildSystemPrompt, COLOR_OPTIONS, SHAPE_TYPES, POSITION_OPTIONS }

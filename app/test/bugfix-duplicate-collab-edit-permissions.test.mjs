@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { readBoardPageSource } from './helpers/boardPageSource.mjs'
 
-const boardPageSource = readFileSync(new URL('../src/pages/BoardPage.tsx', import.meta.url), 'utf8')
+const boardPageSource = readBoardPageSource()
 
 test('BUGFIX-DUPLICATE-EDIT-001: interaction mode is not downgraded before board metadata resolves', () => {
   assert.equal(boardPageSource.includes('if (!activeBoardMeta) {'), true)

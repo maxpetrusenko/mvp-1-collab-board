@@ -58,7 +58,7 @@ export type BoardMeta = {
   updatedAt?: number
 }
 
-const FIRESTORE_FETCH_TIMEOUT_MS = 20_000
+const FIRESTORE_FETCH_TIMEOUT_MS = 10_000
 
 const fromFirestoreValue = (value: FirestoreValue | undefined): unknown => {
   if (!value) return undefined
@@ -186,17 +186,29 @@ const fetchFirestoreDocument = async (url: string, idToken: string): Promise<Res
 
 export const fetchBoardObjects = async (boardId: string, idToken: string): Promise<BoardObject[]> => {
   const { firebaseProjectId } = loadAuthTestConfig()
-  const response = await fetchFirestoreDocument(
-    `https://firestore.googleapis.com/v1/projects/${firebaseProjectId}/databases/(default)/documents/boards/${boardId}/objects`,
-    idToken,
-  )
+  const baseUrl = `https://firestore.googleapis.com/v1/projects/${firebaseProjectId}/databases/(default)/documents/boards/${boardId}/objects`
+  const documents: FirestoreDocument[] = []
+  let nextPageToken: string | null = null
 
-  if (!response.ok) {
-    throw new Error(`Failed to read board objects (${response.status})`)
-  }
+  do {
+    const params = new URLSearchParams({ pageSize: '1000' })
+    if (nextPageToken) {
+      params.set('pageToken', nextPageToken)
+    }
 
-  const body = (await response.json()) as { documents?: FirestoreDocument[] }
-  return (body.documents ?? []).map(toBoardObject).filter((object) => !object.deleted)
+    const response = await fetchFirestoreDocument(`${baseUrl}?${params.toString()}`, idToken)
+    if (!response.ok) {
+      throw new Error(`Failed to read board objects (${response.status})`)
+    }
+
+    const body = (await response.json()) as { documents?: FirestoreDocument[]; nextPageToken?: string }
+    documents.push(...(body.documents ?? []))
+    nextPageToken = typeof body.nextPageToken === 'string' && body.nextPageToken.length > 0
+      ? body.nextPageToken
+      : null
+  } while (nextPageToken)
+
+  return documents.map(toBoardObject).filter((object) => !object.deleted)
 }
 
 export const fetchBoardMeta = async (boardId: string, idToken: string): Promise<BoardMeta | null> => {

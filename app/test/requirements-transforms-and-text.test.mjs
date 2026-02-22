@@ -16,6 +16,11 @@ test('FR-8: standalone text objects are supported in board object creation and U
   assert.match(boardPageSource, /data-testid="text-create-popover"/, 'Expected text creation popover')
   assert.match(boardPageSource, /data-testid="text-create-input"/, 'Expected arbitrary text input for text creation')
   assert.match(boardPageSource, /if\s*\(boardObject\.type\s*===\s*'text'\)/, 'Expected dedicated text render branch')
+  assert.match(
+    boardPageSource,
+    /const textColor =[\s\S]*boardObject\.color[\s\S]*defaultTextColor/s,
+    'Expected text renderer to use persisted text object color with theme fallback',
+  )
 })
 
 test('Transforms: rotate controls are available and wired to persisted rotation patches', () => {
@@ -106,6 +111,16 @@ test('Connectors: style options support arrow and line rendering', () => {
     /<Line[\s\S]*connectorGeometry\.start\.x[\s\S]*connectorGeometry\.end\.y/s,
     'Expected line connector rendering branch',
   )
+  assert.match(
+    boardPageSource,
+    /const connectorOutlineColor =\s*themeMode === 'dark' \? 'rgba\(248, 250, 252, 0\.72\)' : 'rgba\(15, 23, 42, 0\.24\)'/,
+    'Expected connector renderer to define a dark-mode-friendly outline/halo color',
+  )
+  assert.match(
+    boardPageSource,
+    /themeMode === 'dark' && rawConnectorColor === '#0f172a'\s*\?\s*connectorDefaultColor/,
+    'Expected dark-mode connector rendering to avoid near-invisible charcoal strokes',
+  )
 })
 
 test('Connectors: linked endpoints resolve from attached object anchors and mindmap template writes bindings', () => {
@@ -118,6 +133,16 @@ test('Connectors: linked endpoints resolve from attached object anchors and mind
     boardPageSource,
     /const fromObject =[\s\S]*boardObject\.fromObjectId[\s\S]*const start =[\s\S]*getAnchorPointForObject\(fromObject, fromAnchor\)/s,
     'Expected connector bounds to resolve start anchor from linked object',
+  )
+  assert.match(
+    boardPageSource,
+    /inferConnectorAnchorsBetweenObjects\(fromObject, toObject\)/,
+    'Expected connector rendering to infer side anchors for linked objects when anchors are missing/center',
+  )
+  assert.match(
+    boardPageSource,
+    /explicitFromAnchor && explicitFromAnchor !== 'center'/,
+    'Expected connector rendering to override center anchors with inferred side anchors',
   )
   assert.match(
     boardPageSource,

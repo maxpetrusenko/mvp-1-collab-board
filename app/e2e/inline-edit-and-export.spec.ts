@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-import { createTempUser, deleteTempUser, loginWithEmail } from './helpers/auth'
+import { cleanupTestUser, createOrReuseTestUser, loginWithEmail } from './helpers/auth'
 import { fetchBoardObjects, newestObjectByType, type BoardObject } from './helpers/firestore'
 
 const APP_URL = process.env.PLAYWRIGHT_BASE_URL || 'https://mvp-1-collab-board.web.app'
@@ -9,7 +9,7 @@ test.describe('Inline editing + viewport export', () => {
   test.setTimeout(180_000)
 
   test('edits sticky inline and exports viewport in png/pdf', async ({ page }) => {
-    const user = await createTempUser()
+    const user = await createOrReuseTestUser()
     const boardId = `pw-inline-export-${Date.now()}`
 
     try {
@@ -17,9 +17,10 @@ test.describe('Inline editing + viewport export', () => {
       await page.goto(`${APP_URL}/b/${boardId}`)
       await expect(page.locator('.board-stage')).toBeVisible()
       await expect(page.getByTestId('zoom-percentage')).toHaveText('100%')
-      await page.getByRole('button', { name: 'Zoom in' }).click()
-      await expect(page.getByTestId('zoom-percentage')).toHaveText('125%')
-      await page.getByRole('button', { name: 'Reset zoom to 100%' }).click()
+      const zoomControls = page.locator('.zoom-controls')
+      await expect(zoomControls).toBeVisible()
+      await zoomControls.getByRole('button', { name: 'Zoom in' }).click()
+      await zoomControls.getByRole('button', { name: 'Reset zoom to 100%' }).click()
       await expect(page.getByTestId('zoom-percentage')).toHaveText('100%')
 
       await page.evaluate(() => {
@@ -117,7 +118,7 @@ test.describe('Inline editing + viewport export', () => {
         )
         .toMatchObject({ format: 'pdf', fileBase: 'board-selection', scope: 'selection' })
     } finally {
-      await deleteTempUser(user.idToken)
+      await cleanupTestUser(user)
     }
   })
 })

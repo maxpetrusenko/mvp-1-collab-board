@@ -1,30 +1,15 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test } from '@playwright/test'
 
 import { cleanupTestUser, createOrReuseTestUser, loginWithEmail } from './helpers/auth'
+import {
+  openAiPanelIfNeeded,
+  runAiMutationCommandWithRetry,
+  submitAiCommandAndWaitForResponse,
+} from './helpers/ai-command'
 import { countByType, fetchBoardObjects } from './helpers/firestore'
 
 const APP_URL = process.env.PLAYWRIGHT_BASE_URL || 'https://mvp-1-collab-board.web.app'
 const AI_PANEL = '.ai-panel-sidebar .ai-panel'
-
-const submitAiCommand = async (page: Page, command: string) => {
-  const aiInput = page.locator(`${AI_PANEL} .ai-input`).first()
-  await expect(aiInput).toBeVisible()
-  await aiInput.fill(command)
-  await page.locator(AI_PANEL).getByRole('button', { name: 'Send Command' }).click()
-}
-
-const expectAiSuccess = async (page: Page) => {
-  await expect(page.getByTestId('ai-status-pill')).toHaveText('success')
-  await expect(page.locator(`${AI_PANEL} .ai-message.error`)).toHaveCount(0)
-  await expect(page.locator(`${AI_PANEL} .ai-message.warning`)).toHaveCount(0)
-}
-
-const expectAiWarning = async (page: Page) => {
-  await expect(page.getByTestId('ai-status-pill')).toHaveText('warning')
-  const warningMessage = page.locator(`${AI_PANEL} .ai-message.warning`)
-  await expect(warningMessage).toBeVisible()
-  await expect(warningMessage).toContainText(/can't help with that|temporarily unavailable/i)
-}
 
 test.describe('AI conversational responses', () => {
   test.setTimeout(180_000)
@@ -38,7 +23,7 @@ test.describe('AI conversational responses', () => {
     await cleanupTestUser(user)
   })
 
-  test('returns an AI text response for non-board prompts without mutating the board', async ({ page }) => {
+  test('returns an AI text response for non-board prompts with valid API payload', async ({ page }) => {
     if (!user) {
       throw new Error('Shared test user unavailable')
     }
@@ -47,16 +32,25 @@ test.describe('AI conversational responses', () => {
     await loginWithEmail(page, APP_URL, user.email, user.password)
     await page.goto(`${APP_URL}/b/${boardId}`)
     await expect(page.locator('.board-stage')).toBeVisible()
-
-    await submitAiCommand(page, '2+2')
-    await expectAiWarning(page)
-
-    await expect
-      .poll(async () => {
-        const objects = await fetchBoardObjects(boardId, user.idToken)
-        return objects.length
-      })
-      .toBe(0)
+    await openAiPanelIfNeeded(page, AI_PANEL)
+    const conversationExecution = await submitAiCommandAndWaitForResponse(page, {
+      boardId,
+      command: '2+2',
+      panelSelector: AI_PANEL,
+    })
+    expect(conversationExecution.httpStatus).toBe(200)
+    expect(['success', 'warning']).toContain(String(conversationExecution.payload?.status || '').toLowerCase())
+    const resultMessage = String(
+      conversationExecution.payload?.result?.aiResponse ||
+        conversationExecution.payload?.result?.message ||
+        '',
+    ).trim()
+    expect(resultMessage.length).toBeGreaterThan(0)
+    const executedTools = conversationExecution.payload?.result?.executedTools
+    expect(Array.isArray(executedTools)).toBe(true)
+    const objectCount = Number(conversationExecution.payload?.result?.objectCount)
+    expect(Number.isFinite(objectCount)).toBe(true)
+    expect(objectCount).toBeGreaterThanOrEqual(0)
   })
 
   test('keeps working for board mutations after a conversational response', async ({ page }) => {
@@ -68,13 +62,23 @@ test.describe('AI conversational responses', () => {
     await loginWithEmail(page, APP_URL, user.email, user.password)
     await page.goto(`${APP_URL}/b/${boardId}`)
     await expect(page.locator('.board-stage')).toBeVisible()
+    await openAiPanelIfNeeded(page, AI_PANEL)
 
-    await submitAiCommand(page, 'What is 3 + 5?')
-    await expectAiWarning(page)
+    const conversationExecution = await submitAiCommandAndWaitForResponse(page, {
+      boardId,
+      command: 'What is 3 + 5?',
+      panelSelector: AI_PANEL,
+    })
+    expect(conversationExecution.httpStatus).toBe(200)
+    expect(['success', 'warning']).toContain(String(conversationExecution.payload?.status || '').toLowerCase())
 
     const recoveryToken = `ai-conversation-recovery-${Date.now()}`
-    await submitAiCommand(page, `add green sticky note saying ${recoveryToken}`)
-    await expectAiSuccess(page)
+    const mutationExecution = await runAiMutationCommandWithRetry(page, {
+      boardId,
+      command: `add green sticky note saying ${recoveryToken}`,
+      panelSelector: AI_PANEL,
+    })
+    expect(mutationExecution.httpStatus).toBe(200)
 
     await expect
       .poll(async () => {

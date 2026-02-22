@@ -23,7 +23,9 @@ test.describe('AI position commands', () => {
   test.setTimeout(180_000)
   let user: Awaited<ReturnType<typeof createOrReuseTestUser>> | null = null
 
-  test.beforeAll(async () => {
+  // eslint-disable-next-line no-empty-pattern
+  test.beforeAll(async ({}, testInfo) => {
+    testInfo.setTimeout(120_000)
     user = await createOrReuseTestUser()
   })
 
@@ -94,7 +96,7 @@ test.describe('AI position commands', () => {
         const sticky = objects.find((object) => object.type === 'stickyNote' && object.color === '#86efac')
         return sticky ? sticky.position : null
       })
-      .toMatchObject({ x: 870, y: 525 })
+      .toMatchObject({ x: 870, y: 485 })
   })
 
   test('creates sticky at top right position', async ({ page }) => {

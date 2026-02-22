@@ -5,11 +5,9 @@
 
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import path from 'node:path'
+import { readBoardPageSource } from './helpers/boardPageSource.mjs'
 
-const boardPagePath = path.resolve(process.cwd(), 'src/pages/BoardPage.tsx')
-const boardPageSource = readFileSync(boardPagePath, 'utf8')
+const boardPageSource = readBoardPageSource()
 
 describe('BUGFIX-VOTING-ALL-OBJECTS', () => {
   it('uses unified voting-aware object selection handler', () => {
