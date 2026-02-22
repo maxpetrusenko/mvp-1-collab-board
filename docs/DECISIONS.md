@@ -375,6 +375,15 @@ Purpose: log system decisions, alternatives, rationale, and change history.
 - Consequences: Tool schema breadth increased, dispatcher routing expanded, queue wait duration is bounded, and LLM requests receive budget-aware timeout overrides.
 - Revisit Trigger: If command completion quality drops under heavy contention and requires adaptive per-board queue budgets or multi-tier latency classes.
 
+### D-041
+- Date: 2026-02-22
+- Status: Accepted
+- Decision: Extract `BoardPageRuntime` constants and pure utility helpers into `app/src/pages/boardPageRuntimePrimitives.tsx` while preserving runtime behavior and source-based requirement guardrails via shared source aggregation.
+- Alternatives Considered: Keep all primitives inline in `BoardPageRuntime.tsx`; perform a larger runtime split in one pass.
+- Rationale: The runtime file remains over-size and hard to maintain; extracting pure helpers cuts file surface safely with low behavior risk and keeps incremental refactor momentum.
+- Consequences: `BoardPageRuntime.tsx` shrinks and dependency boundaries become clearer, while source-string tests now read both runtime and extracted helper modules through `app/test/helpers/boardPageSource.mjs`.
+- Revisit Trigger: Once guardrails are fully behavior-based, continue deeper extraction (`useTransforms`, canvas command handlers, share panel composition) in larger chunks.
+
 ## Change Log
 - 2026-02-16: Initial decision set created.
 - 2026-02-16: Added auth provider, deployment URL strategy, and error recovery UX decisions.
@@ -402,3 +411,4 @@ Purpose: log system decisions, alternatives, rationale, and change history.
 - 2026-02-21: Added full-gate stabilization decision for dynamic preview ports and isolated Playwright outputs.
 - 2026-02-22: Added LLM-first runtime planning decision for board intent handling.
 - 2026-02-22: Added explicit advanced layout/journey tool exposure and runtime latency-budget enforcement decision.
+- 2026-02-22: Added BoardPageRuntime primitive-helper extraction decision with refactor-safe source guardrail aggregation.

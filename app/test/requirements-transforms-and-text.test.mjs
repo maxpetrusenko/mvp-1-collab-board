@@ -1,10 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import path from 'node:path'
+import { readBoardPageSource } from './helpers/boardPageSource.mjs'
 
-const boardPagePath = path.resolve(process.cwd(), 'src/pages/BoardPage.tsx')
-const boardPageSource = readFileSync(boardPagePath, 'utf8')
+const boardPageSource = readBoardPageSource()
 
 test('FR-8: standalone text objects are supported in board object creation and UI', () => {
   assert.match(
@@ -59,7 +57,7 @@ test('Transforms: rotate controls are available and wired to persisted rotation 
   )
   assert.match(
     boardPageSource,
-    /const calculateRotationAngle = \(centerX: number, centerY: number, mouseX: number, mouseY: number\) =>/,
+    /(export\s+)?const calculateRotationAngle = \(\s*centerX: number,\s*centerY: number,\s*mouseX: number,\s*mouseY: number,\s*\) =>/,
     'Expected shared rotation angle helper',
   )
   assert.match(

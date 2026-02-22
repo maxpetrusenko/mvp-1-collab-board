@@ -271,10 +271,15 @@ test('TS-035 / T-068: object hover state is tracked and rendered for board objec
 
 test('TS-049 / T-032 UX: vote badges render icon + numeric count, while comment badges are icon-only', () => {
   assert.equal(boardPageSource.includes('const voteCount = Object.keys(boardObject.votesByUser || {}).length'), true)
-  assert.equal(boardPageSource.includes('const getVoteBadgeWidth = (voteCount: number) => (voteCount > 9 ? 34 : 30)'), true)
-  assert.equal(boardPageSource.includes('const renderVoteBadge = (args: { voteCount: number; x: number; y: number }) => {'), true)
-  assert.equal(boardPageSource.includes('const renderCommentBadge = (args: { commentCount: number; x: number; y: number }) => {'), true)
-  assert.equal(boardPageSource.includes('voteCount > 0'), true)
+  assert.match(boardPageSource, /(export\s+)?const getVoteBadgeWidth = \(voteCount: number\) => \(voteCount > 9 \? 34 : 30\)/)
+  assert.equal(boardPageSource.includes('renderVoteBadge = (args:'), true)
+  assert.equal(boardPageSource.includes('renderCommentBadge = (args:'), true)
+  assert.equal(boardPageSource.includes('voteCount: number'), true)
+  assert.equal(boardPageSource.includes('commentCount: number'), true)
+  assert.equal(
+    boardPageSource.includes('voteCount > 0') || boardPageSource.includes('voteCount <= 0'),
+    true,
+  )
   assert.equal(boardPageSource.includes('String(voteCount)'), true)
   assert.equal(boardPageSource.includes('text={`C${commentCount}`}'), false)
 })
