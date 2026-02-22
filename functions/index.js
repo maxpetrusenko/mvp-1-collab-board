@@ -37,6 +37,12 @@ const COLOR_MAP = {
 const COLOR_NAME_ALTERNATION = 'yellow|blue|green|pink|red|orange|purple|gray'
 const COLOR_NAME_PATTERN = `(?:${COLOR_NAME_ALTERNATION})`
 const CREATE_VERB_PATTERN = '(?:add(?:ed)?|create(?:d)?|make|generate|build|insert|put)'
+const BOARD_MUTATION_VERB_REGEX =
+  /\b(?:add|create|make|generate|build|insert|put|arrange|organize|organise|move|resize|rotate|delete|duplicate|connect|group|cluster|layout|map|draft|brainstorm)\b/i
+const BOARD_ARTIFACT_REGEX =
+  /\b(?:board|whiteboard|sticky(?:\s*note)?s?|sticker(?:s)?|notes?|frame(?:s)?|shape(?:s)?|connector(?:s)?|canvas|matrix|map|roadmap|retrospective|swot|journey(?:\s+map)?|mind\s*map|business\s+model\s+canvas)\b/i
+const STRUCTURED_BOARD_ARTIFACT_REGEX =
+  /\b(?:business\s+model\s+canvas|swot|retrospective|journey\s+map|mind\s*map|kanban|value\s+proposition\s+canvas)\b/i
 const COLOR_PHRASE_REGEX = new RegExp(`\\b(${COLOR_NAME_ALTERNATION})\\s+color\\b`, 'i')
 const COLOR_AND_TEXT_CUE_REGEX = new RegExp(
   `\\b(?:that\\s+says|saying|with\\s+text|with\\s+(?:a\\s+)?${COLOR_NAME_PATTERN}\\s+color\\s+and\\s+text|text\\s*[:=-])\\b\\s*(.+)$`,
@@ -50,6 +56,92 @@ const STICKY_SHAPE_SIZES = {
   diamond: { width: 170, height: 120 },
   triangle: { width: 170, height: 120 },
 }
+const BMC_SECTION_LAYOUT = [
+  { key: 'keyPartners', title: 'Key Partners', row: 0, col: 0, color: '#fde68a' },
+  { key: 'keyActivities', title: 'Key Activities', row: 0, col: 1, color: '#fdba74' },
+  { key: 'keyResources', title: 'Key Resources', row: 0, col: 2, color: '#fca5a5' },
+  { key: 'valuePropositions', title: 'Value Propositions', row: 1, col: 0, color: '#86efac' },
+  { key: 'customerRelationships', title: 'Customer Relationships', row: 1, col: 1, color: '#93c5fd' },
+  { key: 'channels', title: 'Channels', row: 1, col: 2, color: '#c4b5fd' },
+  { key: 'customerSegments', title: 'Customer Segments', row: 2, col: 0, color: '#fde68a' },
+  { key: 'costStructure', title: 'Cost Structure', row: 2, col: 1, color: '#fdba74' },
+  { key: 'revenueStreams', title: 'Revenue Streams', row: 2, col: 2, color: '#86efac' },
+]
+const BMC_IDEA_POOLS = {
+  keyPartners: [
+    'Cloud infrastructure providers',
+    'CRM and helpdesk integrations',
+    'Implementation partners',
+    'Channel resellers',
+    'Compliance advisory partners',
+    'Technology alliance ecosystem',
+  ],
+  keyActivities: [
+    'Design and optimize conversation flows',
+    'Model evaluation and guardrail tuning',
+    'Integrate APIs and channel touchpoints',
+    'Onboard customers and train teams',
+    'Monitor usage analytics and outcomes',
+    'Improve reliability and safety operations',
+  ],
+  keyResources: [
+    'LLM orchestration stack',
+    'Conversation datasets and feedback loops',
+    'Prompt libraries and reusable playbooks',
+    'Analytics dashboards and alerting',
+    'Customer success and support team',
+    'Security and compliance controls',
+  ],
+  valuePropositions: [
+    'Faster response times across support requests',
+    '24/7 self-service assistance with escalation paths',
+    'Consistent answers with lower operational overhead',
+    'Personalized experiences from customer context',
+    'Higher conversion through proactive guidance',
+    'Scalable service without linear headcount growth',
+  ],
+  customerRelationships: [
+    'Proactive onboarding nudges',
+    'Human handoff for high-risk conversations',
+    'Feedback loops after key interactions',
+    'Account-based success check-ins',
+    'Self-serve knowledge with guided fallback',
+    'Usage-based coaching and adoption playbooks',
+  ],
+  channels: [
+    'Website chat widget',
+    'WhatsApp or SMS',
+    'Slack or Teams assistant',
+    'In-app help center panel',
+    'Email assistant workflows',
+    'API for partner channels',
+  ],
+  customerSegments: [
+    'SMB support teams',
+    'Mid-market SaaS operations',
+    'Enterprise service organizations',
+    'E-commerce customer care teams',
+    'Internal employee helpdesk',
+    'Sales enablement and lead qualification teams',
+  ],
+  costStructure: [
+    'LLM inference and platform hosting',
+    'Engineering and product development',
+    'Customer support and success staffing',
+    'Compliance and security operations',
+    'Partner commissions and channel programs',
+    'Analytics and observability tooling',
+  ],
+  revenueStreams: [
+    'Per-seat subscription tiers',
+    'Usage-based conversation pricing',
+    'Enterprise annual contracts',
+    'Premium automation add-ons',
+    'Implementation and onboarding services',
+    'Partner revenue share programs',
+  ],
+}
+const FIRESTORE_BATCH_WRITE_LIMIT = 450
 
 const normalizeShapeType = (rawShapeType, fallback = 'rectangle') => {
   const normalized = String(rawShapeType || '').toLowerCase().trim()
@@ -76,8 +168,14 @@ const parseNumber = (value, fallback) => {
 }
 
 const sanitizeText = (text) => String(text || '').trim().slice(0, 300)
+
+const logAiDebug = (event, details = {}) => {
+  console.log(`[AI_DEBUG] ${event}`, details)
+}
 const sanitizeAiAssistantResponse = (text) => sanitizeText(String(text || '').replace(/\s+/g, ' '))
 const OUT_OF_SCOPE_AI_MESSAGE = "I can't help with that."
+const AI_TEMP_UNAVAILABLE_MESSAGE =
+  'AI assistant is temporarily unavailable right now. Please try again in a moment.'
 const normalizeCommand = (value) =>
   String(value || '')
     .normalize('NFKC')
@@ -134,6 +232,37 @@ const parseStickyCountToken = (token) => {
 }
 
 const startsWithCountToken = (value) => new RegExp(`^\\s*(?:${COUNT_TOKEN_ALTERNATION})\\b`, 'i').test(String(value || ''))
+
+const isLikelyBoardMutationCommand = (command) => {
+  const normalized = normalizeCommandForPlan(command).toLowerCase()
+  if (!normalized) {
+    return false
+  }
+
+  if (STRUCTURED_BOARD_ARTIFACT_REGEX.test(normalized)) {
+    return true
+  }
+
+  if (parseStickyCommand(normalized) || parseReasonListCommand(normalized)) {
+    return true
+  }
+
+  const hasMutationVerb = BOARD_MUTATION_VERB_REGEX.test(normalized)
+  const hasBoardArtifact = BOARD_ARTIFACT_REGEX.test(normalized)
+
+  if (hasBoardArtifact && hasMutationVerb) {
+    return true
+  }
+
+  if (
+    hasBoardArtifact &&
+    /\b(?:generate|draft|brainstorm|list|outline|fill|populate|break\s+down)\b/i.test(normalized)
+  ) {
+    return true
+  }
+
+  return false
+}
 
 const stripLeadingCreateInstruction = (value) =>
   String(value || '')
@@ -288,6 +417,194 @@ const normalizeAiPlacementHint = (candidate) => {
   }
 }
 
+const resolvePlacementAnchor = (commandPlacement) => {
+  if (!commandPlacement || typeof commandPlacement !== 'object') {
+    return null
+  }
+  return (
+    toFinitePoint(commandPlacement.anchor) ||
+    toFinitePoint(commandPlacement.pointer) ||
+    toFinitePoint(commandPlacement.viewportCenter)
+  )
+}
+
+const resolveLlmCreateArgsWithPlacement = (toolName, args, commandPlacement, batchContext = null) => {
+  if (!args || typeof args !== 'object') {
+    return args
+  }
+
+  const hasExplicitCoordinates = Number.isFinite(Number(args.x)) && Number.isFinite(Number(args.y))
+  const hasNamedPosition = typeof args.position === 'string' && args.position.trim().length > 0
+  if (hasExplicitCoordinates || hasNamedPosition) {
+    return args
+  }
+
+  const anchor = resolvePlacementAnchor(commandPlacement)
+  if (!anchor) {
+    return args
+  }
+
+  const resolved = { ...args }
+  if (toolName === 'createStickyNote') {
+    const stickyShapeType = normalizeShapeType(resolved.shapeType || resolved.type, 'rectangle')
+    const stickySize = STICKY_SHAPE_SIZES[stickyShapeType] || STICKY_SHAPE_SIZES.rectangle
+    if (batchContext && batchContext.total > 1) {
+      const layout = getStickyBatchLayoutPositions({
+        count: batchContext.total,
+        anchor,
+        shapeType: stickyShapeType,
+      })
+      const target = layout[batchContext.index] || layout[layout.length - 1] || { x: 120, y: 120 }
+      resolved.x = target.x
+      resolved.y = target.y
+      return resolved
+    }
+    resolved.x = Math.round(anchor.x - stickySize.width / 2)
+    resolved.y = Math.round(anchor.y - stickySize.height / 2)
+    return resolved
+  }
+
+  if (toolName === 'createShape') {
+    const shapeType = normalizeShapeType(resolved.type || resolved.shapeType, 'rectangle')
+    const defaultSize = STICKY_SHAPE_SIZES[shapeType] || STICKY_SHAPE_SIZES.rectangle
+    const width = parseNumber(resolved.width, defaultSize.width)
+    const height = parseNumber(resolved.height, defaultSize.height)
+    resolved.x = Math.round(anchor.x - width / 2)
+    resolved.y = Math.round(anchor.y - height / 2)
+    return resolved
+  }
+
+  if (toolName === 'createFrame') {
+    const width = parseNumber(resolved.width, 480)
+    const height = parseNumber(resolved.height, 300)
+    resolved.x = Math.round(anchor.x - width / 2)
+    resolved.y = Math.round(anchor.y - height / 2)
+    return resolved
+  }
+
+  return resolved
+}
+
+const toBatchOperations = (args) => {
+  if (!args || typeof args !== 'object' || !Array.isArray(args.operations)) {
+    return []
+  }
+
+  return args.operations
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object') {
+        return null
+      }
+      const tool =
+        typeof entry.tool === 'string'
+          ? entry.tool.trim()
+          : typeof entry.name === 'string'
+            ? entry.name.trim()
+            : ''
+      if (!tool) {
+        return null
+      }
+      const operationArgs = entry.args && typeof entry.args === 'object' ? entry.args : {}
+      return {
+        tool,
+        args: operationArgs,
+      }
+    })
+    .filter(Boolean)
+}
+
+const buildCompoundToolRetryCommand = (command, previousTextResponse = '') => {
+  const guidance = [
+    'BOARD EXECUTION MODE (RETRY):',
+    '- This is a board-mutation request. Do not answer with plain text only.',
+    '- Use compound tools: prefer one executeBatch call that includes all required operations.',
+    '- If executeBatch is not suitable, emit multiple tool calls in a single response.',
+    '- Fulfill full quantity and structure requested by the user.',
+    '- Keep generated sticky content distinct and non-repetitive.',
+  ].join('\n')
+
+  const previousDraft =
+    typeof previousTextResponse === 'string' && previousTextResponse.trim().length > 0
+      ? `Previous text-only draft (convert this into board operations, do not return only text):\n${previousTextResponse.trim()}`
+      : ''
+
+  return [command, guidance, previousDraft].filter(Boolean).join('\n\n')
+}
+
+const buildStickyShortfallRetryCommand = (command, summary) => {
+  const remaining = Math.max(0, parseNumber(summary?.remaining, 0))
+  const requested = Math.max(0, parseNumber(summary?.requested, 0))
+  const created = Math.max(0, parseNumber(summary?.created, 0))
+  const guidance = [
+    'BOARD EXECUTION MODE (SHORTFALL RECOVERY):',
+    `- The user requested ${requested} sticky notes, but only ${created} were created.`,
+    `- Create exactly ${remaining} additional sticky notes to satisfy the original request.`,
+    '- Use executeBatch with createStickyNote operations when possible.',
+    '- Ensure each new sticky has unique, concrete text (no repetition).',
+  ].join('\n')
+
+  return [command, guidance].join('\n\n')
+}
+
+const buildNoMutationRetryCommand = (command, previousTextResponse = '') => {
+  const guidance = [
+    'BOARD EXECUTION MODE (NO-OP RECOVERY):',
+    '- Previous tool calls produced no board changes.',
+    '- Retry with actionable tool calls only.',
+    '- If using executeBatch, operations must be non-empty and concrete.',
+    '- For artifact/framework requests (canvas/matrix/map), create visible board objects now.',
+    '- Do not return text-only output.',
+  ].join('\n')
+
+  const priorText =
+    typeof previousTextResponse === 'string' && previousTextResponse.trim().length > 0
+      ? `Previous assistant text (convert to board operations):\n${previousTextResponse.trim()}`
+      : ''
+
+  return [command, guidance, priorText].filter(Boolean).join('\n\n')
+}
+
+const countCreatedStickyNotesSinceBaseline = (ctx, baselineObjectIds) => {
+  if (!ctx || !Array.isArray(ctx.state) || !(baselineObjectIds instanceof Set)) {
+    return 0
+  }
+
+  return ctx.state.reduce((count, item) => {
+    if (!item || item.type !== 'stickyNote') {
+      return count
+    }
+    if (baselineObjectIds.has(item.id)) {
+      return count
+    }
+    return count + 1
+  }, 0)
+}
+
+const buildBoardMutationToken = (state = []) => {
+  if (!Array.isArray(state) || state.length === 0) {
+    return '0:0'
+  }
+
+  const entries = state
+    .filter(Boolean)
+    .map((item) => {
+      const id = String(item.id || '')
+      const type = String(item.type || '')
+      const version = parseNumber(item.version, 0)
+      const deleted = item.deleted ? 1 : 0
+      const x = parseNumber(item.position?.x, 0)
+      const y = parseNumber(item.position?.y, 0)
+      const width = parseNumber(item.size?.width, 0)
+      const height = parseNumber(item.size?.height, 0)
+      const color = String(item.color || '')
+      const text = sanitizeText(item.text || item.title || '')
+      return `${id}|${type}|${version}|${deleted}|${x}|${y}|${width}|${height}|${color}|${text}`
+    })
+    .sort()
+
+  return `${entries.length}:${hashText(entries.join('||'))}`
+}
+
 const stripWrappingQuotes = (value) => {
   const trimmed = String(value || '').trim()
   if (!trimmed) return ''
@@ -307,6 +624,37 @@ const extractPositionPhrase = (value) => {
     position: positionMatch[1]?.toLowerCase().trim(),
     matchText: positionMatch[0] || '',
   }
+}
+
+const extractCoordinatePosition = (value) => {
+  const normalized = normalizeCommand(value)
+  const coordinatePatterns = [
+    /\b(?:at|to|position(?:ed)?(?:\s+at)?)\s*(-?\d{1,6})\s*[,x]\s*(-?\d{1,6})\b/i,
+    /\bx\s*[:=]\s*(-?\d{1,6})\s*[, ]+\s*y\s*[:=]\s*(-?\d{1,6})\b/i,
+    /\by\s*[:=]\s*(-?\d{1,6})\s*[, ]+\s*x\s*[:=]\s*(-?\d{1,6})\b/i,
+  ]
+
+  for (const pattern of coordinatePatterns) {
+    const match = normalized.match(pattern)
+    if (!match) {
+      continue
+    }
+
+    const xRaw = pattern === coordinatePatterns[2] ? match[2] : match[1]
+    const yRaw = pattern === coordinatePatterns[2] ? match[1] : match[2]
+    const x = parseNumber(xRaw, Number.NaN)
+    const y = parseNumber(yRaw, Number.NaN)
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      continue
+    }
+
+    return {
+      point: { x, y },
+      matchText: match[0] || '',
+    }
+  }
+
+  return { point: null, matchText: '' }
 }
 
 const extractColorAndText = (raw) => {
@@ -351,9 +699,9 @@ const stripColorInstructionText = (rawText) =>
 
 const inferStickyShapeType = (command) => {
   const lower = normalizeCommand(command).toLowerCase()
-  if (/\b(?:circle|round)\b/.test(lower)) return 'circle'
-  if (/\b(?:diamond|rhombus|romb)\b/.test(lower)) return 'diamond'
-  if (/\btriangle\b/.test(lower)) return 'triangle'
+  if (/\b(?:circle|circles|round|rounds)\b/.test(lower)) return 'circle'
+  if (/\b(?:diamond|diamonds|rhombus|rhombuses|romb)\b/.test(lower)) return 'diamond'
+  if (/\b(?:triangle|triangles)\b/.test(lower)) return 'triangle'
   return 'rectangle'
 }
 
@@ -478,6 +826,61 @@ const buildReasonStickyTexts = (subject, count) => {
   })
 }
 
+const parseBusinessModelCanvasCommand = (command) => {
+  const normalized = normalizeCommandForPlan(command)
+  console.log('[BMC] Input command:', command)
+  console.log('[BMC] Normalized:', normalized)
+  const patternMatch = /\bbusiness\s+model\s+canvas\b/i.test(normalized)
+  console.log('[BMC] Pattern match:', patternMatch)
+  if (!patternMatch) {
+    console.log('[BMC] REJECTED: No BMC pattern match')
+    return null
+  }
+
+  const topicMatch = normalized.match(/\bfor\s+(.+?)(?:,|$)/i)
+  console.log('[BMC] Topic match:', topicMatch?.[1])
+  const topicCandidate = sanitizeText(stripWrappingQuotes(topicMatch?.[1] || ''))
+  const topic = topicCandidate || 'AI assistant product'
+  const includeChannelExamples = /\bchannels?\b/i.test(normalized)
+  const includeRevenueExamples = /\brevenue(?:\s+streams?)?\b/i.test(normalized)
+  const includeExamples = /\bexamples?\b/i.test(normalized)
+
+  const result = {
+    topic,
+    includeExamples,
+    includeChannelExamples,
+    includeRevenueExamples,
+  }
+  console.log('[BMC] Parsed result:', result)
+  return result
+}
+
+const selectIdeasForTopic = (topic, key, count = 3) => {
+  const pool = Array.isArray(BMC_IDEA_POOLS[key]) ? BMC_IDEA_POOLS[key] : []
+  if (pool.length === 0) {
+    return []
+  }
+
+  const safeCount = Math.max(1, Math.min(4, parseNumber(count, 3)))
+  const offset = hashText(`${topic}:${key}`) % pool.length
+  const selected = []
+  for (let index = 0; index < safeCount; index += 1) {
+    selected.push(pool[(offset + index) % pool.length])
+  }
+  return selected
+}
+
+const buildBusinessModelCanvasSectionText = ({ title, topic, key, includeExamples = false }) => {
+  const selectedIdeas = selectIdeasForTopic(topic, key, 3)
+  const topicPrefix =
+    key === 'valuePropositions' || key === 'customerSegments'
+      ? `For ${topic}: `
+      : ''
+  const body = selectedIdeas.join('; ')
+  const examplePrefix = includeExamples ? 'Examples: ' : ''
+  return sanitizeText(`${title}\n${topicPrefix}${examplePrefix}${body}`)
+}
+
 const buildStickyTextsFromTemplate = (template, count) => {
   const safeCount = Math.max(1, Math.min(10, parseNumber(count, 1)))
   const normalizedTemplate = sanitizeText(template || 'New sticky note') || 'New sticky note'
@@ -517,9 +920,13 @@ const parseReasonListCommand = (command) => {
 
   const count = parseStickyCountToken(reasonMatch[1]) || 1
   const { position, matchText } = extractPositionPhrase(normalized)
+  const { point: coordinatePoint, matchText: coordinateMatchText } = extractCoordinatePosition(normalized)
   let subject = String(reasonMatch[2] || '').trim()
   if (matchText) {
     subject = subject.replace(new RegExp(escapeRegExp(matchText), 'i'), '').trim()
+  }
+  if (coordinateMatchText) {
+    subject = subject.replace(new RegExp(escapeRegExp(coordinateMatchText), 'i'), '').trim()
   }
   subject = stripWrappingQuotes(subject.replace(/[.!?]+$/g, '').trim())
   if (!subject) {
@@ -535,6 +942,7 @@ const parseReasonListCommand = (command) => {
     shapeType: inferStickyShapeType(normalized),
     count,
     position,
+    ...(coordinatePoint ? { x: coordinatePoint.x, y: coordinatePoint.y } : {}),
     texts: buildReasonStickyTexts(subject, count),
   }
 }
@@ -559,6 +967,7 @@ const parseStickyCommand = (command) => {
 
   // Extract position from "at top left", "at center", "in the center", etc.
   const { position, matchText: positionMatchText } = extractPositionPhrase(normalized)
+  const { point: coordinatePoint, matchText: coordinateMatchText } = extractCoordinatePosition(normalized)
 
   const cueMatch = normalized.match(COLOR_AND_TEXT_CUE_REGEX)
   const cueText = cueMatch ? cueMatch[1].replace(/^[:\-\s]+/, '').trim() : ''
@@ -566,6 +975,9 @@ const parseStickyCommand = (command) => {
   let suffixText = afterMarker.replace(/^[.!?]+|[.!?]+$/g, '').trim()
   if (positionMatchText) {
     suffixText = suffixText.replace(new RegExp(escapeRegExp(positionMatchText), 'i'), '').trim()
+  }
+  if (coordinateMatchText) {
+    suffixText = suffixText.replace(new RegExp(escapeRegExp(coordinateMatchText), 'i'), '').trim()
   }
 
   const stickyPrefix = extractStickyPrefixMeta(beforeMarker)
@@ -609,6 +1021,7 @@ const parseStickyCommand = (command) => {
       shapeType,
       count,
       position,
+      ...(coordinatePoint ? { x: coordinatePoint.x, y: coordinatePoint.y } : {}),
       texts: Array.from({ length: count }, (_, index) =>
         count > 1 ? `Note ${index + 1}` : 'New sticky note',
       ),
@@ -621,6 +1034,7 @@ const parseStickyCommand = (command) => {
       shapeType,
       count,
       position,
+      ...(coordinatePoint ? { x: coordinatePoint.x, y: coordinatePoint.y } : {}),
       texts: explicitTexts,
     }
   }
@@ -631,8 +1045,80 @@ const parseStickyCommand = (command) => {
     shapeType,
     count,
     position,
+    ...(coordinatePoint ? { x: coordinatePoint.x, y: coordinatePoint.y } : {}),
     texts: buildStickyTextsFromTemplate(fallbackText, count),
   }
+}
+
+const parseCompoundStickyCreateOperations = (command) => {
+  const normalized = normalizeStickyVocabulary(normalizeCommand(command))
+  console.log('[COMPOUND] Input command:', command)
+  console.log('[COMPOUND] Normalized:', normalized)
+  console.log('[COMPOUND] Has verb:', new RegExp(CREATE_VERB_PATTERN, 'i').test(normalized))
+  console.log('[COMPOUND] Has "and":', /\band\b/i.test(normalized))
+
+  if (!new RegExp(CREATE_VERB_PATTERN, 'i').test(normalized) || !/\band\b/i.test(normalized)) {
+    console.log('[COMPOUND] REJECTED: Missing verb or "and"')
+    return []
+  }
+
+  const verbStripped = stripLeadingCreateInstruction(normalized)
+  console.log('[COMPOUND] Verb stripped:', verbStripped)
+
+  const segments = verbStripped
+    .split(/\s+\band\b\s+/i)
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+
+  console.log('[COMPOUND] Segments:', segments)
+
+  if (segments.length < 2) {
+    console.log('[COMPOUND] REJECTED: Less than 2 segments')
+    return []
+  }
+
+  const operations = []
+  for (const segment of segments) {
+    const hasStickyMarker = /\b(?:sticky(?:\s*note)?|sticker|note)s?\b/i.test(segment)
+    const hasShapeMarker = /\b(?:circle|round|diamond|rhombus|romb|triangle|rectangle|box|shape)s?\b/i.test(segment)
+    console.log('[COMPOUND] Segment:', segment, '| sticky:', hasStickyMarker, '| shape:', hasShapeMarker)
+    if (!hasStickyMarker && !hasShapeMarker) {
+      console.log('[COMPOUND] REJECTED: Segment missing markers')
+      return []
+    }
+
+    const countMatch = segment.match(new RegExp(`\\b(${COUNT_TOKEN_ALTERNATION})\\b`, 'i'))
+    const count = parseStickyCountToken(countMatch?.[1]) || 1
+    console.log('[COMPOUND] Count:', count, 'from match:', countMatch?.[1])
+
+    const colorMatch = segment.match(new RegExp(`\\b(${COLOR_NAME_ALTERNATION})\\b`, 'i'))
+    const color = colorMatch?.[1]?.toLowerCase()
+    console.log('[COMPOUND] Color:', color, 'from match:', colorMatch?.[1])
+
+    const shapeType = inferStickyShapeType(segment)
+    console.log('[COMPOUND] Shape type:', shapeType)
+
+    const textMatch = segment.match(
+      /\b(?:with\s+words?|with\s+text|text\s*[:=-]|that\s+says|saying)\s+(.+)$/i,
+    )
+    const extractedText = sanitizeText(stripWrappingQuotes(textMatch?.[1] || ''))
+    console.log('[COMPOUND] Text match:', textMatch?.[1], '| Extracted:', extractedText)
+
+    for (let index = 0; index < count; index += 1) {
+      operations.push({
+        text:
+          extractedText ||
+          (shapeType === 'triangle' || shapeType === 'circle'
+            ? `${shapeType} note`
+            : `Note ${operations.length + 1}`),
+        ...(color ? { color } : {}),
+        shapeType,
+      })
+    }
+  }
+
+  console.log('[COMPOUND] Final operations:', operations.length, operations)
+  return operations
 }
 
 const getObjectsRef = (boardId) => db.collection('boards').doc(boardId).collection('objects')
@@ -893,7 +1379,7 @@ const getAutoStickyPosition = (state, size = STICKY_SHAPE_SIZES.rectangle) => {
   }
 }
 
-const writeObject = async ({ boardId, objectId, payload, merge = false }) => {
+const persistObjectToFirestore = async ({ boardId, objectId, payload, merge = false }) => {
   const ref = getObjectsRef(boardId).doc(objectId)
   if (merge) {
     await ref.set(payload, { merge: true })
@@ -902,10 +1388,28 @@ const writeObject = async ({ boardId, objectId, payload, merge = false }) => {
   }
 }
 
-const createStickyNote = async (ctx, args) => {
+let writeObjectImpl = persistObjectToFirestore
+
+const writeObject = async (args) => writeObjectImpl(args)
+
+const commitObjectBatchWrites = async ({ boardId, objects }) => {
+  if (!Array.isArray(objects) || objects.length === 0) {
+    return
+  }
+
+  for (let index = 0; index < objects.length; index += FIRESTORE_BATCH_WRITE_LIMIT) {
+    const chunk = objects.slice(index, index + FIRESTORE_BATCH_WRITE_LIMIT)
+    const batch = db.batch()
+    for (const object of chunk) {
+      batch.set(getObjectsRef(boardId).doc(object.id), object)
+    }
+    await batch.commit()
+  }
+}
+
+const buildStickyNotePayload = (ctx, args = {}) => {
   const id = crypto.randomUUID()
   const now = nowMs()
-  const zIndex = getNextZIndex(ctx.state)
   const shapeType = normalizeShapeType(args.shapeType || args.type)
   const defaultSize = STICKY_SHAPE_SIZES[shapeType]
   const hasExplicitX = Number.isFinite(Number(args.x))
@@ -918,7 +1422,10 @@ const createStickyNote = async (ctx, args) => {
   } else {
     pos = getAutoStickyPosition(ctx.state, defaultSize)
   }
-  const sticky = {
+
+  const zIndex = Number.isFinite(Number(args.zIndex)) ? Number(args.zIndex) : getNextZIndex(ctx.state)
+
+  return {
     id,
     boardId: ctx.boardId,
     type: 'stickyNote',
@@ -937,24 +1444,19 @@ const createStickyNote = async (ctx, args) => {
     updatedAt: now,
     version: 1,
   }
-
-  await writeObject({ boardId: ctx.boardId, objectId: id, payload: sticky })
-  ctx.state.push(sticky)
-  ctx.executedTools.push({ tool: 'createStickyNote', id })
-  return sticky
 }
 
-const createShape = async (ctx, args) => {
+const buildShapePayload = (ctx, args = {}) => {
   const id = crypto.randomUUID()
   const now = nowMs()
-  const zIndex = getNextZIndex(ctx.state)
   const shapeType = normalizeShapeType(args.type || args.shapeType, 'rectangle')
   const defaultSize = STICKY_SHAPE_SIZES[shapeType] || { width: 220, height: 140 }
-  // Use position string if provided, otherwise use numeric x/y with defaults
   const pos = args.position
     ? parsePosition(args.position, 200, 200)
     : { x: parseNumber(args.x, 200), y: parseNumber(args.y, 200) }
-  const shape = {
+  const zIndex = Number.isFinite(Number(args.zIndex)) ? Number(args.zIndex) : getNextZIndex(ctx.state)
+
+  return {
     id,
     boardId: ctx.boardId,
     type: 'shape',
@@ -972,10 +1474,23 @@ const createShape = async (ctx, args) => {
     updatedAt: now,
     version: 1,
   }
+}
 
-  await writeObject({ boardId: ctx.boardId, objectId: id, payload: shape })
+const createStickyNote = async (ctx, args) => {
+  const sticky = buildStickyNotePayload(ctx, args)
+
+  await writeObject({ boardId: ctx.boardId, objectId: sticky.id, payload: sticky })
+  ctx.state.push(sticky)
+  ctx.executedTools.push({ tool: 'createStickyNote', id: sticky.id })
+  return sticky
+}
+
+const createShape = async (ctx, args) => {
+  const shape = buildShapePayload(ctx, args)
+
+  await writeObject({ boardId: ctx.boardId, objectId: shape.id, payload: shape })
   ctx.state.push(shape)
-  ctx.executedTools.push({ tool: 'createShape', id })
+  ctx.executedTools.push({ tool: 'createShape', id: shape.id })
   return shape
 }
 
@@ -983,6 +1498,9 @@ const createFrame = async (ctx, args) => {
   const id = crypto.randomUUID()
   const now = nowMs()
   const zIndex = getNextZIndex(ctx.state)
+  const parsedPosition = args.position ? parsePosition(args.position, 120, 120) : null
+  const fallbackX = parsedPosition ? parsedPosition.x : 120
+  const fallbackY = parsedPosition ? parsedPosition.y : 120
   const frame = {
     id,
     boardId: ctx.boardId,
@@ -990,8 +1508,8 @@ const createFrame = async (ctx, args) => {
     title: sanitizeText(args.title || 'Frame'),
     color: '#e2e8f0',
     position: {
-      x: parseNumber(args.x, 120),
-      y: parseNumber(args.y, 120),
+      x: parseNumber(args.x, fallbackX),
+      y: parseNumber(args.y, fallbackY),
     },
     size: {
       width: parseNumber(args.width, 480),
@@ -1156,17 +1674,41 @@ const createSwotTemplate = async (ctx) => {
   const gap = 24
 
   const labels = ['Strengths', 'Weaknesses', 'Opportunities', 'Threats']
+  const stagedObjects = []
+  const stagedTools = []
+  let zIndexCursor = getNextZIndex(ctx.state)
 
   for (let row = 0; row < 2; row += 1) {
     for (let col = 0; col < 2; col += 1) {
       const index = row * 2 + col
       const x = startX + col * (boxW + gap)
       const y = startY + row * (boxH + gap)
-      await createShape(ctx, { type: 'rectangle', x, y, width: boxW, height: boxH, color: '#dbeafe' })
-      await createStickyNote(ctx, { text: labels[index], x: x + 12, y: y + 12, color: '#ffffff' })
+      const shape = buildShapePayload(ctx, {
+        type: 'rectangle',
+        x,
+        y,
+        width: boxW,
+        height: boxH,
+        color: '#dbeafe',
+        zIndex: zIndexCursor,
+      })
+      zIndexCursor += 1
+      const sticky = buildStickyNotePayload(ctx, {
+        text: labels[index],
+        x: x + 12,
+        y: y + 12,
+        color: '#ffffff',
+        zIndex: zIndexCursor,
+      })
+      zIndexCursor += 1
+      stagedObjects.push(shape, sticky)
+      stagedTools.push({ tool: 'createShape', id: shape.id }, { tool: 'createStickyNote', id: sticky.id })
     }
   }
 
+  await commitObjectBatchWrites({ boardId: ctx.boardId, objects: stagedObjects })
+  ctx.state.push(...stagedObjects)
+  ctx.executedTools.push(...stagedTools)
   ctx.executedTools.push({ tool: 'createSwotTemplate' })
 }
 
@@ -1176,13 +1718,36 @@ const createRetrospectiveTemplate = async (ctx) => {
   const gap = 26
   const colW = 220
   const colH = 320
+  const stagedObjects = []
+  const stagedTools = []
+  let zIndexCursor = getNextZIndex(ctx.state)
 
   for (let i = 0; i < columns.length; i += 1) {
     const x = startX + i * (colW + gap)
-    await createShape(ctx, { x, y: 110, width: colW, height: colH, color: '#dbeafe' })
-    await createStickyNote(ctx, { text: columns[i], x: x + 10, y: 120, color: '#ffffff' })
+    const shape = buildShapePayload(ctx, {
+      x,
+      y: 110,
+      width: colW,
+      height: colH,
+      color: '#dbeafe',
+      zIndex: zIndexCursor,
+    })
+    zIndexCursor += 1
+    const sticky = buildStickyNotePayload(ctx, {
+      text: columns[i],
+      x: x + 10,
+      y: 120,
+      color: '#ffffff',
+      zIndex: zIndexCursor,
+    })
+    zIndexCursor += 1
+    stagedObjects.push(shape, sticky)
+    stagedTools.push({ tool: 'createShape', id: shape.id }, { tool: 'createStickyNote', id: sticky.id })
   }
 
+  await commitObjectBatchWrites({ boardId: ctx.boardId, objects: stagedObjects })
+  ctx.state.push(...stagedObjects)
+  ctx.executedTools.push(...stagedTools)
   ctx.executedTools.push({ tool: 'createRetrospectiveTemplate' })
 }
 
@@ -1300,6 +1865,9 @@ const createStickyGridTemplate = async (ctx, args = {}) => {
   const startY = 120
   const gapX = 220
   const gapY = 150
+  const stagedObjects = []
+  const stagedTools = []
+  let zIndexCursor = getNextZIndex(ctx.state)
   const labels = String(args.labelText || '')
     .split(/\s*(?:,|\/|\|)\s*|\s+and\s+/i)
     .map((entry) => sanitizeText(entry))
@@ -1313,14 +1881,21 @@ const createStickyGridTemplate = async (ctx, args = {}) => {
         ? labels[index % labels.length]
         : `R${row + 1}C${column + 1}`
 
-    await createStickyNote(ctx, {
+    const sticky = buildStickyNotePayload(ctx, {
       text: label,
       x: startX + column * gapX,
       y: startY + row * gapY,
       color: '#fde68a',
+      zIndex: zIndexCursor,
     })
+    zIndexCursor += 1
+    stagedObjects.push(sticky)
+    stagedTools.push({ tool: 'createStickyNote', id: sticky.id })
   }
 
+  await commitObjectBatchWrites({ boardId: ctx.boardId, objects: stagedObjects })
+  ctx.state.push(...stagedObjects)
+  ctx.executedTools.push(...stagedTools)
   ctx.executedTools.push({ tool: 'createStickyGridTemplate', rows, columns, count: total })
 }
 
@@ -1329,17 +1904,35 @@ const createJourneyMap = async (ctx, stages) => {
   const startX = 80
   const y = 420
   const gap = 190
+  const stagedObjects = []
+  const stagedTools = []
+  let zIndexCursor = getNextZIndex(ctx.state)
 
   for (let i = 0; i < count; i += 1) {
-    await createShape(ctx, { x: startX + i * gap, y, width: 160, height: 100, color: '#bfdbfe' })
-    await createStickyNote(ctx, {
+    const shape = buildShapePayload(ctx, {
+      x: startX + i * gap,
+      y,
+      width: 160,
+      height: 100,
+      color: '#bfdbfe',
+      zIndex: zIndexCursor,
+    })
+    zIndexCursor += 1
+    const sticky = buildStickyNotePayload(ctx, {
       text: `Stage ${i + 1}`,
       x: startX + i * gap + 12,
       y: y + 12,
       color: '#ffffff',
+      zIndex: zIndexCursor,
     })
+    zIndexCursor += 1
+    stagedObjects.push(shape, sticky)
+    stagedTools.push({ tool: 'createShape', id: shape.id }, { tool: 'createStickyNote', id: sticky.id })
   }
 
+  await commitObjectBatchWrites({ boardId: ctx.boardId, objects: stagedObjects })
+  ctx.state.push(...stagedObjects)
+  ctx.executedTools.push(...stagedTools)
   ctx.executedTools.push({ tool: 'createJourneyMap', count })
 }
 
@@ -1532,245 +2125,318 @@ const synthesizeStickyThemes = async (ctx) => {
   ctx.executedTools.push({ tool: 'synthesizeStickyThemes', count: topThemes.length })
 }
 
-const executeStickyBatch = async (ctx, stickyCommand) => {
-  const stickyCount = Math.min(10, Math.max(1, stickyCommand.count || stickyCommand.texts.length || 1))
-  const basePosition = stickyCommand.position ? parsePosition(stickyCommand.position, 120, 120) : null
-  const commandPlacementAnchor =
-    ctx.commandPlacement?.anchor || ctx.commandPlacement?.pointer || ctx.commandPlacement?.viewportCenter || null
-  const layoutPositions =
-    stickyCount > 1
-      ? basePosition
-        ? Array.from({ length: stickyCount }, (_, index) => ({
-            x: basePosition.x + (index % 4) * 220,
-            y: basePosition.y + Math.floor(index / 4) * 150,
-          }))
-        : getStickyBatchLayoutPositions({
-            count: stickyCount,
-            anchor: commandPlacementAnchor,
-            shapeType: stickyCommand.shapeType || 'rectangle',
-          })
-      : []
+const executeLlmToolCall = async (ctx, toolName, rawArgs, options = {}) => {
+  const args = rawArgs && typeof rawArgs === 'object' ? rawArgs : {}
+  const batchContext = options.batchContext || null
 
-  for (let index = 0; index < stickyCount; index += 1) {
-    const stickyArgs = {
-      text:
-        stickyCommand.texts[index] ||
-        (stickyCount > 1
-          ? `Note ${index + 1}`
-          : sanitizeText(stickyCommand.texts[0] || 'New sticky note') || 'New sticky note'),
-      color: toColor(stickyCommand.color, '#fde68a'),
-      shapeType: stickyCommand.shapeType || 'rectangle',
-      position: stickyCommand.position,
+  switch (toolName) {
+    case 'createStickyNote': {
+      const positionedArgs = resolveLlmCreateArgsWithPlacement(
+        toolName,
+        args,
+        ctx.commandPlacement,
+        batchContext,
+      )
+      await createStickyNote(ctx, {
+        text: positionedArgs.text || 'New sticky note',
+        shapeType: positionedArgs.shapeType || 'rectangle',
+        color: toColor(positionedArgs.color, '#fde68a'),
+        position: positionedArgs.position,
+        x: positionedArgs.x,
+        y: positionedArgs.y,
+        width: positionedArgs.width,
+        height: positionedArgs.height,
+      })
+      return
+    }
+    case 'createShape': {
+      const positionedArgs = resolveLlmCreateArgsWithPlacement(
+        toolName,
+        args,
+        ctx.commandPlacement,
+        batchContext,
+      )
+      await createShape(ctx, {
+        type: positionedArgs.type || 'rectangle',
+        color: toColor(positionedArgs.color, '#93c5fd'),
+        position: positionedArgs.position,
+        x: positionedArgs.x,
+        y: positionedArgs.y,
+        width: positionedArgs.width,
+        height: positionedArgs.height,
+      })
+      return
+    }
+    case 'createFrame': {
+      const positionedArgs = resolveLlmCreateArgsWithPlacement(
+        toolName,
+        args,
+        ctx.commandPlacement,
+        batchContext,
+      )
+      await createFrame(ctx, {
+        title: sanitizeText(positionedArgs.title || 'New Frame'),
+        width: parseNumber(positionedArgs.width, 480),
+        height: parseNumber(positionedArgs.height, 300),
+        x: parseNumber(positionedArgs.x, 120),
+        y: parseNumber(positionedArgs.y, 120),
+      })
+      return
+    }
+    case 'createConnector':
+      await createConnector(ctx, {
+        fromId: args.fromId,
+        toId: args.toId,
+        color: toColor(args.color, '#0f172a'),
+        style: args.style,
+      })
+      return
+    case 'moveObject':
+      await moveObject(ctx, {
+        objectId: args.objectId,
+        x: parseNumber(args.x, 0),
+        y: parseNumber(args.y, 0),
+      })
+      return
+    case 'resizeObject':
+      await resizeObject(ctx, {
+        objectId: args.objectId,
+        width: args.width,
+        height: args.height,
+      })
+      return
+    case 'updateText':
+      await updateText(ctx, {
+        objectId: args.objectId,
+        newText: args.newText || args.text || '',
+      })
+      return
+    case 'changeColor':
+      await changeColor(ctx, {
+        objectId: args.objectId,
+        color: args.color,
+      })
+      return
+    case 'getBoardState':
+      ctx.state = await getBoardState(ctx.boardId)
+      return
+    case 'organizeBoardByColor':
+      await organizeBoardByColor(ctx)
+      return
+    case 'organizeBoardByType':
+      await organizeBoardByType(ctx)
+      return
+    case 'arrangeGrid': {
+      const stickyNotes = ctx.state.filter((item) => item.type === 'stickyNote')
+      await arrangeGrid(ctx, stickyNotes)
+      return
+    }
+    case 'createSwotTemplate':
+      await createSwotTemplate(ctx)
+      return
+    case 'createRetrospectiveTemplate':
+      await createRetrospectiveTemplate(ctx)
+      return
+    case 'rotateObject':
+      await rotateObject(ctx, args)
+      return
+    case 'deleteObject':
+      await deleteObject(ctx, args)
+      return
+    case 'duplicateObject':
+      await duplicateObject(ctx, args)
+      return
+    case 'executeBatch':
+      await executeBatchTool(ctx, args)
+      return
+    default:
+      throw new Error(`Unknown tool requested by LLM: ${toolName}`)
+  }
+}
+
+const executeBatchTool = async (ctx, args = {}) => {
+  const operations = toBatchOperations(args)
+  if (operations.length === 0) {
+    return { count: 0 }
+  }
+
+  const stickyOperationCount = operations.filter((operation) => operation.tool === 'createStickyNote').length
+  let stickyOperationIndex = 0
+
+  for (const operation of operations) {
+    const batchContext =
+      operation.tool === 'createStickyNote' && stickyOperationCount > 1
+        ? { index: stickyOperationIndex, total: stickyOperationCount }
+        : null
+    if (operation.tool === 'createStickyNote') {
+      stickyOperationIndex += 1
+    }
+    await executeLlmToolCall(ctx, operation.tool, operation.args, { batchContext })
+  }
+
+  return { count: operations.length }
+}
+
+const executeDeterministicCompoundStickyFallback = async (ctx, command) => {
+  const operations = parseCompoundStickyCreateOperations(command)
+  if (operations.length === 0) {
+    return { count: 0 }
+  }
+  logAiDebug('deterministic_compound_fallback', {
+    boardId: ctx.boardId,
+    operationCount: operations.length,
+    operations: operations.map((operation) => ({
+      shapeType: operation.shapeType,
+      color: operation.color,
+      text: operation.text,
+    })),
+  })
+
+  await executeBatchTool(ctx, {
+    operations: operations.map((args) => ({
+      tool: 'createStickyNote',
+      args,
+    })),
+  })
+  ctx.executedTools.push({
+    tool: 'deterministicCompoundStickyFallback',
+    count: operations.length,
+  })
+  return { count: operations.length }
+}
+
+const createBusinessModelCanvas = async (ctx, spec = {}) => {
+  const anchor = resolvePlacementAnchor(ctx.commandPlacement) || { x: 640, y: 360 }
+  logAiDebug('create_business_model_canvas', {
+    boardId: ctx.boardId,
+    topic: spec.topic || 'AI assistant product',
+    anchor,
+    includeExamples: Boolean(spec.includeExamples),
+    includeChannelExamples: Boolean(spec.includeChannelExamples),
+    includeRevenueExamples: Boolean(spec.includeRevenueExamples),
+  })
+  const width = STICKY_SHAPE_SIZES.rectangle.width
+  const height = STICKY_SHAPE_SIZES.rectangle.height
+  const gapX = width + 54
+  const gapY = height + 42
+  let zIndexCursor = getNextZIndex(ctx.state)
+  const stagedObjects = []
+  const stagedTools = []
+
+  for (const section of BMC_SECTION_LAYOUT) {
+    const centerX = anchor.x + (section.col - 1) * gapX
+    const centerY = anchor.y + (section.row - 1) * gapY
+    const sticky = buildStickyNotePayload(ctx, {
+      text: buildBusinessModelCanvasSectionText({
+        title: section.title,
+        topic: spec.topic || 'AI assistant product',
+        key: section.key,
+        includeExamples:
+          spec.includeExamples ||
+          (section.key === 'channels' && spec.includeChannelExamples) ||
+          (section.key === 'revenueStreams' && spec.includeRevenueExamples),
+      }),
+      shapeType: 'rectangle',
+      color: section.color,
+      x: Math.round(centerX - width / 2),
+      y: Math.round(centerY - height / 2),
+      zIndex: zIndexCursor,
+    })
+    zIndexCursor += 1
+    stagedObjects.push(sticky)
+    stagedTools.push({ tool: 'createStickyNote', id: sticky.id, bmcSection: section.key })
+  }
+
+  for (const object of stagedObjects) {
+    await writeObject({ boardId: ctx.boardId, objectId: object.id, payload: object })
+  }
+  ctx.state.push(...stagedObjects)
+  ctx.executedTools.push(...stagedTools)
+  ctx.executedTools.push({
+    tool: 'createBusinessModelCanvas',
+    topic: spec.topic || 'AI assistant product',
+    count: stagedObjects.length,
+  })
+  return { count: stagedObjects.length }
+}
+
+const executeParsedToolCalls = async (ctx, toolCalls = []) => {
+  for (const toolCall of toolCalls) {
+    if (toolCall.parseError) {
+      throw new Error(`Failed to parse tool call arguments for ${toolCall.name}`)
     }
 
-    if (stickyCount > 1) {
-      const targetPosition = layoutPositions[index] || layoutPositions[layoutPositions.length - 1] || { x: 120, y: 120 }
-      await createStickyNote(ctx, {
-        ...stickyArgs,
-        position: undefined,
-        x: targetPosition.x,
-        y: targetPosition.y,
-      })
-    } else if (!stickyCommand.position && commandPlacementAnchor) {
-      const stickyShapeType = normalizeShapeType(stickyCommand.shapeType || 'rectangle', 'rectangle')
-      const stickySize = STICKY_SHAPE_SIZES[stickyShapeType] || STICKY_SHAPE_SIZES.rectangle
-      await createStickyNote(ctx, {
-        ...stickyArgs,
-        position: undefined,
-        x: Math.round(commandPlacementAnchor.x - stickySize.width / 2),
-        y: Math.round(commandPlacementAnchor.y - stickySize.height / 2),
-      })
-    } else {
-      await createStickyNote(ctx, stickyArgs)
-    }
+    console.log('LLM tool call:', toolCall.name, toolCall.arguments)
+
+    await executeLlmToolCall(ctx, toolCall.name, toolCall.arguments)
+
+    ctx.executedTools.push({
+      tool: toolCall.name,
+      llmGenerated: true,
+      args: toolCall.arguments,
+    })
   }
 }
 
 const runCommandPlan = async (ctx, command) => {
   const normalizedCommand = normalizeCommandForPlan(command)
-  const lower = normalizedCommand.toLowerCase()
-
-  const gridTemplateMatch = normalizedCommand.match(
-    /(?:create|add|build)\s+(?:a\s+)?(\d+)\s*x\s*(\d+)\s+grid\s+of\s+sticky(?:\s*notes?)?(?:\s+for\s+(.+))?/i,
-  )
-  if (gridTemplateMatch) {
-    const [, rowsRaw, columnsRaw, labelTextRaw] = gridTemplateMatch
-    await createStickyGridTemplate(ctx, {
-      rows: Number(rowsRaw),
-      columns: Number(columnsRaw),
-      labelText: stripWrappingQuotes(labelTextRaw || ''),
+  logAiDebug('run_command_plan_start', {
+    boardId: ctx.boardId,
+    command: normalizedCommand,
+  })
+  const bmcCommand = parseBusinessModelCanvasCommand(normalizedCommand)
+  if (bmcCommand) {
+    logAiDebug('run_command_plan_route_bmc', {
+      boardId: ctx.boardId,
+      topic: bmcCommand.topic,
+      includeExamples: bmcCommand.includeExamples,
+      includeChannelExamples: bmcCommand.includeChannelExamples,
+      includeRevenueExamples: bmcCommand.includeRevenueExamples,
     })
-    return
-  }
-
-  const reasonListCommand = parseReasonListCommand(normalizedCommand)
-  if (reasonListCommand) {
-    await executeStickyBatch(ctx, reasonListCommand)
-    return
-  }
-
-  const stickyCommand = parseStickyCommand(normalizedCommand)
-  if (stickyCommand) {
-    await executeStickyBatch(ctx, stickyCommand)
-    return
-  }
-
-  const shapeMatch = normalizedCommand.match(
-    /^(?:add|create)\s+(?:a|an)?\s*(?:(\w+)\s+)?(rectangle|box|shape|circle|diamond|rhombus|romb|triangle)(?:\s+at(?:\s+position)?\s*(-?\d+)\s*,\s*(-?\d+))?[.!?]?\s*$/i,
-  )
-  if (shapeMatch) {
-    const [, colorCandidate, rawShapeType, xRaw, yRaw] = shapeMatch
-    const shapeType = normalizeShapeType(rawShapeType)
-    await createStickyNote(ctx, {
-      shapeType,
-      x: parseNumber(xRaw, 200),
-      y: parseNumber(yRaw, 200),
-      text: 'New sticky note',
-      color: toColor(colorCandidate, '#93c5fd'),
-    })
-    return
-  }
-
-  const frameMatch = normalizedCommand.match(
-    /^(?:add|create)\s+(?:a|an)?\s*frame(?:\s+(?:named|called)\s+(.+?))?(?:\s+at(?:\s+position)?\s*(-?\d+)\s*,\s*(-?\d+))?[.!?]?\s*$/i,
-  )
-  if (frameMatch) {
-    const [, titleRaw, xRaw, yRaw] = frameMatch
-    await createFrame(ctx, {
-      title: sanitizeText(stripWrappingQuotes(titleRaw || 'New Frame')),
-      x: parseNumber(xRaw, 120),
-      y: parseNumber(yRaw, 120),
-      width: 480,
-      height: 300,
-    })
-    return
-  }
-
-  const connectorMatch = normalizedCommand.match(
-    /^(?:add|create)\s+(?:a|an)?\s*(?:(\w+)\s+)?(?:connector|arrow|line)(?:\s+from\s+([a-z0-9-]+)\s+to\s+([a-z0-9-]+))?/i,
-  )
-  if (connectorMatch) {
-    const [, colorCandidate, fromId, toId] = connectorMatch
-    const styleCandidate = /\bline\b/i.test(normalizedCommand) ? 'line' : 'arrow'
-    await createConnector(ctx, {
-      color: colorCandidate,
-      fromId: fromId || undefined,
-      toId: toId || undefined,
-      style: styleCandidate,
-    })
-    return
-  }
-
-  if (lower.includes('swot')) {
-    await createSwotTemplate(ctx)
-    return
-  }
-
-  if (lower.includes('retrospective') || lower.includes("what went well")) {
-    await createRetrospectiveTemplate(ctx)
-    return
-  }
-
-  const journeyMatch = normalizedCommand.match(/user journey map\s+with\s+(\d+)\s+stages?/i)
-  if (journeyMatch) {
-    await createJourneyMap(ctx, Number(journeyMatch[1]))
-    return
-  }
-
-  if (lower.includes('arrange') && lower.includes('grid')) {
-    const stickyNotes = ctx.state.filter((item) => item.type === 'stickyNote')
-    await arrangeGrid(ctx, stickyNotes)
-    return
-  }
-
-  if ((lower.includes('space') && lower.includes('even')) || lower.includes('evenly')) {
-    const movable = ctx.state.filter((item) => item.type !== 'connector')
-    await spaceElementsEvenly(ctx, movable)
-    return
-  }
-
-  if (
-    (lower.includes('resize') || lower.includes('fit')) &&
-    lower.includes('frame') &&
-    (lower.includes('content') || lower.includes('contents'))
-  ) {
-    await resizeFrameToFitContents(ctx)
-    return
-  }
-
-  if (isOrganizeByColorCommand(lower)) {
-    await organizeBoardByColor(ctx)
-    return
-  }
-
-  if (
-    lower.includes('organize this board') ||
-    (lower.includes('organize') && lower.includes('column')) ||
-    (lower.includes('organize') && lower.includes('group')) ||
-    (lower.includes('group') && lower.includes('board')) ||
-    (lower.includes('layout') && lower.includes('board'))
-  ) {
-    await organizeBoardByType(ctx)
-    return
-  }
-
-  if (
-    (lower.includes('summarize') && lower.includes('stick')) ||
-    (lower.includes('synthesize') && lower.includes('theme')) ||
-    lower.includes('group into themes')
-  ) {
-    await synthesizeStickyThemes(ctx)
-    return
-  }
-
-  const moveColorMatch = normalizedCommand.match(/move\s+all\s+the\s+(\w+)\s+sticky notes\s+to\s+the\s+right side/i)
-  if (moveColorMatch) {
-    const requestedColor = toColor(moveColorMatch[1], moveColorMatch[1])
-    const stickyNotes = ctx.state.filter(
-      (item) => item.type === 'stickyNote' && String(item.color).toLowerCase() === String(requestedColor).toLowerCase(),
-    )
-
-    for (const sticky of stickyNotes) {
-      await moveObject(ctx, {
-        objectId: sticky.id,
-        x: sticky.position.x + 320,
-        y: sticky.position.y,
-      })
-    }
-
-    ctx.executedTools.push({ tool: 'moveByColor', count: stickyNotes.length })
-    return
-  }
-
-  const changeColorMatch = normalizedCommand.match(/change\s+the\s+sticky note color\s+to\s+(\w+)/i)
-  if (changeColorMatch) {
-    const sticky = ctx.state.find((item) => item.type === 'stickyNote')
-    if (sticky) {
-      await changeColor(ctx, { objectId: sticky.id, color: changeColorMatch[1] })
-    }
-    return
-  }
-
-  // LLM FALLBACK: Route unrecognized commands to GLM-5
-  if (glmClient) {
-    try {
-      return await executeViaLLM(ctx, normalizedCommand)
-    } catch (llmError) {
-      console.error('LLM execution failed:', llmError)
-      const modelUnavailableMessage =
-        'AI assistant is temporarily unavailable right now. Please try again in a moment.'
+    const bmcResult = await createBusinessModelCanvas(ctx, bmcCommand)
+    if (bmcResult.count > 0) {
+      const successMessage = 'Created Business Model Canvas on the board.'
       return {
-        message: modelUnavailableMessage,
-        aiResponse: modelUnavailableMessage,
-        level: 'warning',
+        message: successMessage,
+        aiResponse: successMessage,
       }
     }
   }
 
-  return {
-    message: OUT_OF_SCOPE_AI_MESSAGE,
-    aiResponse: OUT_OF_SCOPE_AI_MESSAGE,
-    level: 'warning',
+  const deterministicCompoundResult = await executeDeterministicCompoundStickyFallback(ctx, normalizedCommand)
+  if (deterministicCompoundResult.count > 0) {
+    logAiDebug('run_command_plan_route_deterministic_compound', {
+      boardId: ctx.boardId,
+      count: deterministicCompoundResult.count,
+    })
+    const successMessage = 'Created requested board objects.'
+    return {
+      message: successMessage,
+      aiResponse: successMessage,
+    }
+  }
+
+  if (!glmClient) {
+    return {
+      message: AI_TEMP_UNAVAILABLE_MESSAGE,
+      aiResponse: AI_TEMP_UNAVAILABLE_MESSAGE,
+      level: 'warning',
+    }
+  }
+
+  try {
+    logAiDebug('run_command_plan_route_llm', {
+      boardId: ctx.boardId,
+      command: normalizedCommand,
+    })
+    return await executeViaLLM(ctx, normalizedCommand)
+  } catch (llmError) {
+    console.error('LLM-first execution failed:', llmError)
+    return {
+      message: AI_TEMP_UNAVAILABLE_MESSAGE,
+      aiResponse: AI_TEMP_UNAVAILABLE_MESSAGE,
+      level: 'warning',
+    }
   }
 }
 
@@ -1783,165 +2449,131 @@ const runCommandPlan = async (ctx, command) => {
 const executeViaLLM = async (ctx, command) => {
   console.log('Executing command via LLM:', command)
 
-  const glmResponse = await glmClient.callGLM(command, {
+  const boardContext = {
     state: ctx.state,
-    boardId: ctx.boardId
-  })
+    boardId: ctx.boardId,
+    commandPlacement: ctx.commandPlacement,
+  }
+  const baselineObjectIds = new Set(ctx.state.map((item) => item?.id).filter(Boolean))
+  const baselineMutationToken = buildBoardMutationToken(ctx.state)
+  const stickyIntent = parseStickyCommand(command) || parseReasonListCommand(command)
+  const expectedStickyCount = Math.max(0, parseNumber(stickyIntent?.count, 0))
+  const boardMutationIntent = isLikelyBoardMutationCommand(command)
 
-  const toolCalls = glmClient.parseToolCalls(glmResponse)
-  const textResponse = sanitizeAiAssistantResponse(glmClient.getTextResponse(glmResponse))
+  const requestLlmPass = async (commandText) => {
+    const glmResponse = await glmClient.callGLM(commandText, boardContext)
+    const toolCalls = glmClient.parseToolCalls(glmResponse)
+    const textResponse = sanitizeAiAssistantResponse(glmClient.getTextResponse(glmResponse))
+    return { glmResponse, toolCalls, textResponse }
+  }
 
-  if (toolCalls.length === 0) {
+  let llmPass = await requestLlmPass(command)
+
+  if (llmPass.toolCalls.length === 0 && boardMutationIntent) {
+    const retryCommand = buildCompoundToolRetryCommand(command, llmPass.textResponse)
+    const retryPass = await requestLlmPass(retryCommand)
+    if (retryPass.toolCalls.length > 0 || retryPass.textResponse) {
+      llmPass = retryPass
+    }
+  }
+
+  if (llmPass.toolCalls.length === 0) {
+    if (boardMutationIntent) {
+      const fallbackResult = await executeDeterministicCompoundStickyFallback(ctx, command)
+      if (fallbackResult.count > 0) {
+        const successMessage = 'Created requested board objects.'
+        return {
+          message: successMessage,
+          aiResponse: successMessage,
+        }
+      }
+    }
+
+    const assistantMessage = llmPass.textResponse || OUT_OF_SCOPE_AI_MESSAGE
     ctx.executedTools.push({
       tool: 'assistantResponse',
       llmGenerated: true,
-      outOfScope: true,
-      ...(textResponse ? { modelText: textResponse } : {}),
+      outOfScope: assistantMessage === OUT_OF_SCOPE_AI_MESSAGE,
+      ...(llmPass.textResponse ? { modelText: llmPass.textResponse } : {}),
+    })
+    const noMutationWarning =
+      boardMutationIntent && buildBoardMutationToken(ctx.state) === baselineMutationToken
+        ? { level: 'warning' }
+        : {}
+    return {
+      message: assistantMessage,
+      aiResponse: assistantMessage,
+      ...(assistantMessage === OUT_OF_SCOPE_AI_MESSAGE ? { level: 'warning' } : noMutationWarning),
+    }
+  }
+
+  await executeParsedToolCalls(ctx, llmPass.toolCalls)
+  let boardMutationApplied = buildBoardMutationToken(ctx.state) !== baselineMutationToken
+
+  if (boardMutationIntent && !boardMutationApplied && expectedStickyCount === 0) {
+    const noMutationRetryCommand = buildNoMutationRetryCommand(command, llmPass.textResponse)
+    const noMutationRetryPass = await requestLlmPass(noMutationRetryCommand)
+    if (noMutationRetryPass.toolCalls.length > 0) {
+      await executeParsedToolCalls(ctx, noMutationRetryPass.toolCalls)
+      boardMutationApplied = buildBoardMutationToken(ctx.state) !== baselineMutationToken
+    }
+    if (noMutationRetryPass.textResponse) {
+      llmPass = noMutationRetryPass
+    }
+  }
+
+  if (expectedStickyCount > 0) {
+    const createdStickyCount = countCreatedStickyNotesSinceBaseline(ctx, baselineObjectIds)
+    if (createdStickyCount < expectedStickyCount) {
+      const shortfallCommand = buildStickyShortfallRetryCommand(command, {
+        requested: expectedStickyCount,
+        created: createdStickyCount,
+        remaining: expectedStickyCount - createdStickyCount,
+      })
+      const recoveryPass = await requestLlmPass(shortfallCommand)
+      if (recoveryPass.toolCalls.length > 0) {
+        await executeParsedToolCalls(ctx, recoveryPass.toolCalls)
+      }
+      if (recoveryPass.textResponse) {
+        llmPass = recoveryPass
+      }
+      boardMutationApplied = buildBoardMutationToken(ctx.state) !== baselineMutationToken
+    } else {
+      boardMutationApplied = true
+    }
+  }
+
+  if (boardMutationIntent && !boardMutationApplied) {
+    const fallbackResult = await executeDeterministicCompoundStickyFallback(ctx, command)
+    if (fallbackResult.count > 0) {
+      const successMessage = 'Created requested board objects.'
+      return {
+        message: successMessage,
+        aiResponse: successMessage,
+      }
+    }
+
+    const assistantMessage =
+      llmPass.textResponse ||
+      "I couldn't apply that command to the board. Please retry with explicit board actions."
+    ctx.executedTools.push({
+      tool: 'assistantResponse',
+      llmGenerated: true,
+      noMutation: true,
+      ...(llmPass.textResponse ? { modelText: llmPass.textResponse } : {}),
     })
     return {
-      message: OUT_OF_SCOPE_AI_MESSAGE,
-      aiResponse: OUT_OF_SCOPE_AI_MESSAGE,
+      message: assistantMessage,
+      aiResponse: assistantMessage,
       level: 'warning',
     }
   }
 
-  // Execute each tool call sequentially
-  for (const toolCall of toolCalls) {
-    if (toolCall.parseError) {
-      throw new Error(`Failed to parse tool call arguments for ${toolCall.name}`)
-    }
-
-    console.log('LLM tool call:', toolCall.name, toolCall.arguments)
-
-    // Route to existing handler functions
-    switch (toolCall.name) {
-      case 'createStickyNote':
-        await createStickyNote(ctx, {
-          text: toolCall.arguments.text || 'New sticky note',
-          shapeType: toolCall.arguments.shapeType || 'rectangle',
-          color: toColor(toolCall.arguments.color, '#fde68a'),
-          position: toolCall.arguments.position,
-          x: toolCall.arguments.x,
-          y: toolCall.arguments.y,
-          width: toolCall.arguments.width,
-          height: toolCall.arguments.height
-        })
-        break
-
-      case 'createShape':
-        await createShape(ctx, {
-          type: toolCall.arguments.type || 'rectangle',
-          color: toColor(toolCall.arguments.color, '#93c5fd'),
-          position: toolCall.arguments.position,
-          x: toolCall.arguments.x,
-          y: toolCall.arguments.y,
-          width: toolCall.arguments.width,
-          height: toolCall.arguments.height
-        })
-        break
-
-      case 'createFrame':
-        await createFrame(ctx, {
-          title: sanitizeText(toolCall.arguments.title || 'New Frame'),
-          width: parseNumber(toolCall.arguments.width, 480),
-          height: parseNumber(toolCall.arguments.height, 300),
-          x: parseNumber(toolCall.arguments.x, 120),
-          y: parseNumber(toolCall.arguments.y, 120)
-        })
-        break
-
-      case 'createConnector':
-        await createConnector(ctx, {
-          fromId: toolCall.arguments.fromId,
-          toId: toolCall.arguments.toId,
-          color: toColor(toolCall.arguments.color, '#0f172a'),
-          style: toolCall.arguments.style,
-        })
-        break
-
-      case 'moveObject':
-        await moveObject(ctx, {
-          objectId: toolCall.arguments.objectId,
-          x: parseNumber(toolCall.arguments.x, 0),
-          y: parseNumber(toolCall.arguments.y, 0)
-        })
-        break
-
-      case 'resizeObject':
-        await resizeObject(ctx, {
-          objectId: toolCall.arguments.objectId,
-          width: toolCall.arguments.width,
-          height: toolCall.arguments.height
-        })
-        break
-
-      case 'updateText':
-        await updateText(ctx, {
-          objectId: toolCall.arguments.objectId,
-          newText: toolCall.arguments.newText || toolCall.arguments.text || ''
-        })
-        break
-
-      case 'changeColor':
-        await changeColor(ctx, {
-          objectId: toolCall.arguments.objectId,
-          color: toolCall.arguments.color
-        })
-        break
-
-      case 'getBoardState':
-        ctx.state = await getBoardState(ctx.boardId)
-        break
-
-      case 'organizeBoardByColor':
-        await organizeBoardByColor(ctx)
-        break
-
-      case 'organizeBoardByType':
-        await organizeBoardByType(ctx)
-        break
-
-      case 'arrangeGrid':
-        const stickyNotes = ctx.state.filter(item => item.type === 'stickyNote')
-        await arrangeGrid(ctx, stickyNotes)
-        break
-
-      case 'createSwotTemplate':
-        await createSwotTemplate(ctx)
-        break
-
-      case 'createRetrospectiveTemplate':
-        await createRetrospectiveTemplate(ctx)
-        break
-
-      case 'rotateObject':
-        await rotateObject(ctx, toolCall.arguments)
-        break
-
-      case 'deleteObject':
-        await deleteObject(ctx, toolCall.arguments)
-        break
-
-      case 'duplicateObject':
-        await duplicateObject(ctx, toolCall.arguments)
-        break
-
-      default:
-        throw new Error(`Unknown tool requested by LLM: ${toolCall.name}`)
-    }
-
-    ctx.executedTools.push({
-      tool: toolCall.name,
-      llmGenerated: true,
-      args: toolCall.arguments
-    })
-  }
-
-  console.log('LLM execution completed, tools executed:', toolCalls.length)
-  return textResponse
+  console.log('LLM execution completed, tools executed:', llmPass.toolCalls.length)
+  return llmPass.textResponse
     ? {
-        message: textResponse,
-        aiResponse: textResponse,
+        message: llmPass.textResponse,
+        aiResponse: llmPass.textResponse,
       }
     : null
 }
@@ -2041,6 +2673,56 @@ const releaseBoardLock = async (boardId, commandId, queueSequence = null) => {
   })
 }
 
+const startBoardLockHeartbeat = ({ boardId, commandId, queueSequence, intervalMs = 5_000, ttlMs = 20_000 }) => {
+  const lockRef = getSystemRef(boardId)
+  let active = true
+
+  const timer = setInterval(async () => {
+    if (!active) {
+      return
+    }
+
+    try {
+      await db.runTransaction(async (tx) => {
+        const lockSnap = await tx.get(lockRef)
+        if (!lockSnap.exists) {
+          return
+        }
+
+        const lockData = lockSnap.data()
+        const processingSequence = parseNumber(lockData?.processingSequence, 1)
+        if (lockData?.activeCommandId !== commandId || processingSequence !== queueSequence) {
+          return
+        }
+
+        tx.set(
+          lockRef,
+          {
+            expiresAt: nowMs() + ttlMs,
+            updatedAt: nowMs(),
+          },
+          { merge: true },
+        )
+      })
+    } catch (heartbeatError) {
+      console.warn('AI lock heartbeat refresh failed', {
+        boardId,
+        commandId,
+        error: heartbeatError instanceof Error ? heartbeatError.message : String(heartbeatError),
+      })
+    }
+  }, intervalMs)
+
+  if (typeof timer.unref === 'function') {
+    timer.unref()
+  }
+
+  return () => {
+    active = false
+    clearInterval(timer)
+  }
+}
+
 exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) => {
   Object.entries(CORS_HEADERS).forEach(([key, value]) => res.setHeader(key, value))
 
@@ -2065,6 +2747,7 @@ exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) =>
   let clientCommandIdForError = ''
   let queueSequenceForError = null
   let commandForError = ''
+  let stopLockHeartbeat = () => {}
 
   try {
     const authHeader = String(req.headers.authorization || '')
@@ -2357,6 +3040,11 @@ exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) =>
       },
       { merge: true },
     )
+    stopLockHeartbeat = startBoardLockHeartbeat({
+      boardId,
+      commandId: clientCommandId,
+      queueSequence,
+    })
 
     const state = await getBoardState(boardId)
     const context = {
@@ -2379,6 +3067,14 @@ exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) =>
       ...(aiResponse ? { aiResponse } : {}),
       ...(resultLevel ? { level: resultLevel } : {}),
     }
+    logAiDebug('api_ai_command_result', {
+      boardId,
+      commandId: clientCommandId,
+      objectCount: result.objectCount,
+      toolCount: result.executedTools.length,
+      message: result.message,
+      level: result.level || 'info',
+    })
 
     await commandRef.set(
       {
@@ -2389,10 +3085,12 @@ exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) =>
       { merge: true },
     )
 
+    stopLockHeartbeat()
     await releaseBoardLock(boardId, clientCommandId, queueSequence)
 
     res.status(200).json({ status: 'success', commandId: clientCommandId, result })
   } catch (error) {
+    stopLockHeartbeat()
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
 
     try {
@@ -2421,16 +3119,34 @@ exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) =>
   }
 })
 
+const __setGlmClientForTests = (client) => {
+  glmClient = client
+}
+
+const __setObjectWriterForTests = (writer) => {
+  writeObjectImpl = typeof writer === 'function' ? writer : persistObjectToFirestore
+}
+
 exports.__test = {
+  __setGlmClientForTests,
+  __setObjectWriterForTests,
+  runCommandPlan,
+  resolvePlacementAnchor,
+  resolveLlmCreateArgsWithPlacement,
+  toBatchOperations,
   normalizeCommandForPlan,
   isOrganizeByColorCommand,
+  isLikelyBoardMutationCommand,
+  parseBusinessModelCanvasCommand,
   parseStickyCommand,
+  parseCompoundStickyCreateOperations,
   parseReasonListCommand,
   buildReasonStickyTexts,
   getAutoStickyPosition,
   normalizeAiPlacementHint,
   getStickyBatchLayoutPositions,
   parsePosition,
+  extractCoordinatePosition,
   sanitizeAiAssistantResponse,
   normalizeBoardMeta,
   canUserAccessBoard,
