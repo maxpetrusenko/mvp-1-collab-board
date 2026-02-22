@@ -1,7 +1,7 @@
 # TASKS.md
 
 Date initialized: 2026-02-16
-Last updated: 2026-02-22 (single-sticky text-only fallback latency cut + sticky typo normalization + AI viewport placement guardrail + sequential AI create offsets + frame-and-sticky structural fallback + generalized frame-sticky relation parser + bulk color mutation fallback + bulk recolor top-up + color-family matching + broad delete fallback recovery + command-profiled AI fast path + runtime/panels extraction + LLM error UX hardening + Firebase dev/prod project split guardrails)
+Last updated: 2026-02-22 (MAX-45 AI bulk create/change/delete shape + production probe evidence updates, plus prior AI reliability/guardrail work)
 Cadence: half-day sprint checkpoints
 Source: `AGENTS.md` + `G4 Week 1 - CollabBoard-requirements.pdf`
 
@@ -40,6 +40,8 @@ Source: `AGENTS.md` + `G4 Week 1 - CollabBoard-requirements.pdf`
 | T-162 | B | Generalize frame-plus-sticky relation parsing (`count + object + relation`) so phrasing variants like `2 frames with 2 stickies`, `each containing`, and `in each frame` resolve through one fallback path with deterministic counts/layout | Done | 2026-02-22 |
 | T-163 | B | Add tokenized broad-delete fallback (`delete/remove/clear all ...`) to guarantee board cleanup commands execute when model tool calls are missing or malformed | Done | 2026-02-22 |
 | T-164 | B | Enforce bulk recolor completion after partial model mutations and match source colors by family (for example yellow shades) so commands like `change yellow collor stickies to green` complete deterministically | Done | 2026-02-22 |
+| MAX-45-A | B | Add local-fallback compatibility in bulk `createObjects`/`changeColors` execution paths when Firestore project credentials are unavailable (`project id`/auth errors) so board mutations still apply in in-memory state | Done | 2026-02-22 |
+| MAX-45-B | B | Restore production probe evidence logging for 2026-02-22 AI fallback recovery validations against `https://api-qaotnmz34a-uc.a.run.app` | Done | 2026-02-22 |
 | T-130 | D | Split task tracking into `TASKS.md` (active/backlog) + `ARCHIVE.md` (history) | Done | 2026-02-20 |
 | T-131 | D | Add explicit Golden Rule: E2E-first (hot-fix exception documented) to `AGENTS.md` | Done | 2026-02-20 |
 | T-132 | D | Add GitHub Actions deploy workflow for `main` and CI quality gate | Done | 2026-02-20 |
@@ -112,3 +114,4 @@ Rule: implement only tasks that map to `docs/requirements.md` (MVP hard gate, bo
 - `T-162`: `functions/index.js` (`extractCountedObjectMentions`, `parsePerParentChildCount`, generalized `parseFramesWithStickiesCommand` relation extraction), `functions/test/requirements-ai-command-capabilities.test.js` (`AI-CMDS-035`, `AI-CMDS-036` phrasing-variant coverage), test run `npm test` (`94/94` passing)
 - `T-163`: `functions/index.js` (`parseBulkDeleteIntent`, `resolveBulkDeleteTargets`, `tryApplyBulkDeleteFallback`, execute-path integration in no-tool and no-mutation branches), `functions/test/command-parser.test.js` (`parseBulkDeleteIntent` coverage), `functions/test/requirements-ai-command-capabilities.test.js` (`AI-CMDS-039` broad delete fallback), test run `npm test` (`99/99` passing)
 - `T-164`: `functions/index.js` (color-family inference for bulk source-color matching + post-tool bulk recolor top-up and success-message handling), `functions/test/requirements-ai-command-capabilities.test.js` (`AI-CMDS-040` partial recolor top-up with yellow shade coverage), test run `npm test` (`100/100` passing)
+- `MAX-45-A/B`: `functions/index.js` (`runCreateObjects` and `runChangeColors` Firestore-error fallbacks with in-memory-first execution), `functions/test/requirements-ai-command-capabilities.test.js` (`AI-BULK-003`, `AI-BULK-009`, `AI-CMDS-007`, `AI-CMDS-033`, `AI-CMDS-046`), production probe evidence record at `docs/TEST_EVIDENCE.md` (2026-02-22, `https://api-qaotnmz34a-uc.a.run.app`)

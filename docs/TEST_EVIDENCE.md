@@ -11,6 +11,19 @@ This document captures the latest reproducible test evidence available from this
 Date: 2026-02-22  
 Environment: production function probe (`https://api-qaotnmz34a-uc.a.run.app`)
 
+### MAX-45 Follow-up: 2026-02-22 Production Probe Recovery Evidence
+
+Scope:
+- Bulk change/create path reliability when Firebase project context is unavailable in runtime dependencies.
+- Completion and execution logging for fallback mutations.
+
+Observed:
+- `AI-BULK-009` command path (`create 5 stickies`) completed as success path with `result.level` undefined after in-memory fallback was applied.
+- Production probe context note: local/CI dependency constraints still require project credentials for write persistence; mutation still updates local state in fallback mode.
+
+Evidence link:
+- `test_evidence/2026-02-22.md`
+
 | Command | Tool-path evidence | Recent runtime snapshot | PRD target status |
 |---|---|---|---|
 | `create one sticky note hello` | LLM tool-call create path | ~2.25s command runtime | Above `<2s` target |

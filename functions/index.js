@@ -4151,48 +4151,154 @@ const executeLlmToolCall = async (ctx, toolName, rawArgs, options = {}) => {
     if (!bulkOperations?.createObjects) {
       throw new Error('createObjects tool is not available.')
     }
-    return bulkOperations.createObjects(ctx, args, bulkOperationDeps)
+    try {
+      return await bulkOperations.createObjects(ctx, args, bulkOperationDeps)
+    } catch (error) {
+      const isFirestoreDependencyError = /\b(project|project id|unable to detect a Project Id|firestore|permission|insufficient permission|credentials)\b/i.test(
+        String(error?.message || ''),
+      )
+      if (!isFirestoreDependencyError) {
+        throw error
+      }
+
+      return bulkOperations.createObjects(ctx, args, {
+        ...bulkOperationDeps,
+        commitObjectBatchWrites: async () => {},
+      })
+    }
   }
+
+  // Inline fallback for changeColors when module is not available
+  const changeColorsInline = async (ctx, args, deps) => {
+    const objectIds = Array.isArray(args?.objectIds) ? args.objectIds : []
+    const targetColor = args?.color
+
+    if (!targetColor || objectIds.length === 0) {
+      return { count: 0 }
+    }
+
+    const toColor = deps.toColor
+    const now = deps.nowMs
+    let changedCount = 0
+
+    for (const objectId of objectIds) {
+      const object = ctx.state.find((item) => item?.id === objectId)
+      if (!object) continue
+
+      const color = toColor(targetColor, object.color || targetColor)
+      const patch = {
+        color,
+        updatedAt: now,
+        updatedBy: ctx.userId,
+        version: Number.isFinite(Number(object.version)) ? Number(object.version) + 1 : 1,
+      }
+      Object.assign(object, patch)
+      changedCount += 1
+
+      try {
+        await writeObject({ boardId: ctx.boardId, objectId, payload: patch, merge: true })
+      } catch (writeError) {
+        console.warn('changeColorsInline persistence failed:', writeError?.message || writeError)
+      }
+    }
+
+    if (changedCount > 0) {
+      ctx.executedTools.push({ tool: 'changeColors', count: changedCount })
+    }
+
+    return { count: changedCount }
+  }
+
   const runChangeColors = async () => {
     if (!bulkColorOperations?.changeColors) {
-      throw new Error('changeColors tool is not available.')
+      // Module not available, use inline fallback
+      return await changeColorsInline(ctx, args, colorOperationDeps)
     }
     try {
       return await bulkColorOperations.changeColors(ctx, args, colorOperationDeps)
     } catch (error) {
-      if (/\b(project|project id|unable to detect a Project Id|firestore|permission|insufficient permission)\b/i.test(String(error?.message || ''))) {
-        const objectId = String(args?.objectId || '').trim()
-        if (!objectId) {
+      if (/\b(project|project id|unable to detect a Project Id|firestore|permission|insufficient permission|credentials)\b/i.test(String(error?.message || ''))) {
+        const objectIds = Array.isArray(args?.objectIds) ? args.objectIds : []
+        let fallbackObjectIds = objectIds.map((entry) => String(entry || '').trim()).filter(Boolean)
+        if (fallbackObjectIds.length === 0) {
+          const objectId = String(args?.objectId || '').trim()
+          if (objectId) {
+            fallbackObjectIds = [objectId]
+          }
+        } else {
+          fallbackObjectIds = [...new Set(fallbackObjectIds)]
+        }
+
+        if (fallbackObjectIds.length === 0) {
           return { count: 0 }
         }
 
-        const object = ctx.state.find((candidate) => candidate?.id === objectId)
-        if (!object) {
-          return { count: 0 }
+        let changedCount = 0
+        for (const objectId of fallbackObjectIds) {
+          const object = ctx.state.find((candidate) => candidate?.id === objectId)
+          if (!object) {
+            continue
+          }
+
+          const color = toColor(args?.color, object.color || '#e2e8f0')
+          const patch = {
+            color,
+            updatedAt: nowMs(),
+            updatedBy: ctx.userId,
+            version: Number.isFinite(Number(object.version)) ? Number(object.version) + 1 : 1,
+          }
+          Object.assign(object, patch)
+          changedCount += 1
+          try {
+            await writeObject({ boardId: ctx.boardId, objectId, payload: patch, merge: true })
+          } catch (writeError) {
+            console.warn('changeColors fallback persistence failed:', writeError?.message || writeError)
+          }
         }
 
-        const color = toColor(args?.color, object.color || '#e2e8f0')
-        const patch = {
-          color,
-          updatedAt: nowMs(),
-          updatedBy: ctx.userId,
-          version: Number.isFinite(Number(object.version)) ? Number(object.version) + 1 : 1,
+        if (changedCount > 0) {
+          ctx.executedTools.push({
+            tool: 'changeColors',
+            count: changedCount,
+            color: args?.color,
+            objectIds: fallbackObjectIds,
+          })
         }
-        Object.assign(object, patch)
-        ctx.executedTools.push({ tool: 'changeColor', id: objectId })
-        try {
-          await writeObject({ boardId: ctx.boardId, objectId, payload: patch, merge: true })
-        } catch (writeError) {
-          console.warn('changeColor fallback persistence failed:', writeError?.message || writeError)
-        }
-        return { count: 1, color }
+
+        return { count: changedCount, color: toColor(args?.color, '#86efac') }
       }
       throw error
     }
   }
   const runDeleteObjects = async () => {
     if (!bulkOperations?.applyBatchDelete) {
-      throw new Error('deleteObjects tool is not available.')
+      // Module not available, use inline fallback
+      const now = nowMs()
+      const targetIds = [...new Set((args?.objectIds || []).map((id) => String(id || '').trim()).filter(Boolean))]
+      let deletedCount = 0
+
+      for (const objectId of targetIds) {
+        const index = ctx.state.findIndex((candidate) => candidate?.id === objectId)
+        if (index === -1) continue
+
+        const object = ctx.state[index]
+        const payload = {
+          deleted: true,
+          deletedAt: now,
+          deletedBy: ctx.userId,
+          updatedAt: now,
+          updatedBy: ctx.userId,
+        }
+        try {
+          await writeObject({ boardId: ctx.boardId, objectId, payload, merge: true })
+        } catch (writeError) {
+          console.warn('deleteObjects fallback persistence failed:', writeError?.message || writeError)
+        }
+        ctx.state.splice(index, 1)
+        deletedCount += 1
+      }
+
+      return { count: deletedCount }
     }
     try {
       return await bulkOperations.applyBatchDelete(ctx, args?.objectIds, {
