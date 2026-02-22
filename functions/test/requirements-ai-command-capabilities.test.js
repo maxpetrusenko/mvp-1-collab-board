@@ -217,6 +217,65 @@ test('AI-CMDS-026: board noun prompts continue to execute returned tool calls', 
   assert.equal(context.executedTools.some((entry) => entry.tool === 'createStickyNote'), true)
 })
 
+test('AI-CMDS-031: no-tool color-edit prompts recover by matching target text to existing board objects', async () => {
+  const writeCalls = []
+  const now = Date.now()
+  const context = buildContext({
+    state: [
+      {
+        id: 'sticky-hello',
+        boardId: 'test-board',
+        type: 'stickyNote',
+        text: 'hello world',
+        color: '#fde68a',
+        position: { x: 120, y: 120 },
+        size: { width: 180, height: 110 },
+        zIndex: 1,
+        createdBy: 'test-user',
+        createdAt: now,
+        updatedBy: 'test-user',
+        updatedAt: now,
+        version: 1,
+      },
+    ],
+  })
+
+  await withMockObjectWriter(
+    async (payload) => {
+      writeCalls.push(payload)
+    },
+    async () => {
+      await withMockGlmClient(
+        {
+          callGLM: async () => ({
+            choices: [
+              {
+                message: {
+                  content: 'Done.',
+                  tool_calls: [],
+                },
+              },
+            ],
+          }),
+          parseToolCalls: () => [],
+          getTextResponse: (response) => response?.choices?.[0]?.message?.content || '',
+        },
+        async () => {
+          const result = await __test.runCommandPlan(context, 'change hello world stiky color to red')
+          assert.equal(result.level, undefined)
+          assert.match(result.message, /changed sticky note color to red/i)
+        },
+      )
+    },
+  )
+
+  assert.equal(context.state[0].color, '#fca5a5')
+  assert.equal(writeCalls.length, 1)
+  assert.equal(writeCalls[0].objectId, 'sticky-hello')
+  assert.equal(writeCalls[0].payload.color, '#fca5a5')
+  assert.equal(context.executedTools.some((entry) => entry.tool === 'changeColor' && entry.id === 'sticky-hello'), true)
+})
+
 test('AI-CMDS-007 / T-142: planner keeps sticky-style creation prompts on LLM-first path', async () => {
   const calls = []
 
@@ -804,6 +863,13 @@ test('AI-CMDS-027: create-first prompts can skip board-state hydration while edi
   assert.equal(__test.shouldLoadBoardStateForCommand('generate a business model canvas'), false)
   assert.equal(__test.shouldLoadBoardStateForCommand('move object-1 to x 200 y 100'), true)
   assert.equal(__test.shouldLoadBoardStateForCommand('resize f7f05d9b-2d12-4b7e-8cc1-999999999999'), true)
+  assert.equal(__test.shouldLoadBoardStateForCommand('change hello world stiky color to red'), true)
+  assert.equal(__test.shouldLoadBoardStateForCommand('set selected color to blue'), true)
+})
+
+test('AI-CMDS-030: typo-tolerant color-change commands are classified as board mutations', () => {
+  assert.equal(__test.isLikelyBoardMutationCommand('change hello world stiky color to red'), true)
+  assert.equal(__test.isLikelyBoardMutationCommand('set selected color to blue'), true)
 })
 
 test('AI-CMDS-028: repetitive box/sticky create prompts trigger grid-template execution hinting', () => {
@@ -894,6 +960,42 @@ test('AI-CMDS-004: placement helpers anchor single and batch create operations n
 
   assert.equal(single.x, 550)
   assert.equal(single.y, 305)
+
+  const inferredPlacementFallback = __test.resolveLlmCreateArgsWithPlacement(
+    'createStickyNote',
+    { text: 'A', position: 'top left', x: 40, y: 60 },
+    placement,
+    null,
+    false,
+  )
+  assert.equal(inferredPlacementFallback.x, 550)
+  assert.equal(inferredPlacementFallback.y, 305)
+  assert.equal(inferredPlacementFallback.position, undefined)
+
+  const explicitPlacementPreserved = __test.resolveLlmCreateArgsWithPlacement(
+    'createStickyNote',
+    { text: 'A', x: 40, y: 60 },
+    placement,
+    null,
+    true,
+  )
+  assert.equal(explicitPlacementPreserved.x, 40)
+  assert.equal(explicitPlacementPreserved.y, 60)
+
+  const stalePointerPlacement = {
+    anchor: { x: -3000, y: -3000 },
+    viewportCenter: { x: 640, y: 360 },
+    viewport: { x: 320, y: 180, width: 640, height: 360 },
+  }
+  const stalePointerFallback = __test.resolveLlmCreateArgsWithPlacement(
+    'createStickyNote',
+    { text: 'A' },
+    stalePointerPlacement,
+    null,
+    false,
+  )
+  assert.equal(stalePointerFallback.x, 550)
+  assert.equal(stalePointerFallback.y, 305)
 
   const batch = Array.from({ length: 4 }, (_, index) =>
     __test.resolveLlmCreateArgsWithPlacement(

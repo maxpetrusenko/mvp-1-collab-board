@@ -55,15 +55,19 @@ npm run build
 
 ## Deploy (Firebase Hosting)
 From `mvp-1-collab-board/`:
-1. Set project in `.firebaserc` (copy from `.firebaserc.example`).
+1. Set `dev` and `prod` aliases in `.firebaserc` (copy from `.firebaserc.example`).
 2. Build app:
 ```bash
 cd app && npm run build
 ```
-3. Deploy:
+3. Deploy to dev:
 ```bash
-cd ..
-firebase deploy --only hosting,functions
+bash scripts/deploy-dev.sh
+```
+4. Deploy to prod (explicit):
+```bash
+git switch main
+ALLOW_PROD_DEPLOY=1 bash scripts/deploy-prod.sh
 ```
 
 ## Security

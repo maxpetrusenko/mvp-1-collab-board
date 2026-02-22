@@ -46,7 +46,9 @@ cd ../functions && npm install
 
 ```bash
 cp .firebaserc.example .firebaserc
-# then replace with your actual Firebase project id
+# set dev/prod project ids in the aliases map
+# default and dev should point to your dev project
+# prod should point to your production project
 ```
 
 ### 3) Run frontend locally
@@ -56,13 +58,28 @@ cd app
 npm run dev
 ```
 
-### 4) Build and deploy
+### 4) Build and deploy with environment split
 
 ```bash
 cd app && npm run build
 cd ..
-firebase deploy
+bash scripts/deploy-dev.sh
 ```
+
+Production deploy runs via GitHub Actions on `main`.
+Manual production deploy is explicit:
+
+```bash
+git switch main
+ALLOW_PROD_DEPLOY=1 bash scripts/deploy-prod.sh
+```
+
+### 5) Test local and prod separately
+
+- Local UI: `cd app && npm run dev` (default local URL `http://127.0.0.1:5173`)
+- Local backend target: set `VITE_AI_API_BASE_URL_DEV` in `app/.env.local`
+- Production UI: `https://mvp-1-collab-board.web.app`
+- Production backend target: set `VITE_AI_API_BASE_URL_PROD` for production builds
 
 ## Quality Gates
 
