@@ -7,6 +7,7 @@ const boardPagePath = path.join(pagesDir, 'BoardPage.tsx')
 const boardPageRuntimePath = path.join(pagesDir, 'BoardPageRuntime.tsx')
 const supplementalPaths = [
   path.join(pagesDir, 'boardPageRuntimePrimitives.tsx'),
+  path.join(pagesDir, 'boardPanels.tsx'),
   path.join(pagesDir, 'boardStickyObjectRenderer.tsx'),
   path.join(pagesDir, 'boardShapeObjectRenderer.tsx'),
   path.join(pagesDir, 'boardTextObjectRenderer.tsx'),

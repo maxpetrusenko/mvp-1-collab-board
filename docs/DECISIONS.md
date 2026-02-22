@@ -384,6 +384,15 @@ Purpose: log system decisions, alternatives, rationale, and change history.
 - Consequences: `BoardPageRuntime.tsx` shrinks and dependency boundaries become clearer, while source-string tests now read both runtime and extracted helper modules through `app/test/helpers/boardPageSource.mjs`.
 - Revisit Trigger: Once guardrails are fully behavior-based, continue deeper extraction (`useTransforms`, canvas command handlers, share panel composition) in larger chunks.
 
+### D-042
+- Date: 2026-02-22
+- Status: Accepted
+- Decision: Extract boards-side UI slices from `BoardPageRuntime` into reusable view components (`BoardCreateForm`, `BoardSharingCard`) in `app/src/pages/boardPanels.tsx`.
+- Alternatives Considered: Keep inline boards-side JSX in runtime; split all boards panel logic in one step.
+- Rationale: This gives immediate file-size reduction with low behavior risk and produces reusable, testable view components with controlled props.
+- Consequences: `BoardPageRuntime.tsx` keeps orchestration state/actions while form/share rendering lives in dedicated components; guardrail source aggregation now includes `boardPanels.tsx`.
+- Revisit Trigger: Continue with command-palette, shortcuts modal, and right-sidebar panel extraction until runtime stays under the LOC target.
+
 ## Change Log
 - 2026-02-16: Initial decision set created.
 - 2026-02-16: Added auth provider, deployment URL strategy, and error recovery UX decisions.
@@ -412,3 +421,4 @@ Purpose: log system decisions, alternatives, rationale, and change history.
 - 2026-02-22: Added LLM-first runtime planning decision for board intent handling.
 - 2026-02-22: Added explicit advanced layout/journey tool exposure and runtime latency-budget enforcement decision.
 - 2026-02-22: Added BoardPageRuntime primitive-helper extraction decision with refactor-safe source guardrail aggregation.
+- 2026-02-22: Added boards-side reusable component extraction decision for board create/share UI.

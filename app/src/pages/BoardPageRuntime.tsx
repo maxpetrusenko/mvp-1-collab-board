@@ -16,7 +16,6 @@ import {
   MousePointer2,
   Pause,
   Play,
-  Plus,
   Sun,
   Redo2,
   RotateCcw,
@@ -108,6 +107,7 @@ import {
   submitLinkSharingUpdate as submitLinkSharingUpdateHelper,
   submitShareInvite as submitShareInviteHelper,
 } from './boardSharingHelpers'
+import { BoardCreateForm, BoardSharingCard } from './boardPanels'
 import { AICommandPanel } from '../components/AICommandPanel'
 import { useConnectionStatus } from '../hooks/useConnectionStatus'
 import { usePresence } from '../hooks/usePresence'
@@ -1861,6 +1861,49 @@ export const BoardPageRuntime = () => {
     setShareError(null)
     setShareStatus(null)
   }, [])
+  const handleBoardNameInputChange = useCallback(
+    (value: string) => {
+      setNewBoardName(value)
+      if (boardFormError) {
+        setBoardFormError(null)
+      }
+    },
+    [boardFormError],
+  )
+  const handleBoardDescriptionInputChange = useCallback(
+    (value: string) => {
+      setNewBoardDescription(value)
+      if (boardFormError) {
+        setBoardFormError(null)
+      }
+    },
+    [boardFormError],
+  )
+  const handleShareEmailChange = useCallback(
+    (value: string) => {
+      setShareEmail(value)
+      if (shareError) {
+        setShareError(null)
+      }
+    },
+    [shareError],
+  )
+  const handleShareRoleChange = useCallback((role: 'edit' | 'view') => {
+    setShareRole(role)
+  }, [])
+  const handleShareLinkRoleChange = useCallback((role: BoardLinkAccess) => {
+    setShareLinkRole(normalizeLinkAccessRole(role))
+  }, [])
+  const handleShareLinkCopy = useCallback(() => {
+    void navigator.clipboard
+      .writeText(shareDialogBoardUrl)
+      .then(() => {
+        setShareStatus('Board URL copied.')
+      })
+      .catch(() => {
+        setShareError('Unable to copy board URL.')
+      })
+  }, [shareDialogBoardUrl])
   const closeShareDialog = useCallback(() => {
     setShareDialogBoardId(null)
     setShareEmail('')
@@ -4691,250 +4734,45 @@ export const BoardPageRuntime = () => {
                 ) : null}
               </div>
               <div className="boards-side">
-                <form
-                  className="board-create-form"
-                  onSubmit={(event) => {
-                    event.preventDefault()
+                <BoardCreateForm
+                  boardFormError={boardFormError}
+                  newBoardDescription={newBoardDescription}
+                  newBoardName={newBoardName}
+                  onDescriptionChange={handleBoardDescriptionInputChange}
+                  onNameChange={handleBoardNameInputChange}
+                  onSubmit={() => {
                     void createBoard()
                   }}
-                  data-testid="board-create-form"
-                >
-                  <h4>Create Board</h4>
-                  <label className="board-field">
-                    <span>Name</span>
-                    <input
-                      value={newBoardName}
-                      onChange={(event) => {
-                        setNewBoardName(event.target.value)
-                        if (boardFormError) {
-                          setBoardFormError(null)
-                        }
-                      }}
-                      placeholder="Sprint planning"
-                      maxLength={80}
-                      data-testid="board-name-input"
-                    />
-                  </label>
-                  <label className="board-field">
-                    <span>Description</span>
-                    <textarea
-                      value={newBoardDescription}
-                      onChange={(event) => {
-                        setNewBoardDescription(event.target.value)
-                        if (boardFormError) {
-                          setBoardFormError(null)
-                        }
-                      }}
-                      placeholder="Optional board summary"
-                      rows={3}
-                      maxLength={240}
-                      data-testid="board-description-input"
-                    />
-                  </label>
-                  {boardFormError ? (
-                    <p className="error-text" data-testid="board-form-error">
-                      {boardFormError}
-                    </p>
-                  ) : null}
-                  <button
-                    type="submit"
-                    className="button-icon button-primary with-tooltip tooltip-bottom board-create-icon-button"
-                    title="Create board"
-                    data-tooltip="Create board"
-                    aria-label="Create board"
-                    data-testid="create-board-button"
-                  >
-                    <Plus size={16} />
-                  </button>
-                </form>
+                />
                 {shareDialogBoardId && shareDialogBoardMeta ? (
-                  <section className="share-dialog-card" data-testid="share-dialog">
-                    <div className="share-dialog-header">
-                      <h4>Share "{shareDialogBoardMeta.name}"</h4>
-                      <button type="button" className="button-icon" onClick={closeShareDialog} aria-label="Close share dialog">
-                        <X size={14} />
-                      </button>
-                    </div>
-                    <form
-                      className="share-form"
-                      onSubmit={(event) => {
-                        event.preventDefault()
-                        void submitShareInvite()
-                      }}
-                      data-testid="share-board-form"
-                    >
-                      <label className="board-field">
-                        <span>Invite by email</span>
-                        <input
-                          type="email"
-                          value={shareEmail}
-                          onChange={(event) => {
-                            setShareEmail(event.target.value)
-                            if (shareError) {
-                              setShareError(null)
-                            }
-                          }}
-                          placeholder="collaborator@example.com"
-                          data-testid="share-email-input"
-                        />
-                      </label>
-                      <label className="board-field">
-                        <span>Permission</span>
-                        <select
-                          value={shareRole}
-                          onChange={(event) =>
-                            setShareRole(event.target.value === 'view' ? 'view' : 'edit')
-                          }
-                          data-testid="share-role-select"
-                        >
-                          <option value="edit">Can edit</option>
-                          <option value="view">Read only</option>
-                        </select>
-                      </label>
-                      <label className="board-field">
-                        <span>Anyone with URL</span>
-                        <select
-                          value={shareLinkRole}
-                          onChange={(event) =>
-                            setShareLinkRole(normalizeLinkAccessRole(event.target.value))
-                          }
-                          data-testid="share-link-role-select"
-                        >
-                          <option value="restricted">Restricted</option>
-                          <option value="edit">Can edit</option>
-                          <option value="view">Read only</option>
-                        </select>
-                      </label>
-                      <button
-                        type="button"
-                        className="primary-button"
-                        onClick={() => {
-                          void submitLinkSharingUpdate()
-                        }}
-                        disabled={isShareSubmitting}
-                        data-testid="share-link-role-submit-button"
-                      >
-                        {isShareSubmitting ? 'Updating…' : 'Update URL access'}
-                      </button>
-                      <label className="board-field">
-                        <span>Board URL</span>
-                        <input value={shareDialogBoardUrl} readOnly data-testid="share-link-url-input" />
-                      </label>
-                      <button
-                        type="button"
-                        className="button-icon with-tooltip tooltip-bottom board-list-action-button"
-                        title="Copy board URL"
-                        data-tooltip="Copy URL"
-                        aria-label="Copy board URL"
-                        data-testid="share-link-copy-button"
-                        onClick={() => {
-                          void navigator.clipboard
-                            .writeText(shareDialogBoardUrl)
-                            .then(() => {
-                              setShareStatus('Board URL copied.')
-                            })
-                            .catch(() => {
-                              setShareError('Unable to copy board URL.')
-                            })
-                        }}
-                      >
-                        <Copy size={14} />
-                      </button>
-                      {shareError ? (
-                        <p className="error-text" data-testid="share-error">
-                          {shareError}
-                        </p>
-                      ) : null}
-                      {shareStatus ? (
-                        <p className="panel-note" data-testid="share-status">
-                          {shareStatus}
-                        </p>
-                      ) : null}
-                      <button
-                        type="submit"
-                        className="primary-button"
-                        disabled={isShareSubmitting}
-                        data-testid="share-submit-button"
-                      >
-                        {isShareSubmitting ? 'Sharing…' : 'Share'}
-                      </button>
-                    </form>
-                    <div className="share-collaborators">
-                      <h5>Collaborators</h5>
-                      {shareDialogBoardMeta.sharedWith.length === 0 ? (
-                        <p className="panel-note">No collaborators yet.</p>
-                      ) : (
-                        shareDialogBoardMeta.sharedWith.map((collaboratorId) => (
-                          <div
-                            key={collaboratorId}
-                            className="share-collaborator-row"
-                            data-testid={`share-collaborator-${collaboratorId}`}
-                          >
-                            <span className="share-collaborator-id">{collaboratorId}</span>
-                            <span
-                              className="panel-note"
-                              data-testid={`share-collaborator-role-${collaboratorId}`}
-                            >
-                              {shareDialogBoardMeta.sharedRoles[collaboratorId] === 'view'
-                                ? 'Read only'
-                                : 'Can edit'}
-                            </span>
-                            <button
-                              type="button"
-                              className="button-icon with-tooltip tooltip-bottom board-list-action-button"
-                              disabled={isShareSubmitting}
-                              onClick={() => void revokeSharedCollaborator(shareDialogBoardMeta.id, collaboratorId)}
-                              title="Revoke access"
-                              data-tooltip="Revoke access"
-                              aria-label={`Revoke access for ${collaboratorId}`}
-                              data-testid={`revoke-collaborator-${collaboratorId}`}
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                    <div className="share-collaborators">
-                      <h5>Access requests</h5>
-                      {pendingAccessRequests.length === 0 ? (
-                        <p className="panel-note">No pending requests.</p>
-                      ) : (
-                        pendingAccessRequests.map((request) => (
-                          <div
-                            key={request.userId}
-                            className="share-collaborator-row"
-                            data-testid={`share-access-request-${request.userId}`}
-                          >
-                            <span className="share-collaborator-id">
-                              {request.email || request.userId}
-                            </span>
-                            <span className="panel-note">
-                              Requested {request.role === 'view' ? 'read only' : 'edit'} access
-                            </span>
-                            <button
-                              type="button"
-                              className="button-icon with-tooltip tooltip-bottom board-list-action-button"
-                              disabled={isShareSubmitting}
-                              onClick={() =>
-                                void approveAccessRequest(
-                                  shareDialogBoardMeta.id,
-                                  request.userId,
-                                  request.role,
-                                )
-                              }
-                              title="Approve access request"
-                              data-tooltip="Approve"
-                              aria-label={`Approve access request for ${request.email || request.userId}`}
-                              data-testid={`approve-access-request-${request.userId}`}
-                            >
-                              <Plus size={14} />
-                            </button>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </section>
+                  <BoardSharingCard
+                    boardMeta={shareDialogBoardMeta}
+                    isShareSubmitting={isShareSubmitting}
+                    onApproveAccessRequest={(targetBoardId, requesterId, role) => {
+                      void approveAccessRequest(targetBoardId, requesterId, role)
+                    }}
+                    onClose={closeShareDialog}
+                    onCopyBoardUrl={handleShareLinkCopy}
+                    onLinkRoleChange={handleShareLinkRoleChange}
+                    onRevokeCollaborator={(targetBoardId, collaboratorId) => {
+                      void revokeSharedCollaborator(targetBoardId, collaboratorId)
+                    }}
+                    onShareEmailChange={handleShareEmailChange}
+                    onShareInvite={() => {
+                      void submitShareInvite()
+                    }}
+                    onShareRoleChange={handleShareRoleChange}
+                    onSubmitLinkSharingUpdate={() => {
+                      void submitLinkSharingUpdate()
+                    }}
+                    pendingAccessRequests={pendingAccessRequests}
+                    shareDialogBoardUrl={shareDialogBoardUrl}
+                    shareEmail={shareEmail}
+                    shareError={shareError}
+                    shareLinkRole={shareLinkRole}
+                    shareRole={shareRole}
+                    shareStatus={shareStatus}
+                  />
                 ) : null}
               </div>
             </div>

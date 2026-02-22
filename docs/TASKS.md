@@ -1,7 +1,7 @@
 # TASKS.md
 
 Date initialized: 2026-02-16
-Last updated: 2026-02-22 (LLM/runtime gap closure + BoardPageRuntime primitive/helper extraction)
+Last updated: 2026-02-22 (LLM/runtime gap closure + BoardPageRuntime primitive/helper + panels extraction)
 Cadence: half-day sprint checkpoints
 Source: `AGENTS.md` + `G4 Week 1 - CollabBoard-requirements.pdf`
 
@@ -23,6 +23,7 @@ Source: `AGENTS.md` + `G4 Week 1 - CollabBoard-requirements.pdf`
 | T-145 | E | Extract sticky/shape/text canvas renderers from `BoardPageRuntime.tsx` into dedicated renderer modules while preserving runtime behavior | Done | 2026-02-22 |
 | T-146 | B | Close requirements-driven AI/runtime gaps: remove deterministic sticky fallback path, expose journey/2x3/space-evenly tools, enforce runtime latency budgets, and tighten presence publish cadence | Done | 2026-02-22 |
 | T-147 | E | Extract runtime constants/pure helpers into `boardPageRuntimePrimitives.tsx` and keep guardrail tests refactor-safe via shared source aggregation helper | Done | 2026-02-22 |
+| T-148 | E | Extract boards-side UI sections into reusable components (`BoardCreateForm`, `BoardSharingCard`) and keep source guardrails aligned with `boardPageSource` aggregation | Done | 2026-02-22 |
 | T-130 | D | Split task tracking into `TASKS.md` (active/backlog) + `ARCHIVE.md` (history) | Done | 2026-02-20 |
 | T-131 | D | Add explicit Golden Rule: E2E-first (hot-fix exception documented) to `AGENTS.md` | Done | 2026-02-20 |
 | T-132 | D | Add GitHub Actions deploy workflow for `main` and CI quality gate | Done | 2026-02-20 |
@@ -78,3 +79,4 @@ Rule: implement only tasks that map to `docs/requirements.md` (MVP hard gate, bo
 - `T-139`: `app/test/cursor-publish-policy.test.mjs`
 - `T-146`: `functions/test/requirements-ai-command-capabilities.test.js` (`AI-CMDS-014`, `AI-CMDS-015`, `AI-CMDS-016`, `AI-CMDS-018`, `AI-CMDS-019`), `functions/test/requirements-tool-schema.test.js` (FR-16 layout/complex tools), `functions/test/glm-provider-fallback.test.js` (timeout override), `app/test/requirements-performance-thresholds.test.mjs` + `app/test/cursor-publish-policy.test.mjs` (cursor/presence cadence)
 - `T-147`: `app/test/requirements-g4-feature-coverage.test.mjs`, `app/test/requirements-transforms-and-text.test.mjs`, `app/test/helpers/boardPageSource.mjs`
+- `T-148`: `app/src/pages/boardPanels.tsx`, `app/test/helpers/boardPageSource.mjs`, `app/test/requirements-g4-feature-coverage.test.mjs`
