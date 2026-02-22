@@ -42,7 +42,7 @@ const COLOR_OR_HEX_PATTERN = `(?:${COLOR_NAME_ALTERNATION}|#(?:[0-9a-f]{3}|[0-9a
 const COLOR_NAME_PATTERN = `(?:${COLOR_NAME_ALTERNATION})`
 const CREATE_VERB_PATTERN = '(?:add(?:ed)?|create(?:d)?|make|generate|build|insert|put)'
 const BOARD_MUTATION_VERB_REGEX =
-  /\b(?:add|create|make|generate|build|insert|put|arrange|organize|organise|move|resize|rotate|delete|duplicate|connect|group|cluster|layout|map|draft|brainstorm|draw|outline|change|set|update|recolor|edit|rename|retitle|align|distribute|space|share)\b/i
+  /\b(?:add(?:ed)?|create(?:d)?|make|generate|build|insert|put|arrange|organize|organise|move|moving|moved|resize|resized|rotate|delete|duplicate|connect|group|cluster|layout|map|draft|brainstorm|draw|outline|chang(?:e|ing|ed)|set|update|updating|updated|recolor|edit|rename|retitle|align|distribute|space|share)\b/i
 const BOARD_ARTIFACT_REGEX =
   /\b(?:board|whiteboard|sticky(?:\s*note)?s?|sticker(?:s)?|notes?|frame(?:s)?|shape(?:s)?|connector(?:s)?|canvas|matrix|map|roadmap|retrospective|swot|journey(?:\s+map)?|mind\s*map|business\s+model\s+canvas|flow\s*chart|workflow|process\s+flow)\b/i
 const STRUCTURED_BOARD_ARTIFACT_REGEX =
@@ -309,12 +309,16 @@ const normalizeStickyVocabulary = (value) =>
   String(value || '')
     .replace(/\bsticikies\b/gi, 'sticky notes')
     .replace(/\bstickies\b/gi, 'sticky notes')
+    .replace(/\bstickie\b/gi, 'sticky note')
     .replace(/\bstikies\b/gi, 'sticky notes')
+    .replace(/\bstikie\b/gi, 'sticky note')
     .replace(/\bstickys\b/gi, 'sticky notes')
     .replace(/\bstiky\b/gi, 'sticky')
     .replace(/\bstikcy\b/gi, 'sticky')
 const normalizeCommandForPlan = (value) =>
   normalizeStickyVocabulary(normalizeCommand(value))
+    .replace(/\bchaneg\b/gi, 'change')
+    .replace(/\bchnage\b/gi, 'change')
     .replace(/\borganise\b/gi, 'organize')
     .replace(/\bcolour\b/gi, 'color')
 const isOrganizeByColorCommand = (lowerCommand) =>
@@ -336,7 +340,7 @@ const NUMBER_WORD_MAP = {
 }
 const COUNT_TOKEN_ALTERNATION = `\\d+|${Object.keys(NUMBER_WORD_MAP).join('|')}`
 const INSTRUCTION_ONLY_TEXT_REGEX =
-  /^(?:(?:please|can|could|would|you|me|us|to|a|an|the|some|new|command|comand|cmd|add|added|create|created|make|generate|build|insert|put|sticky|stickies|sticker|note|notes)+\s*)+$/
+  /^(?:(?:please|can|could|would|you|me|us|to|a|an|the|some|new|command|comand|cmd|add|added|create|created|make|generate|build|insert|put|sticky|stickies|stickie|stikie|sticker|note|notes)+\s*)+$/
 
 const parseStickyCountToken = (token) => {
   const normalized = String(token || '').toLowerCase().trim()
@@ -584,6 +588,162 @@ const resolveColorMutationTarget = (state = [], intent) => {
   }
 
   return winner
+}
+
+const normalizeColorMutationObjectType = (rawType) => {
+  const normalized = normalizeSearchText(rawType)
+  if (!normalized) {
+    return null
+  }
+  if (/sticky|sticker|note/.test(normalized)) {
+    return 'stickyNote'
+  }
+  if (/shape/.test(normalized)) {
+    return 'shape'
+  }
+  if (/frame/.test(normalized)) {
+    return 'frame'
+  }
+  if (/object|item/.test(normalized)) {
+    return 'any'
+  }
+  return null
+}
+
+const parseBulkColorMutationIntent = (command) => {
+  const normalized = normalizeCommandForPlan(command).toLowerCase()
+  if (!normalized) {
+    return null
+  }
+
+  const hasMutationVerb = /\b(?:change|changing|changed|set|update|recolor|edit|turn|make)\b/i.test(normalized)
+  if (!hasMutationVerb || !/\ball\b/i.test(normalized)) {
+    return null
+  }
+
+  const allColorThenTypePattern = new RegExp(
+    `\\ball\\s+(${COLOR_OR_HEX_PATTERN})\\s+(sticky(?:\\s*note)?s?|stickers?|notes?|shapes?|frames?|objects?|items?)\\b(?:\\s+(?:to|into|as)\\s+|\\s+color\\s+to\\s+|\\s+to\\s+color\\s+)(?:the\\s+)?(${COLOR_OR_HEX_PATTERN})\\b`,
+    'i',
+  )
+  const allTypeFromToPattern = new RegExp(
+    `\\ball\\s+(sticky(?:\\s*note)?s?|stickers?|notes?|shapes?|frames?|objects?|items?)\\b\\s+from\\s+(${COLOR_OR_HEX_PATTERN})\\s+to\\s+(${COLOR_OR_HEX_PATTERN})\\b`,
+    'i',
+  )
+  const allTypeToPattern = new RegExp(
+    `\\ball\\s+(sticky(?:\\s*note)?s?|stickers?|notes?|shapes?|frames?|objects?|items?)\\b(?:\\s+(?:to|into|as)\\s+|\\s+color\\s+to\\s+|\\s+to\\s+color\\s+)(?:the\\s+)?(${COLOR_OR_HEX_PATTERN})\\b`,
+    'i',
+  )
+
+  const colorThenTypeMatch = normalized.match(allColorThenTypePattern)
+  if (colorThenTypeMatch) {
+    const objectType = normalizeColorMutationObjectType(colorThenTypeMatch[2])
+    if (!objectType) {
+      return null
+    }
+    return {
+      objectType,
+      sourceColor: colorThenTypeMatch[1],
+      targetColor: colorThenTypeMatch[3],
+    }
+  }
+
+  const typeFromToMatch = normalized.match(allTypeFromToPattern)
+  if (typeFromToMatch) {
+    const objectType = normalizeColorMutationObjectType(typeFromToMatch[1])
+    if (!objectType) {
+      return null
+    }
+    return {
+      objectType,
+      sourceColor: typeFromToMatch[2],
+      targetColor: typeFromToMatch[3],
+    }
+  }
+
+  const typeToMatch = normalized.match(allTypeToPattern)
+  if (typeToMatch) {
+    const objectType = normalizeColorMutationObjectType(typeToMatch[1])
+    if (!objectType) {
+      return null
+    }
+    return {
+      objectType,
+      sourceColor: undefined,
+      targetColor: typeToMatch[2],
+    }
+  }
+
+  return null
+}
+
+const normalizeResolvedColor = (value) => String(toColor(value, String(value || '').trim())).toLowerCase().trim()
+
+const resolveBulkColorMutationTargets = (state = [], intent) => {
+  const sourceColor = normalizeResolvedColor(intent?.sourceColor)
+  const hasSourceColor = sourceColor.length > 0
+
+  const allowedTypes =
+    intent?.objectType && intent.objectType !== 'any'
+      ? new Set([intent.objectType])
+      : COLOR_MUTABLE_OBJECT_TYPES
+
+  return state.filter((candidate) => {
+    if (!candidate || !allowedTypes.has(candidate.type)) {
+      return false
+    }
+    if (!hasSourceColor) {
+      return true
+    }
+    const candidateColor = normalizeResolvedColor(candidate.color || '')
+    return candidateColor === sourceColor
+  })
+}
+
+const toBulkColorMutationLabel = (objectType, count) => {
+  const safeCount = Math.max(1, parseNumber(count, 1))
+  if (objectType === 'stickyNote') return safeCount === 1 ? 'sticky note' : 'sticky notes'
+  if (objectType === 'shape') return safeCount === 1 ? 'shape' : 'shapes'
+  if (objectType === 'frame') return safeCount === 1 ? 'frame' : 'frames'
+  return safeCount === 1 ? 'object' : 'objects'
+}
+
+const tryApplyBulkColorMutationFallback = async (ctx, command) => {
+  const intent = parseBulkColorMutationIntent(command)
+  if (!intent) {
+    return null
+  }
+
+  const targets = resolveBulkColorMutationTargets(ctx.state, intent)
+  if (targets.length === 0) {
+    return null
+  }
+
+  let changedCount = 0
+  for (const target of targets) {
+    const updated = await changeColor(ctx, {
+      objectId: target.id,
+      color: intent.targetColor,
+    })
+    if (updated) {
+      changedCount += 1
+    }
+  }
+
+  if (changedCount === 0) {
+    return null
+  }
+
+  const typeLabel = toBulkColorMutationLabel(intent.objectType, changedCount)
+  const message = sanitizeAiAssistantResponse(
+    intent.sourceColor
+      ? `Changed ${changedCount} ${typeLabel} from ${intent.sourceColor} to ${intent.targetColor}.`
+      : `Changed ${changedCount} ${typeLabel} to ${intent.targetColor}.`,
+  )
+  return {
+    count: changedCount,
+    color: toColor(intent.targetColor, intent.targetColor),
+    message,
+  }
 }
 
 const stripLeadingCreateInstruction = (value) =>
@@ -1648,6 +1808,362 @@ const parseStickyCommand = (command) => {
   }
 }
 
+const parseSubjectColorFromCommand = (normalizedCommand, subjectPattern) => {
+  const colorBeforeSubject = normalizedCommand.match(
+    new RegExp(`\\b(${COLOR_NAME_ALTERNATION})\\s+${subjectPattern}\\b`, 'i'),
+  )
+  if (colorBeforeSubject) {
+    return colorBeforeSubject[1]?.toLowerCase()
+  }
+
+  const colorAfterSubject = normalizedCommand.match(
+    new RegExp(`\\b${subjectPattern}\\b(?:\\s+in)?\\s+(${COLOR_NAME_ALTERNATION})\\b`, 'i'),
+  )
+  if (colorAfterSubject) {
+    return colorAfterSubject[1]?.toLowerCase()
+  }
+
+  return undefined
+}
+
+const parseFramesWithStickiesCommand = (command) => {
+  const normalized = normalizeStickyVocabulary(normalizeCommandForPlan(command))
+  if (!normalized) {
+    return null
+  }
+
+  const hasCreateIntent =
+    new RegExp(CREATE_VERB_PATTERN, 'i').test(normalized) ||
+    /\b(?:arrange|layout|organize|organise|group|cluster)\b/i.test(normalized)
+  if (!hasCreateIntent) {
+    return null
+  }
+  if (!/\bframes?\b/i.test(normalized) || !/\b(?:sticky(?:\s*note)?|sticker|note)s?\b/i.test(normalized)) {
+    return null
+  }
+
+  const frameCountMatch = normalized.match(new RegExp(`\\b(${COUNT_TOKEN_ALTERNATION})\\s+frames?\\b`, 'i'))
+  if (!frameCountMatch) {
+    return null
+  }
+
+  const stickyCountPatterns = [
+    new RegExp(
+      `\\b(?:with\\s+)?(${COUNT_TOKEN_ALTERNATION})\\s+(?:different\\s+|distinct\\s+|colorful\\s+)?(?:sticky(?:\\s*note)?|sticker|note)s?\\s+(?:in|inside)\\s+each\\b`,
+      'i',
+    ),
+    new RegExp(
+      `\\b(${COUNT_TOKEN_ALTERNATION})\\s+(?:different\\s+|distinct\\s+|colorful\\s+)?(?:sticky(?:\\s*note)?|sticker|note)s?\\s+(?:per|for)\\s+frame\\b`,
+      'i',
+    ),
+    new RegExp(
+      `\\beach\\s+frames?\\s+(?:with|has|having)\\s+(${COUNT_TOKEN_ALTERNATION})\\s+(?:different\\s+|distinct\\s+|colorful\\s+)?(?:sticky(?:\\s*note)?|sticker|note)s?\\b`,
+      'i',
+    ),
+  ]
+
+  let stickyCountMatch = null
+  for (const pattern of stickyCountPatterns) {
+    stickyCountMatch = normalized.match(pattern)
+    if (stickyCountMatch) {
+      break
+    }
+  }
+  if (!stickyCountMatch) {
+    return null
+  }
+
+  const frameCount = parseStickyCountToken(frameCountMatch[1]) || 0
+  const stickiesPerFrame = parseStickyCountToken(stickyCountMatch[1]) || 0
+  if (frameCount < 1 || stickiesPerFrame < 1) {
+    return null
+  }
+
+  const frameColor = parseSubjectColorFromCommand(normalized, 'frames?')
+  const stickyColor = parseSubjectColorFromCommand(
+    normalized,
+    '(?:sticky(?:\\s*note)?|sticker|note)s?',
+  )
+  const colorMentions = normalized.match(new RegExp(`\\b(${COLOR_NAME_ALTERNATION})\\b`, 'gi')) || []
+  const sharedColor = colorMentions.length > 0 ? String(colorMentions[0]).toLowerCase() : undefined
+  const usePalette =
+    /\b(?:different|varied|various|unique|multiple|assorted|rainbow|colorful)\s+colors?\b/i.test(normalized) ||
+    /\bcolors?\b/i.test(normalized)
+
+  return {
+    frameCount,
+    stickiesPerFrame,
+    frameColor,
+    stickyColor,
+    sharedColor,
+    usePalette,
+  }
+}
+
+const getObjectsCreatedSinceBaseline = (ctx, baselineObjectIds) => {
+  if (!ctx || !Array.isArray(ctx.state)) {
+    return []
+  }
+  if (!(baselineObjectIds instanceof Set)) {
+    return ctx.state.filter(Boolean)
+  }
+  return ctx.state.filter((item) => item && !baselineObjectIds.has(item.id))
+}
+
+const resolveTemplateColorName = ({
+  explicitColor,
+  sharedColor,
+  usePalette,
+  sequence,
+  index,
+  fallbackColor,
+}) => {
+  if (explicitColor) {
+    return explicitColor
+  }
+  if (usePalette && Array.isArray(sequence) && sequence.length > 0) {
+    return sequence[Math.max(0, index) % sequence.length]
+  }
+  if (sharedColor) {
+    return sharedColor
+  }
+  return fallbackColor
+}
+
+const tryApplyFramesWithStickiesFallback = async (ctx, command, baselineObjectIds = null) => {
+  const spec = parseFramesWithStickiesCommand(command)
+  if (!spec) {
+    return null
+  }
+
+  const createdObjects = getObjectsCreatedSinceBaseline(ctx, baselineObjectIds)
+  const createdFrames = createdObjects.filter((item) => item.type === 'frame')
+  const createdStickies = createdObjects.filter((item) => item.type === 'stickyNote')
+  const frameCount = spec.frameCount
+  const stickiesPerFrame = spec.stickiesPerFrame
+  const stickyTargetCount = frameCount * stickiesPerFrame
+
+  const anchor =
+    resolvePlacementAnchor(ctx.commandPlacement) || resolveViewportCenterFromPlacement(ctx.commandPlacement) || { x: 640, y: 360 }
+  const frameWidth = Math.max(420, Math.min(760, 180 + stickiesPerFrame * 190))
+  const frameHeight = Math.max(300, Math.min(560, 210 + Math.ceil(stickiesPerFrame / 3) * 140))
+  const columns = Math.min(3, Math.max(1, frameCount))
+  const rows = Math.ceil(frameCount / columns)
+  const frameGapX = Math.max(72, Math.round(frameWidth * 0.16))
+  const frameGapY = Math.max(80, Math.round(frameHeight * 0.18))
+  const totalWidth = columns * frameWidth + Math.max(0, columns - 1) * frameGapX
+  const totalHeight = rows * frameHeight + Math.max(0, rows - 1) * frameGapY
+  const startX = Math.round(anchor.x - totalWidth / 2)
+  const startY = Math.round(anchor.y - totalHeight / 2)
+
+  const resolvedFrames = []
+  for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+    const row = Math.floor(frameIndex / columns)
+    const col = frameIndex % columns
+    const frameX = Math.round(startX + col * (frameWidth + frameGapX))
+    const frameY = Math.round(startY + row * (frameHeight + frameGapY))
+    const frameColor = resolveTemplateColorName({
+      explicitColor: spec.frameColor,
+      sharedColor: spec.frameColor ? undefined : spec.sharedColor,
+      usePalette: spec.usePalette && !spec.frameColor,
+      sequence: FRAME_TEMPLATE_COLOR_SEQUENCE,
+      index: frameIndex,
+      fallbackColor: 'gray',
+    })
+
+    const existingFrame = createdFrames[frameIndex]
+    if (existingFrame) {
+      await moveObject(ctx, {
+        objectId: existingFrame.id,
+        x: frameX,
+        y: frameY,
+      })
+      await resizeObject(ctx, {
+        objectId: existingFrame.id,
+        width: frameWidth,
+        height: frameHeight,
+      })
+
+      const desiredFrameColor = toColor(frameColor, '#e2e8f0')
+      if (normalizeResolvedColor(existingFrame.color || '') !== normalizeResolvedColor(desiredFrameColor)) {
+        await changeColor(ctx, {
+          objectId: existingFrame.id,
+          color: frameColor,
+        })
+      }
+      resolvedFrames.push(existingFrame)
+      continue
+    }
+
+    const createdFrame = await createFrame(ctx, {
+      title: `Frame ${frameIndex + 1}`,
+      color: frameColor,
+      x: frameX,
+      y: frameY,
+      width: frameWidth,
+      height: frameHeight,
+    })
+    resolvedFrames.push(createdFrame)
+  }
+
+  const stickyPool = [...createdStickies]
+  while (stickyPool.length < stickyTargetCount) {
+    const sticky = await createStickyNote(ctx, {
+      text: `Note ${stickyPool.length + 1}`,
+      shapeType: 'rectangle',
+    })
+    stickyPool.push(sticky)
+  }
+
+  const stickySize = STICKY_SHAPE_SIZES.rectangle
+  for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+    const frame = resolvedFrames[frameIndex]
+    if (!frame) {
+      continue
+    }
+
+    const frameX = parseNumber(frame.position?.x, startX)
+    const frameY = parseNumber(frame.position?.y, startY)
+    const width = parseNumber(frame.size?.width, frameWidth)
+    const height = parseNumber(frame.size?.height, frameHeight)
+    const frameZIndex = parseNumber(frame.zIndex, 0)
+    const stickyColor = resolveTemplateColorName({
+      explicitColor: spec.stickyColor,
+      sharedColor: spec.stickyColor ? undefined : spec.sharedColor,
+      usePalette: spec.usePalette && !spec.stickyColor,
+      sequence: STICKY_TEMPLATE_COLOR_SEQUENCE,
+      index: frameIndex,
+      fallbackColor: 'yellow',
+    })
+
+    const stickyColumns = Math.min(3, Math.max(1, Math.ceil(Math.sqrt(stickiesPerFrame))))
+    const stickyRows = Math.ceil(stickiesPerFrame / stickyColumns)
+    const paddingX = 24
+    const paddingTop = 56
+    const paddingBottom = 24
+    const innerWidth = Math.max(stickySize.width, width - paddingX * 2)
+    const innerHeight = Math.max(stickySize.height, height - paddingTop - paddingBottom)
+    const stickyGapX = stickyColumns > 1 ? Math.max(16, Math.floor((innerWidth - stickySize.width) / (stickyColumns - 1))) : 0
+    const stickyGapY = stickyRows > 1 ? Math.max(16, Math.floor((innerHeight - stickySize.height) / (stickyRows - 1))) : 0
+    const minX = Math.round(frameX + paddingX)
+    const maxX = Math.round(frameX + width - paddingX - stickySize.width)
+    const minY = Math.round(frameY + paddingTop)
+    const maxY = Math.round(frameY + height - paddingBottom - stickySize.height)
+
+    for (let stickyIndex = 0; stickyIndex < stickiesPerFrame; stickyIndex += 1) {
+      const poolIndex = frameIndex * stickiesPerFrame + stickyIndex
+      const sticky = stickyPool[poolIndex]
+      if (!sticky) {
+        continue
+      }
+
+      const col = stickyIndex % stickyColumns
+      const row = Math.floor(stickyIndex / stickyColumns)
+      const unclampedX = Math.round(frameX + paddingX + col * stickyGapX)
+      const unclampedY = Math.round(frameY + paddingTop + row * stickyGapY)
+      const nextX = Math.max(minX, Math.min(unclampedX, maxX))
+      const nextY = Math.max(minY, Math.min(unclampedY, maxY))
+
+      await moveObject(ctx, {
+        objectId: sticky.id,
+        x: nextX,
+        y: nextY,
+      })
+
+      if (normalizeResolvedColor(sticky.color || '') !== normalizeResolvedColor(toColor(stickyColor, '#fde68a'))) {
+        await changeColor(ctx, {
+          objectId: sticky.id,
+          color: stickyColor,
+        })
+      }
+
+      if (parseNumber(sticky.zIndex, 0) <= frameZIndex) {
+        const patch = {
+          zIndex: getNextZIndex(ctx.state),
+          updatedAt: nowMs(),
+          updatedBy: ctx.userId,
+          version: (sticky.version || 0) + 1,
+        }
+        await writeObject({ boardId: ctx.boardId, objectId: sticky.id, payload: patch, merge: true })
+        Object.assign(sticky, patch)
+        ctx.executedTools.push({ tool: 'bringObjectToFront', id: sticky.id })
+      }
+    }
+  }
+
+  const message = sanitizeAiAssistantResponse(
+    `Created ${frameCount} frames with ${stickiesPerFrame} sticky notes in each.`,
+  )
+  return {
+    frameCount,
+    stickyCount: stickyTargetCount,
+    message,
+  }
+}
+
+const resolveSingleStickyFastPathArgs = (command) => {
+  if (!isSimpleSingleStickyCommand(command)) {
+    return null
+  }
+
+  const normalized = normalizeCommandForPlan(command).toLowerCase()
+  if (
+    /\band\b/.test(normalized) &&
+    /\band\b.*\b(?:sticky(?:\s*note)?|sticker|note|circle|diamond|triangle|rectangle|box|shape|frame|connector)\b/.test(
+      normalized,
+    )
+  ) {
+    return null
+  }
+
+  const parsed = parseStickyCommand(command)
+  if (!parsed || parseNumber(parsed.count, 0) !== 1) {
+    return null
+  }
+
+  const firstText = Array.isArray(parsed.texts) ? sanitizeText(parsed.texts[0]) : ''
+  const args = {
+    text: firstText || 'New sticky note',
+    shapeType: normalizeShapeType(parsed.shapeType, 'rectangle'),
+  }
+
+  if (parsed.color) {
+    args.color = parsed.color
+  }
+  if (parsed.position) {
+    args.position = parsed.position
+  }
+  if (Number.isFinite(Number(parsed.x))) {
+    args.x = Number(parsed.x)
+  }
+  if (Number.isFinite(Number(parsed.y))) {
+    args.y = Number(parsed.y)
+  }
+
+  return args
+}
+
+const executeSingleStickyTextOnlyFallback = async (ctx, command, llmTextResponse = '') => {
+  const fallbackArgs = resolveSingleStickyFastPathArgs(command)
+  if (!fallbackArgs) {
+    return null
+  }
+
+  await executeLlmToolCall(ctx, 'createStickyNote', fallbackArgs, {
+    userPlacementIntent: Boolean(ctx.userPlacementIntent),
+  })
+  ctx.executedTools.push({
+    tool: 'singleStickyTextOnlyFallback',
+    parserDriven: true,
+  })
+
+  const fallbackMessage = sanitizeAiAssistantResponse(llmTextResponse) || 'Created one sticky note.'
+  return {
+    message: fallbackMessage,
+    aiResponse: fallbackMessage,
+  }
+}
+
 const parseCompoundStickyCreateOperations = (command) => {
   const normalized = normalizeStickyVocabulary(normalizeCommand(command))
   console.log('[COMPOUND] Input command:', command)
@@ -2317,6 +2833,11 @@ const changeColor = async (ctx, args) => {
 }
 
 const tryApplyColorMutationFallback = async (ctx, command) => {
+  const bulkMutation = await tryApplyBulkColorMutationFallback(ctx, command)
+  if (bulkMutation) {
+    return bulkMutation
+  }
+
   const intent = extractColorMutationIntent(command)
   if (!intent) {
     return null
@@ -3427,8 +3948,14 @@ const executeViaLLM = async (ctx, command) => {
   }
 
   let expectedStickyCount = countPlannedStickyOperations(llmPass.toolCalls)
+  let structuralFallbackResult = null
 
   if (llmPass.toolCalls.length === 0 && boardMutationIntent) {
+    const singleStickyFallbackResult = await executeSingleStickyTextOnlyFallback(ctx, command, llmPass.textResponse)
+    if (singleStickyFallbackResult) {
+      return singleStickyFallbackResult
+    }
+
     const retryCommand = buildCompoundToolRetryCommand(command, llmPass.textResponse)
     const retryPass = await requestLlmPass(retryCommand)
     if (retryPass.toolCalls.length > 0 || retryPass.textResponse) {
@@ -3439,6 +3966,14 @@ const executeViaLLM = async (ctx, command) => {
 
   if (llmPass.toolCalls.length === 0) {
     if (boardMutationIntent) {
+      structuralFallbackResult = await tryApplyFramesWithStickiesFallback(ctx, command, baselineObjectIds)
+      if (structuralFallbackResult) {
+        return {
+          message: structuralFallbackResult.message,
+          aiResponse: structuralFallbackResult.message,
+        }
+      }
+
       const colorMutationFallback = await tryApplyColorMutationFallback(ctx, command)
       if (colorMutationFallback) {
         return {
@@ -3503,6 +4038,13 @@ const executeViaLLM = async (ctx, command) => {
     }
   }
 
+  if (boardMutationIntent) {
+    structuralFallbackResult = await tryApplyFramesWithStickiesFallback(ctx, command, baselineObjectIds)
+    if (structuralFallbackResult) {
+      boardMutationApplied = buildBoardMutationToken(ctx.state) !== baselineMutationToken
+    }
+  }
+
   if (boardMutationIntent && !boardMutationApplied) {
     const colorMutationFallback = await tryApplyColorMutationFallback(ctx, command)
     if (colorMutationFallback) {
@@ -3529,6 +4071,12 @@ const executeViaLLM = async (ctx, command) => {
   }
 
   console.log('LLM execution completed, tools executed:', llmPass.toolCalls.length)
+  if (!llmPass.textResponse && structuralFallbackResult?.message) {
+    return {
+      message: structuralFallbackResult.message,
+      aiResponse: structuralFallbackResult.message,
+    }
+  }
   return llmPass.textResponse
     ? {
         message: llmPass.textResponse,

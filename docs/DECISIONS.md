@@ -474,6 +474,24 @@ Purpose: log system decisions, alternatives, rationale, and change history.
 - Consequences: Multi-create AI outputs remain visually discoverable and editable without manual drag separation.
 - Revisit Trigger: If advanced layout commands require dense stacking behavior as a first-class mode.
 
+### D-051
+- Date: 2026-02-22
+- Status: Accepted
+- Decision: Add deterministic structural recovery for `N frames with M stickies in each` prompts, include frame color in AI tool schema/runtime creation, and support typo-tolerant bulk color mutation commands that target all matching objects (for example, `chaneg color of all stikies to red`).
+- Alternatives Considered: Rely on model tool calls only with no post-execution structural validation; keep single-object color fallback only.
+- Rationale: Users reported partial command fulfillment where stickies were created but frames/colors were missing, and plural color-edit commands updated zero or one object instead of all matches.
+- Consequences: AI command execution now auto-completes missing frame/sticky structure, applies deterministic in-frame layout/colors, and bulk color edits run across all matched objects (with or without source-color filtering) with explicit result feedback.
+- Revisit Trigger: If model reliability improves enough that fallback correction adds unnecessary mutations, or if object selection semantics require user-confirmed bulk edits.
+
+### D-052
+- Date: 2026-02-22
+- Status: Accepted
+- Decision: Keep LLM-first planning and add a parser-backed single-sticky fallback only when the first LLM pass returns text without tool calls, with typo normalization for `stickie`/`stikie` and a mixed-command guard to preserve standard retry behavior.
+- Alternatives Considered: Keep the universal second-pass LLM retry for all text-only create responses; restore deterministic pre-LLM create routing.
+- Rationale: One-sticky commands are frequent and second-pass retries add avoidable latency, while mixed and multi-object prompts still benefit from the existing LLM retry strategy.
+- Consequences: Single-sticky commands recover faster from text-only first passes, typo variants route through the same fast path, and `...and...` mixed object commands keep existing LLM-driven retry semantics.
+- Revisit Trigger: If first-pass tool-call reliability for single-sticky prompts reaches stable high confidence and fallback logic no longer improves latency.
+
 ## Change Log
 - 2026-02-16: Initial decision set created.
 - 2026-02-16: Added auth provider, deployment URL strategy, and error recovery UX decisions.
@@ -511,3 +529,5 @@ Purpose: log system decisions, alternatives, rationale, and change history.
 - 2026-02-22: Added command-profiled compact prompt/tool-routing decision with required tool-call mode for fast compound AI execution.
 - 2026-02-22: Added explicit-user-placement-only preservation decision to keep AI-created objects anchored in active viewport by default.
 - 2026-02-22: Added deterministic sequential AI-create offset decision to prevent overlapping generated objects.
+- 2026-02-22: Added frame-plus-sticky structural recovery, frame color schema/runtime parity, and bulk color mutation fallback decision.
+- 2026-02-22: Added single-sticky text-only fallback decision with typo normalization and mixed-command guard for lower latency.

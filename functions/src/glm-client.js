@@ -82,7 +82,19 @@ const readPositiveInt = (value, fallback) => {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
 }
 
-const normalizeCommand = (command) => String(command || '').toLowerCase().trim()
+const normalizeStickyVocabulary = (value) =>
+  String(value || '')
+    .replace(/\bsticikies\b/gi, 'sticky notes')
+    .replace(/\bstickies\b/gi, 'sticky notes')
+    .replace(/\bstickie\b/gi, 'sticky note')
+    .replace(/\bstikies\b/gi, 'sticky notes')
+    .replace(/\bstikie\b/gi, 'sticky note')
+    .replace(/\bstickys\b/gi, 'sticky notes')
+    .replace(/\bstiky\b/gi, 'sticky')
+    .replace(/\bstikcy\b/gi, 'sticky')
+
+const normalizeCommand = (command) =>
+  normalizeStickyVocabulary(String(command || '').toLowerCase().trim())
 
 const shouldUseFullToolSet = (command) => {
   const normalized = normalizeCommand(command)
