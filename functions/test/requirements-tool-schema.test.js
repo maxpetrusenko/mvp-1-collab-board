@@ -44,4 +44,14 @@ describe('Requirements: AI tool schema completeness', () => {
     assert.ok(!shapeTypeEnum.includes('line'), 'createShape.type enum should not include line')
     assert.ok(connectorStyleEnum.includes('line'), 'createConnector.style enum should still include line')
   })
+
+  it('FR-16 exposes layout and complex-template tool actions', () => {
+    const toolRegistry = require('../src/tool-registry.js')
+    const names = new Set(toolRegistry.TOOL_DEFINITIONS.map((tool) => tool?.function?.name))
+
+    const requiredAdvancedTools = ['createStickyGridTemplate', 'spaceElementsEvenly', 'createJourneyMap']
+    for (const name of requiredAdvancedTools) {
+      assert.ok(names.has(name), `Missing advanced tool definition: ${name}`)
+    }
+  })
 })

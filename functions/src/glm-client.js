@@ -121,11 +121,15 @@ const callProvider = async (provider, requestBody, timeoutMs) => {
  * Call Z.ai GLM-5 API with tool calling support
  * @param {string} userCommand - The user's natural language command
  * @param {object} boardContext - Current board state { state: [], boardId: string }
+ * @param {object} options - Optional runtime controls
+ * @param {number} options.timeoutMs - Optional provider timeout override in milliseconds
  * @returns {Promise<object>} GLM API response
  */
-async function callGLM(userCommand, boardContext) {
+async function callGLM(userCommand, boardContext, options = {}) {
   const systemPrompt = buildSystemPrompt(boardContext)
-  const timeoutMs = readPositiveInt(readEnv('AI_PROVIDER_TIMEOUT_MS', 'ai_provider_timeout_ms'), TIMEOUT_MS)
+  const configuredTimeoutMs = readPositiveInt(readEnv('AI_PROVIDER_TIMEOUT_MS', 'ai_provider_timeout_ms'), TIMEOUT_MS)
+  const timeoutOverrideMs = readPositiveInt(options?.timeoutMs, 0)
+  const timeoutMs = timeoutOverrideMs > 0 ? timeoutOverrideMs : configuredTimeoutMs
   const maxRetries = readPositiveInt(readEnv('AI_PROVIDER_MAX_RETRIES', 'ai_provider_max_retries'), MAX_RETRIES)
   const providers = buildProviderList()
 
@@ -141,7 +145,7 @@ async function callGLM(userCommand, boardContext) {
       },
       {
         role: 'user',
-        content: `User command: "${userCommand}"`
+        content: userCommand
       }
     ],
     tools: TOOL_DEFINITIONS,

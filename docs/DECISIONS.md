@@ -303,6 +303,78 @@ Purpose: log system decisions, alternatives, rationale, and change history.
 - Consequences: Business/view utility logic is more reusable and testable in isolated modules; `BoardPage.tsx` still retains guarded interaction/render paths until guardrail tests are modernized.
 - Revisit Trigger: Once guardrails assert behavior via runtime tests instead of source matching, proceed with deeper component/hook extraction (selection/transforms/canvas split).
 
+### D-033
+- Date: 2026-02-21
+- Status: Accepted
+- Decision: Use Firestore batched writes for AI template object creation paths, with chunked commits capped below Firestore limits.
+- Alternatives Considered: Sequential per-object writes with `await`; parallel per-object writes with `Promise.all`.
+- Rationale: Template creation writes were queue-bound and I/O-bound; batching reduces command wall time and lock hold duration while keeping writes deterministic.
+- Consequences: Template builders now stage object payloads before commit, with helper complexity for batch chunking and status accounting.
+- Revisit Trigger: If per-object transactional semantics or per-write side effects become required for template generation paths.
+
+### D-034
+- Date: 2026-02-21
+- Status: Accepted
+- Decision: Renew board AI command lock TTL with a heartbeat while the command is in `running` state.
+- Alternatives Considered: Static lock TTL only; larger one-shot lock TTL values.
+- Rationale: Long-running commands under contention can outlive a fixed TTL and permit overlapping execution; heartbeat renewal preserves single-run ownership for the active command.
+- Consequences: Queue execution now includes heartbeat start/stop lifecycle handling and lock cleanup on both success and error paths.
+- Revisit Trigger: If queue throughput goals require lock partitioning or per-command scoped concurrency beyond board-level FIFO.
+
+### D-035
+- Date: 2026-02-21
+- Status: Accepted
+- Decision: Extend AI position parsing to support explicit coordinate extraction (`x=... y=...`, `at 640,360`) and propagate coordinates through sticky/shape/frame execution paths.
+- Alternatives Considered: Phrase-only placement parsing (`top left`, `center`) and fallback defaults.
+- Rationale: Closing position ambiguity increases command determinism and reduces retries for layout-centric prompts.
+- Consequences: Parser and execution plumbing are broader, with new tests for coordinate variants and cleaned-text extraction.
+- Revisit Trigger: If natural-language placement quality targets demand semantic scene understanding beyond explicit coordinates and phrase mapping.
+
+### D-036
+- Date: 2026-02-21
+- Status: Accepted
+- Decision: Tune cursor publish cadence to 33ms with movement duplicate suppression while preserving existing presence flush guardrails.
+- Alternatives Considered: Keep 50ms publish cadence without dedupe; push to ultra-high frequency without suppression.
+- Rationale: The target path needs lower end-to-end cursor delay with controlled write pressure; dedupe limits redundant emits during high-frequency input.
+- Consequences: Presence hook now tracks last-published cursor state and avoids near-identical publishes, improving transport efficiency under motion bursts.
+- Revisit Trigger: If strict runtime SLA still misses target under representative load, or if RTDB write volume rises beyond budget thresholds.
+
+### D-037
+- Date: 2026-02-21
+- Status: Accepted
+- Decision: Continue Board runtime modularization via guardrail-safe extractions only; extract shared timing helpers first while preserving source-marker-constrained logic in place.
+- Alternatives Considered: Full runtime split in one pass; pause extraction entirely until guardrails change.
+- Rationale: This path reduces module size and duplication while keeping current regression guardrails stable.
+- Consequences: `app/src/lib/time.ts` now owns shared timing helpers, and high-risk guarded logic remains local until guardrail modernization lands.
+- Revisit Trigger: When guardrails move from source-string assertions to behavior assertions, proceed with deeper runtime hook/component extraction.
+
+### D-038
+- Date: 2026-02-21
+- Status: Accepted
+- Decision: Harden gate/test execution to avoid local E2E collisions by adding dynamic preview port selection in `scripts/run-full-gate.sh` and run-scoped Playwright artifact directories (script-level and default config-level).
+- Alternatives Considered: Keep fixed port `4173` with implicit Vite fallback behavior; keep shared default Playwright `test-results` output.
+- Rationale: Fixed-port assumptions and shared artifact directories caused false negatives (`ERR_CONNECTION_REFUSED`, trace/archive `ENOENT`, cross-run worker conflicts) during parallel verification.
+- Consequences: Full-gate runs now stay aligned on a resolved preview URL and avoid output collisions; ad-hoc Playwright runs also write to per-process directories by default.
+- Revisit Trigger: If CI uses a dedicated isolated runner and these local-collision guards add unnecessary complexity.
+
+### D-039
+- Date: 2026-02-22
+- Status: Accepted
+- Decision: Run AI command interpretation through a fully LLM-first planning path for board intent, removing deterministic sticky-parser gating from runtime command execution.
+- Alternatives Considered: Keep deterministic sticky/reason parser as primary shortcut with LLM fallback.
+- Rationale: Open-ended user prompts vary widely and deterministic parsing created brittle behavior and repetitive outputs; LLM-first intent handling with full board/placement context provides broader command coverage.
+- Consequences: Runtime now forwards normalized user prompts to the model for intent resolution, while server-side placement and batching guardrails remain enforced during tool execution.
+- Revisit Trigger: If production telemetry shows reliability regressions that require selective deterministic safeties for specific high-volume intents.
+
+### D-040
+- Date: 2026-02-22
+- Status: Accepted
+- Decision: Expose layout/complex capabilities as explicit callable tools (`createStickyGridTemplate`, `spaceElementsEvenly`, `createJourneyMap`) and enforce runtime AI latency budgets through bounded lock wait and per-pass provider timeout budgeting.
+- Alternatives Considered: Keep helper functions private to runtime internals and rely on implicit model behavior; keep long queue wait windows with provider default timeout only.
+- Rationale: Requirements call out 2x3 layouts, space-evenly layout, and journey maps as first-class capabilities, and performance targets require concrete budget controls in execution code.
+- Consequences: Tool schema breadth increased, dispatcher routing expanded, queue wait duration is bounded, and LLM requests receive budget-aware timeout overrides.
+- Revisit Trigger: If command completion quality drops under heavy contention and requires adaptive per-board queue budgets or multi-tier latency classes.
+
 ## Change Log
 - 2026-02-16: Initial decision set created.
 - 2026-02-16: Added auth provider, deployment URL strategy, and error recovery UX decisions.
@@ -322,3 +394,11 @@ Purpose: log system decisions, alternatives, rationale, and change history.
 - 2026-02-20: Added lean sprint-control process decision (TASKS split, E2E-first rule, CI deploy + Lighthouse PR budgets).
 - 2026-02-20: Added incremental BoardPage extraction decision for geometry/helpers + types modules.
 - 2026-02-20: Added guardrail-compatible BoardPage helper-module extraction decision for view-models, sharing flows, and action utilities.
+- 2026-02-21: Added batched template-write decision for AI object generation paths.
+- 2026-02-21: Added queue lock heartbeat decision for long-running AI command ownership.
+- 2026-02-21: Added AI coordinate parsing and execution propagation decision.
+- 2026-02-21: Added cursor publish cadence + duplicate suppression decision.
+- 2026-02-21: Added guardrail-safe runtime timing-helper extraction decision.
+- 2026-02-21: Added full-gate stabilization decision for dynamic preview ports and isolated Playwright outputs.
+- 2026-02-22: Added LLM-first runtime planning decision for board intent handling.
+- 2026-02-22: Added explicit advanced layout/journey tool exposure and runtime latency-budget enforcement decision.

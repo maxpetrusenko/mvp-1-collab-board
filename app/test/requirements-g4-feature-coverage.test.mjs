@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { readBoardPageSource } from './helpers/boardPageSource.mjs'
 
-const boardPageSource = readFileSync(new URL('../src/pages/BoardPage.tsx', import.meta.url), 'utf8')
+const boardPageSource = readBoardPageSource()
 const aiPanelSource = readFileSync(new URL('../src/components/AICommandPanel.tsx', import.meta.url), 'utf8')
 const boardEntrySource = readFileSync(new URL('../src/pages/BoardEntryPage.tsx', import.meta.url), 'utf8')
 const appSource = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
@@ -67,7 +68,11 @@ test('TS-018 / FR-7 / RQ-018: bulk move for selected groups uses shared drag sna
   assert.equal(boardPageSource.includes('const beginObjectDrag = useCallback('), true)
   assert.equal(boardPageSource.includes('const moveObjectDrag = useCallback('), true)
   assert.equal(boardPageSource.includes('const endObjectDrag = useCallback('), true)
-  assert.equal(boardPageSource.includes("selectedIds.length > 1 ? 'moved selection'"), true)
+  assert.equal(
+    /selectedIds\.length\s*>\s*1\s*\?\s*'moved selection'/.test(boardPageSource) ||
+      /selectedIdsCount\s*>\s*1\s*\?\s*'moved selection'/.test(boardPageSource),
+    true,
+  )
 })
 
 test('TS-019 / FR-7 / RQ-020: bulk duplicate duplicates every selected object', () => {
@@ -527,7 +532,15 @@ test('G4-GLM-002: GLM function handlers implemented in index.js', () => {
 
   // Registered in switch case
   assert.equal(glmIndexSource.includes("case 'rotateObject':"), true)
-  assert.equal(glmIndexSource.includes("await rotateObject(ctx, toolCall.arguments)"), true)
+  assert.equal(
+    glmIndexSource.includes("await rotateObject(ctx, toolCall.arguments)") ||
+      glmIndexSource.includes("await rotateObject(ctx, args)"),
+    true,
+  )
+  assert.equal(
+    glmIndexSource.includes("await executeLlmToolCall(ctx, toolCall.name, toolCall.arguments)"),
+    true,
+  )
   assert.equal(glmIndexSource.includes("case 'deleteObject':"), true)
   assert.equal(glmIndexSource.includes("case 'duplicateObject':"), true)
 

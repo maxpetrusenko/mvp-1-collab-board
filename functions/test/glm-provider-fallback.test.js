@@ -4,6 +4,7 @@ const test = require('node:test')
 
 const ORIGINAL_FETCH = global.fetch
 const ORIGINAL_ENV = { ...process.env }
+const ORIGINAL_ABORT_TIMEOUT = AbortSignal.timeout
 
 const restoreEnv = () => {
   for (const key of Object.keys(process.env)) {
@@ -25,6 +26,7 @@ const loadFreshClient = () => {
 test.afterEach(() => {
   restoreEnv()
   global.fetch = ORIGINAL_FETCH
+  AbortSignal.timeout = ORIGINAL_ABORT_TIMEOUT
 })
 
 test('buildProviderList includes configured fallback providers in deterministic order', () => {
@@ -121,4 +123,37 @@ test('parseToolCalls accepts object and string argument payloads', () => {
   assert.equal(parsed.length, 2)
   assert.deepEqual(parsed[0].arguments, { objectId: 'a', x: 10, y: 20 })
   assert.deepEqual(parsed[1].arguments, { objectId: 'a', color: 'green' })
+})
+
+test('callGLM applies timeout override when latency budget control is provided', async () => {
+  delete process.env.Z_AI_GLM_API_KEY
+  process.env.MINIMAX_API_KEY = 'minimax-key'
+  delete process.env.DEEPSEEK_API_KEY
+  process.env.AI_PROVIDER_MAX_RETRIES = '0'
+
+  let capturedTimeoutMs = null
+  AbortSignal.timeout = (ms) => {
+    capturedTimeoutMs = ms
+    return ORIGINAL_ABORT_TIMEOUT(ms)
+  }
+
+  global.fetch = async () => ({
+    ok: true,
+    status: 200,
+    text: async () =>
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              tool_calls: [],
+              content: 'ok',
+            },
+          },
+        ],
+      }),
+  })
+
+  const client = loadFreshClient()
+  await client.callGLM('add sticky', { state: [], boardId: 'board-1' }, { timeoutMs: 1_250 })
+  assert.equal(capturedTimeoutMs, 1_250)
 })

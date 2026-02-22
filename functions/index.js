@@ -142,6 +142,11 @@ const BMC_IDEA_POOLS = {
   ],
 }
 const FIRESTORE_BATCH_WRITE_LIMIT = 450
+const AI_RESPONSE_TARGET_MS = 2_000
+const AI_MIN_PROVIDER_TIMEOUT_MS = 400
+const AI_LOCK_WAIT_TIMEOUT_MS = 1_200
+const AI_LOCK_RETRY_INTERVAL_MS = 75
+const AI_LOCK_TTL_MS = 20_000
 
 const normalizeShapeType = (rawShapeType, fallback = 'rectangle') => {
   const normalized = String(rawShapeType || '').toLowerCase().trim()
@@ -240,10 +245,6 @@ const isLikelyBoardMutationCommand = (command) => {
   }
 
   if (STRUCTURED_BOARD_ARTIFACT_REGEX.test(normalized)) {
-    return true
-  }
-
-  if (parseStickyCommand(normalized) || parseReasonListCommand(normalized)) {
     return true
   }
 
@@ -2125,6 +2126,23 @@ const synthesizeStickyThemes = async (ctx) => {
   ctx.executedTools.push({ tool: 'synthesizeStickyThemes', count: topThemes.length })
 }
 
+const resolveMovableObjectsForOperation = (ctx, args = {}) => {
+  const requestedIds =
+    Array.isArray(args.objectIds) && args.objectIds.length > 0
+      ? new Set(args.objectIds.map((entry) => String(entry || '').trim()).filter(Boolean))
+      : null
+
+  return ctx.state.filter((item) => {
+    if (item.type === 'connector') {
+      return false
+    }
+    if (!requestedIds) {
+      return true
+    }
+    return requestedIds.has(item.id)
+  })
+}
+
 const executeLlmToolCall = async (ctx, toolName, rawArgs, options = {}) => {
   const args = rawArgs && typeof rawArgs === 'object' ? rawArgs : {}
   const batchContext = options.batchContext || null
@@ -2231,6 +2249,21 @@ const executeLlmToolCall = async (ctx, toolName, rawArgs, options = {}) => {
       await arrangeGrid(ctx, stickyNotes)
       return
     }
+    case 'createStickyGridTemplate':
+      await createStickyGridTemplate(ctx, {
+        rows: parseNumber(args.rows, 2),
+        columns: parseNumber(args.columns, 3),
+        labelText: sanitizeText(args.labelText || ''),
+      })
+      return
+    case 'spaceElementsEvenly': {
+      const movable = resolveMovableObjectsForOperation(ctx, args)
+      await spaceElementsEvenly(ctx, movable)
+      return
+    }
+    case 'createJourneyMap':
+      await createJourneyMap(ctx, parseNumber(args.stages, 5))
+      return
     case 'createSwotTemplate':
       await createSwotTemplate(ctx)
       return
@@ -2274,34 +2307,6 @@ const executeBatchTool = async (ctx, args = {}) => {
     await executeLlmToolCall(ctx, operation.tool, operation.args, { batchContext })
   }
 
-  return { count: operations.length }
-}
-
-const executeDeterministicCompoundStickyFallback = async (ctx, command) => {
-  const operations = parseCompoundStickyCreateOperations(command)
-  if (operations.length === 0) {
-    return { count: 0 }
-  }
-  logAiDebug('deterministic_compound_fallback', {
-    boardId: ctx.boardId,
-    operationCount: operations.length,
-    operations: operations.map((operation) => ({
-      shapeType: operation.shapeType,
-      color: operation.color,
-      text: operation.text,
-    })),
-  })
-
-  await executeBatchTool(ctx, {
-    operations: operations.map((args) => ({
-      tool: 'createStickyNote',
-      args,
-    })),
-  })
-  ctx.executedTools.push({
-    tool: 'deterministicCompoundStickyFallback',
-    count: operations.length,
-  })
   return { count: operations.length }
 }
 
@@ -2378,8 +2383,41 @@ const executeParsedToolCalls = async (ctx, toolCalls = []) => {
   }
 }
 
+const countPlannedStickyOperations = (toolCalls = []) => {
+  if (!Array.isArray(toolCalls) || toolCalls.length === 0) {
+    return 0
+  }
+
+  let planned = 0
+  for (const toolCall of toolCalls) {
+    const toolName = typeof toolCall?.name === 'string' ? toolCall.name : ''
+    if (toolName === 'createStickyNote') {
+      planned += 1
+      continue
+    }
+
+    if (toolName !== 'executeBatch') {
+      continue
+    }
+
+    const operations = toBatchOperations(toolCall.arguments)
+    planned += operations.filter((operation) => operation.tool === 'createStickyNote').length
+  }
+
+  return planned
+}
+
+const getRemainingAiLatencyBudgetMs = (ctx) => {
+  const startedAt = Number(ctx?.commandStartedAtMs)
+  const safeStartedAt = Number.isFinite(startedAt) ? startedAt : nowMs()
+  return Math.max(0, AI_RESPONSE_TARGET_MS - (nowMs() - safeStartedAt))
+}
+
 const runCommandPlan = async (ctx, command) => {
   const normalizedCommand = normalizeCommandForPlan(command)
+  if (!Number.isFinite(Number(ctx.commandStartedAtMs))) {
+    ctx.commandStartedAtMs = nowMs()
+  }
   logAiDebug('run_command_plan_start', {
     boardId: ctx.boardId,
     command: normalizedCommand,
@@ -2403,19 +2441,6 @@ const runCommandPlan = async (ctx, command) => {
     }
   }
 
-  const deterministicCompoundResult = await executeDeterministicCompoundStickyFallback(ctx, normalizedCommand)
-  if (deterministicCompoundResult.count > 0) {
-    logAiDebug('run_command_plan_route_deterministic_compound', {
-      boardId: ctx.boardId,
-      count: deterministicCompoundResult.count,
-    })
-    const successMessage = 'Created requested board objects.'
-    return {
-      message: successMessage,
-      aiResponse: successMessage,
-    }
-  }
-
   if (!glmClient) {
     return {
       message: AI_TEMP_UNAVAILABLE_MESSAGE,
@@ -2432,6 +2457,14 @@ const runCommandPlan = async (ctx, command) => {
     return await executeViaLLM(ctx, normalizedCommand)
   } catch (llmError) {
     console.error('LLM-first execution failed:', llmError)
+    if (String(llmError?.message || '').toLowerCase().includes('latency budget')) {
+      const latencyWarningMessage = 'AI command exceeded the 2-second response target. Retry with a shorter command.'
+      return {
+        message: latencyWarningMessage,
+        aiResponse: latencyWarningMessage,
+        level: 'warning',
+      }
+    }
     return {
       message: AI_TEMP_UNAVAILABLE_MESSAGE,
       aiResponse: AI_TEMP_UNAVAILABLE_MESSAGE,
@@ -2456,39 +2489,36 @@ const executeViaLLM = async (ctx, command) => {
   }
   const baselineObjectIds = new Set(ctx.state.map((item) => item?.id).filter(Boolean))
   const baselineMutationToken = buildBoardMutationToken(ctx.state)
-  const stickyIntent = parseStickyCommand(command) || parseReasonListCommand(command)
-  const expectedStickyCount = Math.max(0, parseNumber(stickyIntent?.count, 0))
   const boardMutationIntent = isLikelyBoardMutationCommand(command)
 
   const requestLlmPass = async (commandText) => {
-    const glmResponse = await glmClient.callGLM(commandText, boardContext)
+    const remainingBudgetMs = getRemainingAiLatencyBudgetMs(ctx)
+    if (remainingBudgetMs < AI_MIN_PROVIDER_TIMEOUT_MS) {
+      throw new Error('AI latency budget exhausted before model call.')
+    }
+
+    const providerTimeoutMs = Math.max(AI_MIN_PROVIDER_TIMEOUT_MS, remainingBudgetMs - 120)
+    const glmResponse = await glmClient.callGLM(commandText, boardContext, {
+      timeoutMs: providerTimeoutMs,
+    })
     const toolCalls = glmClient.parseToolCalls(glmResponse)
     const textResponse = sanitizeAiAssistantResponse(glmClient.getTextResponse(glmResponse))
     return { glmResponse, toolCalls, textResponse }
   }
 
   let llmPass = await requestLlmPass(command)
+  let expectedStickyCount = countPlannedStickyOperations(llmPass.toolCalls)
 
   if (llmPass.toolCalls.length === 0 && boardMutationIntent) {
     const retryCommand = buildCompoundToolRetryCommand(command, llmPass.textResponse)
     const retryPass = await requestLlmPass(retryCommand)
     if (retryPass.toolCalls.length > 0 || retryPass.textResponse) {
       llmPass = retryPass
+      expectedStickyCount = countPlannedStickyOperations(llmPass.toolCalls)
     }
   }
 
   if (llmPass.toolCalls.length === 0) {
-    if (boardMutationIntent) {
-      const fallbackResult = await executeDeterministicCompoundStickyFallback(ctx, command)
-      if (fallbackResult.count > 0) {
-        const successMessage = 'Created requested board objects.'
-        return {
-          message: successMessage,
-          aiResponse: successMessage,
-        }
-      }
-    }
-
     const assistantMessage = llmPass.textResponse || OUT_OF_SCOPE_AI_MESSAGE
     ctx.executedTools.push({
       tool: 'assistantResponse',
@@ -2512,13 +2542,14 @@ const executeViaLLM = async (ctx, command) => {
 
   if (boardMutationIntent && !boardMutationApplied && expectedStickyCount === 0) {
     const noMutationRetryCommand = buildNoMutationRetryCommand(command, llmPass.textResponse)
-    const noMutationRetryPass = await requestLlmPass(noMutationRetryCommand)
-    if (noMutationRetryPass.toolCalls.length > 0) {
-      await executeParsedToolCalls(ctx, noMutationRetryPass.toolCalls)
-      boardMutationApplied = buildBoardMutationToken(ctx.state) !== baselineMutationToken
-    }
-    if (noMutationRetryPass.textResponse) {
-      llmPass = noMutationRetryPass
+      const noMutationRetryPass = await requestLlmPass(noMutationRetryCommand)
+      if (noMutationRetryPass.toolCalls.length > 0) {
+        await executeParsedToolCalls(ctx, noMutationRetryPass.toolCalls)
+        boardMutationApplied = buildBoardMutationToken(ctx.state) !== baselineMutationToken
+        expectedStickyCount = Math.max(expectedStickyCount, countPlannedStickyOperations(noMutationRetryPass.toolCalls))
+      }
+      if (noMutationRetryPass.textResponse) {
+        llmPass = noMutationRetryPass
     }
   }
 
@@ -2544,15 +2575,6 @@ const executeViaLLM = async (ctx, command) => {
   }
 
   if (boardMutationIntent && !boardMutationApplied) {
-    const fallbackResult = await executeDeterministicCompoundStickyFallback(ctx, command)
-    if (fallbackResult.count > 0) {
-      const successMessage = 'Created requested board objects.'
-      return {
-        message: successMessage,
-        aiResponse: successMessage,
-      }
-    }
-
     const assistantMessage =
       llmPass.textResponse ||
       "I couldn't apply that command to the board. Please retry with explicit board actions."
@@ -2605,8 +2627,9 @@ const reserveQueueSequence = async (boardId) => {
 
 const acquireBoardLock = async (boardId, commandId, queueSequence) => {
   const lockRef = getSystemRef(boardId)
+  const deadlineMs = nowMs() + AI_LOCK_WAIT_TIMEOUT_MS
 
-  for (let attempt = 0; attempt < 240; attempt += 1) {
+  while (nowMs() <= deadlineMs) {
     const acquired = await db.runTransaction(async (tx) => {
       const now = nowMs()
       const lockSnap = await tx.get(lockRef)
@@ -2627,7 +2650,7 @@ const acquireBoardLock = async (boardId, commandId, queueSequence) => {
         lockRef,
         {
           activeCommandId: commandId,
-          expiresAt: now + 20_000,
+          expiresAt: now + AI_LOCK_TTL_MS,
           updatedAt: now,
         },
         { merge: true },
@@ -2640,7 +2663,7 @@ const acquireBoardLock = async (boardId, commandId, queueSequence) => {
       return
     }
 
-    await sleep(150)
+    await sleep(AI_LOCK_RETRY_INTERVAL_MS)
   }
 
   throw new Error('AI command queue timeout. Retry in a moment.')
@@ -2673,7 +2696,13 @@ const releaseBoardLock = async (boardId, commandId, queueSequence = null) => {
   })
 }
 
-const startBoardLockHeartbeat = ({ boardId, commandId, queueSequence, intervalMs = 5_000, ttlMs = 20_000 }) => {
+const startBoardLockHeartbeat = ({
+  boardId,
+  commandId,
+  queueSequence,
+  intervalMs = 5_000,
+  ttlMs = AI_LOCK_TTL_MS,
+}) => {
   const lockRef = getSystemRef(boardId)
   let active = true
 
@@ -3053,17 +3082,26 @@ exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) =>
       state,
       executedTools: [],
       commandPlacement,
+      commandStartedAtMs: nowMs(),
     }
 
     const planResult = await runCommandPlan(context, command)
-    const resultMessage = sanitizeAiAssistantResponse(planResult?.message) || 'Command executed and synced to the board.'
+    const latencyMs = nowMs() - Number(context.commandStartedAtMs || nowMs())
+    const latencyBreached = latencyMs > AI_RESPONSE_TARGET_MS
+    const baseResultMessage = sanitizeAiAssistantResponse(planResult?.message) || 'Command executed and synced to the board.'
+    const resultMessage = latencyBreached
+      ? sanitizeAiAssistantResponse(
+          `${baseResultMessage} Response took ${latencyMs}ms, above ${AI_RESPONSE_TARGET_MS}ms target.`,
+        )
+      : baseResultMessage
     const aiResponse = sanitizeAiAssistantResponse(planResult?.aiResponse)
 
-    const resultLevel = planResult?.level === 'warning' ? 'warning' : undefined
+    const resultLevel = planResult?.level === 'warning' || latencyBreached ? 'warning' : undefined
     const result = {
       executedTools: context.executedTools,
       objectCount: context.state.length,
       message: resultMessage,
+      latencyMs,
       ...(aiResponse ? { aiResponse } : {}),
       ...(resultLevel ? { level: resultLevel } : {}),
     }
@@ -3142,6 +3180,8 @@ exports.__test = {
   parseCompoundStickyCreateOperations,
   parseReasonListCommand,
   buildReasonStickyTexts,
+  countPlannedStickyOperations,
+  getRemainingAiLatencyBudgetMs,
   getAutoStickyPosition,
   normalizeAiPlacementHint,
   getStickyBatchLayoutPositions,
@@ -3152,5 +3192,8 @@ exports.__test = {
   canUserAccessBoard,
   canUserEditBoard,
   normalizeSharedRoles,
+  AI_RESPONSE_TARGET_MS,
+  AI_LOCK_WAIT_TIMEOUT_MS,
+  AI_LOCK_RETRY_INTERVAL_MS,
 }
 // Tue Feb 17 18:22:00 EST 2026
