@@ -5,6 +5,7 @@ const pagesDir = path.resolve(process.cwd(), 'src/pages')
 const hooksDir = path.resolve(process.cwd(), 'src/hooks')
 const boardPagePath = path.join(pagesDir, 'BoardPage.tsx')
 const boardPageRuntimePath = path.join(pagesDir, 'BoardPageRuntime.tsx')
+const boardRuntimeControllerPath = path.join(pagesDir, 'boardRuntimeController.tsx')
 const supplementalPaths = [
   path.join(pagesDir, 'boardPageRuntimePrimitives.tsx'),
   path.join(pagesDir, 'boardPanels.tsx'),
@@ -15,9 +16,18 @@ const supplementalPaths = [
   path.join(pagesDir, 'boardFloatingToolbar.tsx'),
   path.join(pagesDir, 'boardStickyObjectRenderer.tsx'),
   path.join(pagesDir, 'boardShapeObjectRenderer.tsx'),
+  path.join(pagesDir, 'boardFrameObjectRenderer.tsx'),
   path.join(pagesDir, 'boardConnectorObjectRenderer.tsx'),
   path.join(pagesDir, 'boardTextObjectRenderer.tsx'),
   path.join(pagesDir, 'boardObjectRendererShared.ts'),
+  path.join(pagesDir, 'boardKeyboardShortcuts.ts'),
+  path.join(pagesDir, 'boardAiCommandSubmit.ts'),
+  path.join(pagesDir, 'useBoardCreationActions.ts'),
+  path.join(pagesDir, 'useBoardSidebarActions.ts'),
+  path.join(pagesDir, 'useBoardWorkspaceActions.ts'),
+  path.join(pagesDir, 'useBoardShareActions.ts'),
+  path.join(pagesDir, 'useBoardZoomActions.ts'),
+  path.join(pagesDir, 'boardTemplateActions.ts'),
   path.join(hooksDir, 'useBoardSelection.ts'),
 ]
 
@@ -28,6 +38,9 @@ export const readBoardPageSource = () => {
   }
   if (existsSync(boardPageRuntimePath)) {
     chunks.push(readFileSync(boardPageRuntimePath, 'utf8'))
+  }
+  if (existsSync(boardRuntimeControllerPath)) {
+    chunks.push(readFileSync(boardRuntimeControllerPath, 'utf8'))
   }
 
   for (const filePath of supplementalPaths) {

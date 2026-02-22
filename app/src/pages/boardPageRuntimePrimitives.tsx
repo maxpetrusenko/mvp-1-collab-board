@@ -36,7 +36,13 @@ export const VOTE_CONFETTI_PARTICLE_COUNT = 12
 export const VOTE_CONFETTI_GRAVITY = 0.16
 export const VOTE_CONFETTI_DECAY = 0.035
 export const VOTE_CONFETTI_COLORS = ['#f59e0b', '#14b8a6', '#fb7185', '#60a5fa', '#f97316', '#22c55e']
-export const aiApiBaseUrl = (import.meta.env.VITE_AI_API_BASE_URL || '').replace(/\/$/, '')
+const normalizeAiApiBaseUrl = (value: unknown) => String(value || '').trim().replace(/\/$/, '')
+const sharedAiApiBaseUrl = normalizeAiApiBaseUrl(import.meta.env.VITE_AI_API_BASE_URL)
+const devAiApiBaseUrl = normalizeAiApiBaseUrl(import.meta.env.VITE_AI_API_BASE_URL_DEV)
+const prodAiApiBaseUrl = normalizeAiApiBaseUrl(import.meta.env.VITE_AI_API_BASE_URL_PROD)
+export const aiApiBaseUrl = import.meta.env.DEV
+  ? devAiApiBaseUrl || sharedAiApiBaseUrl
+  : prodAiApiBaseUrl || sharedAiApiBaseUrl
 export const aiCommandEndpoint = `${aiApiBaseUrl}/api/ai/command`
 export const shareBoardEndpoint = `${aiApiBaseUrl}/api/boards/share`
 export const STICKY_COLOR_OPTIONS = ['#fde68a', '#fdba74', '#fca5a5', '#86efac', '#93c5fd']

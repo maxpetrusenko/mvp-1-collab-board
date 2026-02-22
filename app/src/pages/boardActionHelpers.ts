@@ -1,7 +1,7 @@
 import type Konva from 'konva'
 
 import { getObjectAnchors } from '../lib/boardGeometry'
-import type { BoardObject, Point } from '../types/board'
+import type { AnchorKind, BoardObject, Point } from '../types/board'
 import type { VoteConfettiParticle, Viewport } from './boardPageTypes'
 
 export const resolveSnappedConnectorEndpoint = (args: {
@@ -12,12 +12,12 @@ export const resolveSnappedConnectorEndpoint = (args: {
   const { point, objects, thresholdPx } = args
   const thresholdSquared = thresholdPx * thresholdPx
   let nearest:
-    | {
-        point: Point
-        objectId: string
-        anchor: 'top' | 'right' | 'bottom' | 'left'
-        distanceSquared: number
-      }
+      | {
+          point: Point
+          objectId: string
+          anchor: AnchorKind
+          distanceSquared: number
+        }
     | null = null
 
   for (const candidate of objects) {

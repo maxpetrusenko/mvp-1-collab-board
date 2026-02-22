@@ -20,7 +20,7 @@ export type ObjectSelectionHandler = (
 export type ObjectPatchHandler = (
   objectId: string,
   patch: Partial<BoardObject>,
-  options?: { actionLabel?: string },
+  options?: { actionLabel?: string; logEvent?: boolean; recordHistory?: boolean },
 ) => Promise<void>
 
 export type VoteBadgeRenderer = (args: { voteCount: number; x: number; y: number }) => ReactElement | null
