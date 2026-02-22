@@ -8,9 +8,11 @@ FUNCTIONS_DIR="$ROOT_DIR/functions"
 PREVIEW_URL="${PLAYWRIGHT_BASE_URL:-http://127.0.0.1:4173}"
 PLAYWRIGHT_WORKERS="${PLAYWRIGHT_WORKERS:-2}"
 PLAYWRIGHT_SHARDS="${PLAYWRIGHT_SHARDS:-2}"
-RUN_CRITICAL_CHECKS="${RUN_CRITICAL_CHECKS:-0}"
+RUN_CRITICAL_CHECKS="${RUN_CRITICAL_CHECKS:-1}"
 RUN_BACKEND_PERF="${RUN_BACKEND_PERF:-0}"
 ARTIFACT_DIR="$ROOT_DIR/submission/test-artifacts"
+PREVIEW_HOST="${PREVIEW_HOST:-127.0.0.1}"
+PREVIEW_PORT="${PREVIEW_PORT:-4173}"
 
 mkdir -p "$ARTIFACT_DIR"
 
@@ -29,6 +31,20 @@ wait_for_preview() {
     attempts=$((attempts + 1))
   done
   return 1
+}
+
+port_is_listening() {
+  local port="$1"
+  lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1
+}
+
+pick_preview_port() {
+  local preferred_port="$1"
+  local port="$preferred_port"
+  while port_is_listening "$port"; do
+    port=$((port + 1))
+  done
+  echo "$port"
 }
 
 preview_pid=""
@@ -68,8 +84,23 @@ fi
 log "Phase 2: build app"
 (cd "$APP_DIR" && npm run build)
 
+# Parse explicit PLAYWRIGHT_BASE_URL when provided.
+if [[ "$PREVIEW_URL" =~ ^https?://([^:/]+):([0-9]+)(/.*)?$ ]]; then
+  PREVIEW_HOST="${BASH_REMATCH[1]}"
+  PREVIEW_PORT="${BASH_REMATCH[2]}"
+fi
+
+if [[ "$PREVIEW_HOST" == "127.0.0.1" || "$PREVIEW_HOST" == "localhost" ]]; then
+  resolved_port="$(pick_preview_port "$PREVIEW_PORT")"
+  if [[ "$resolved_port" != "$PREVIEW_PORT" ]]; then
+    log "Requested preview port $PREVIEW_PORT in use; selected $resolved_port"
+  fi
+  PREVIEW_PORT="$resolved_port"
+  PREVIEW_URL="http://$PREVIEW_HOST:$PREVIEW_PORT"
+fi
+
 log "Phase 3: start preview at $PREVIEW_URL"
-(cd "$APP_DIR" && npm run preview -- --host 127.0.0.1 --port 4173 >"$preview_log" 2>&1) &
+(cd "$APP_DIR" && npm run preview -- --host "$PREVIEW_HOST" --port "$PREVIEW_PORT" --strictPort >"$preview_log" 2>&1) &
 preview_pid=$!
 
 if ! wait_for_preview "$PREVIEW_URL"; then
@@ -81,10 +112,12 @@ fi
 log "Phase 4: playwright gate (workers=$PLAYWRIGHT_WORKERS, shards=$PLAYWRIGHT_SHARDS)"
 
 if (( PLAYWRIGHT_SHARDS <= 1 )); then
+  output_dir="$ARTIFACT_DIR/playwright-output"
+  rm -rf "$output_dir"
   (
     cd "$APP_DIR"
     PLAYWRIGHT_BASE_URL="$PREVIEW_URL" \
-      npx playwright test --workers="$PLAYWRIGHT_WORKERS" --reporter=line
+      npx playwright test --workers="$PLAYWRIGHT_WORKERS" --reporter=line --output="$output_dir"
   )
 else
   declare -a shard_pids=()
@@ -92,10 +125,12 @@ else
 
   for shard in $(seq 1 "$PLAYWRIGHT_SHARDS"); do
     shard_log="$ARTIFACT_DIR/full-gate-playwright-shard-${shard}.log"
+    output_dir="$ARTIFACT_DIR/playwright-shard-${shard}-output"
+    rm -rf "$output_dir"
     (
       cd "$APP_DIR"
       PLAYWRIGHT_BASE_URL="$PREVIEW_URL" \
-        npx playwright test --workers="$PLAYWRIGHT_WORKERS" --shard="$shard/$PLAYWRIGHT_SHARDS" --reporter=line
+        npx playwright test --workers="$PLAYWRIGHT_WORKERS" --shard="$shard/$PLAYWRIGHT_SHARDS" --reporter=line --output="$output_dir"
     ) >"$shard_log" 2>&1 &
     shard_pids+=("$!")
   done

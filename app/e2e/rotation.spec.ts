@@ -137,7 +137,7 @@ test.describe('Rotation: drag-to-rotate handle', () => {
     expect(finalRotation).not.toBe(initialRotation)
   })
 
-  test('ROTATION-E2E-004: rotation handle only appears when object is selected', async ({ page }) => {
+  test('ROTATION-E2E-004: rotation shortcuts only apply when an object is selected', async ({ page }) => {
     if (!user) throw new Error('Test user unavailable')
 
     const boardId = `pw-rotate-select-${Date.now()}`
@@ -153,19 +153,20 @@ test.describe('Rotation: drag-to-rotate handle', () => {
     await page.goto(`${APP_URL}/b/${boardId}`)
     await expect(page.locator('.board-stage')).toBeVisible()
 
-    // Without selection, dragging where handle would be should do nothing.
+    // Without selection, rotate shortcut should do nothing.
     const initialRotation = await getObjectRotation(boardId, user.idToken, sticky.id)
-    await dragRotationHandle(page, sticky, 100, 0)
-    await page.waitForTimeout(500)
-    const afterUnselectedDrag = await getObjectRotation(boardId, user.idToken, sticky.id)
-    expect(afterUnselectedDrag).toBe(initialRotation)
+    await page.keyboard.press('r')
+    await page.waitForTimeout(250)
+    const afterUnselectedShortcut = await getObjectRotation(boardId, user.idToken, sticky.id)
+    expect(afterUnselectedShortcut).toBe(initialRotation)
 
-    // After selecting, dragging the same area should rotate.
+    // After selecting, rotate shortcut should update rotation.
     await selectSeededObject(page, sticky)
-    await dragRotationHandle(page, sticky, 100, 0)
-    await page.waitForTimeout(500)
-    const afterSelectedDrag = await getObjectRotation(boardId, user.idToken, sticky.id)
-    expect(afterSelectedDrag).not.toBe(afterUnselectedDrag)
+    await expect(page.getByTestId('delete-selected-button')).toBeEnabled()
+    await page.keyboard.press('r')
+    await page.waitForTimeout(250)
+    const afterSelectedShortcut = await getObjectRotation(boardId, user.idToken, sticky.id)
+    expect(afterSelectedShortcut).not.toBe(afterUnselectedShortcut)
   })
 
   test('ROTATION-E2E-005: rotation handle not visible in view mode', async ({ page }) => {

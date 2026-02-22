@@ -7,5 +7,54 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
-| #2455 | 1:27 PM | 🔵 | Requirements compliance assessment completed | ~266 |
+| #2519 | 2:45 PM | 🔵 | Presence status colors always green, not green/orange as documented | ~178 |
+| #2520 | " | 🔵 | Object drag moves are local-only without throttled publishes | ~197 |
+| #2521 | " | 🔵 | Copy/paste implementation uses single-object source not multi-object offsets | ~184 |
+| #2465 | 1:29 PM | 🔵 | BoardPage.tsx is main collaborative canvas component with 7,755 lines | ~214 |
+| #2439 | 11:04 AM | 🔄 | Deleted Konva Rotation Handles from Sticky Notes | ~240 |
+| #2438 | 11:03 AM | 🔵 | HTML-Based Rotation Handle Overlay Found at Line 7025 | ~305 |
+| #2437 | " | 🟣 | Rotation handles use optimistic updates with database persistence | ~304 |
+| #2436 | 11:01 AM | 🔵 | Rotation handle implementation verified in codebase | ~236 |
+| #2435 | 11:00 AM | 🔴 | Fixed critical JSX syntax error preventing canvas rendering | ~245 |
+| #2434 | 10:59 AM | 🔵 | Inline Editor Implementation Found at Line 6865 | ~216 |
+| #2431 | 10:58 AM | 🟣 | Implemented drag-to-rotate handles for board objects | ~342 |
+| #2428 | 10:56 AM | 🔵 | Sticky Note Selection Handler Found at Line 3970 | ~234 |
+| #2424 | 10:47 AM | 🔵 | RenderObjects Layer Structure Revealed | ~245 |
+| #2422 | 10:45 AM | 🔵 | Duplicate Shape Rendering Contains Resize Handle But No Rotation Handle | ~280 |
+| #2421 | " | 🔵 | Duplicate Shape Rendering Code Found Without Rotation Handles | ~281 |
+| #2420 | " | 🔵 | Found selection marquee and vote confetti rendering layers after object rendering | ~236 |
+| #2419 | 10:44 AM | 🔵 | Grep Search for BoardObject Type Checks Returned Empty | ~180 |
+| #2418 | " | 🔵 | Rotation handle element found at line 6045 with data-testid attribute | ~209 |
+| #2416 | 10:42 AM | 🔵 | Rotation Handle Drag-to-Rotate Implementation Details | ~317 |
+| #2414 | 10:40 AM | 🔵 | Frame Object Has Resize Handle But Missing Rotation Handle | ~233 |
+| #2413 | " | 🔵 | Text objects also have rotation property implemented at line 6431 | ~248 |
+| #2411 | 10:38 AM | 🟣 | Implemented Drag-to-Rotate Handles for Shape Objects | ~339 |
+| #2410 | 10:36 AM | 🔵 | Connector objects use local geometry override and normalizeConnectorStyle function | ~250 |
+| #2408 | 10:34 AM | 🔵 | Sticky Note Rendering Located at Line 5483 | ~213 |
+| #2406 | " | 🟣 | Added drag-to-rotate handle to sticky note objects in BoardPage.tsx | ~350 |
+| #2405 | 10:33 AM | 🔵 | Connector Handle Implementation Pattern Identified | ~348 |
+| #2404 | " | 🔵 | Frame objects have rotation property already implemented | ~234 |
+| #2403 | " | 🔵 | Examined frame object rendering with drag and member tracking | ~281 |
+| #2402 | " | 🔵 | Shape Objects Have Resize Handles at Bottom-Right Corner | ~301 |
+| #2401 | 10:32 AM | 🔵 | Resize Handle Search for Shapes Returns Zero Results | ~244 |
+| #2399 | " | 🔵 | Found Shape Type References in Inline Editor Logic | ~277 |
+| #2398 | 10:30 AM | 🔵 | Examined resize handle implementation pattern in sticky note rendering | ~295 |
+| #2396 | 10:29 AM | 🔵 | AI Command Text Parsing Logic for Sticky Note Creation | ~267 |
+| #2395 | 5:43 AM | 🟣 | Added calculateRotationAngle Helper Function to BoardPage.tsx | ~291 |
+| #2394 | " | 🟣 | Added rotation state management to BoardPage.tsx | ~236 |
+| #2393 | 5:42 AM | 🟣 | Added Rotation Handle Constants to BoardPage.tsx | ~224 |
+| #2392 | 5:41 AM | 🔵 | Local State Override Pattern Established for Interactive Operations | ~312 |
+| #2391 | 5:40 AM | 🔵 | BoardPage.tsx implements resize handle with drag functionality at bottom-right corner | ~365 |
+| #2390 | " | 🔵 | Sticky Note Rendering Includes Shape Types, Text, Votes, and Comments | ~353 |
+| #2379 | 5:29 AM | 🔵 | BoardPage.tsx implements viewport culling for performance optimization | ~273 |
+| #2378 | 5:28 AM | 🔵 | Drag Event Handlers Properly Wired to Sticky Notes | ~316 |
+| #2376 | 5:27 AM | 🔵 | LocalPositionOverride Type Imported from useObjectSync Hook | ~238 |
+| #2374 | " | 🔵 | Drag Handler Functions Implement Single and Multi-Object Drag | ~309 |
+| #2372 | 5:26 AM | 🔵 | Drag Handler Functions Found in BoardPage.tsx | ~281 |
+| #2371 | " | 🔵 | Drag Event Handlers Missing from Board Objects | ~261 |
+| #2369 | 5:25 AM | 🔵 | Interaction Mode UI Elements Found in Restored Code | ~247 |
+| #2366 | 5:24 AM | 🔵 | Restored BoardPage.tsx contains interaction mode toggle buttons | ~279 |
+| #2349 | 5:12 AM | 🔵 | Untitled | ~361 |
+| #2338 | 5:09 AM | 🔵 | BoardPage.tsx type definitions include LocalSizeOverride with resize mode | ~295 |
+| #2335 | 5:08 AM | 🔵 | LoginPage provides Google OAuth and optional email/password authentication | ~223 |
 </claude-mem-context>

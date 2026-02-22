@@ -48,7 +48,11 @@ export const renderTextObject = (args: RenderTextObjectArgs): ReactElement => {
   const defaultStrokeColor = themeMode === 'dark' ? '#94a3b8' : '#cbd5e1'
   const strokeColor = selected ? '#1d4ed8' : hovered ? '#0f766e' : defaultStrokeColor
   const fillColor = themeMode === 'dark' ? '#1e293b' : '#ffffff'
-  const textColor = themeMode === 'dark' ? '#f1f5f9' : '#0f172a'
+  const defaultTextColor = themeMode === 'dark' ? '#f1f5f9' : '#0f172a'
+  const textColor =
+    typeof boardObject.color === 'string' && boardObject.color.trim().length > 0
+      ? boardObject.color
+      : defaultTextColor
 
   return (
     <Group

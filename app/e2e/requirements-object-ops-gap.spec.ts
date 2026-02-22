@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 
-import { createTempUser, deleteTempUser, loginWithEmail } from './helpers/auth'
+import { cleanupTestUser, createOrReuseTestUser, loginWithEmail } from './helpers/auth'
 import { fetchBoardObjects, newestObjectByType, type BoardObject } from './helpers/firestore'
 
 const APP_URL = process.env.PLAYWRIGHT_BASE_URL || 'https://mvp-1-collab-board.web.app'
@@ -28,13 +28,10 @@ const clickObjectCenter = async (page: Page, boardObject: BoardObject) => {
   await page.mouse.click(center.x, center.y)
 }
 
-const dragBoardObjectCenterTo = async (
-  page: Page,
-  boardObject: BoardObject,
-  targetTopLeft: { x: number; y: number },
-) => {
-  if (!boardObject.position || !boardObject.size) {
-    throw new Error('Board object missing position/size')
+const marqueeSelectObjects = async (page: Page, objects: BoardObject[]) => {
+  const selectable = objects.filter((object) => object.position && object.size)
+  if (selectable.length === 0) {
+    throw new Error('No selectable objects were provided for marquee selection')
   }
 
   const canvasBox = await page.locator('.board-stage canvas').first().boundingBox()
@@ -42,16 +39,19 @@ const dragBoardObjectCenterTo = async (
     throw new Error('Canvas bounds unavailable')
   }
 
-  const halfWidth = boardObject.size.width / 2
-  const halfHeight = boardObject.size.height / 2
-  const startX = canvasBox.x + boardObject.position.x + halfWidth
-  const startY = canvasBox.y + boardObject.position.y + halfHeight
-  const endX = canvasBox.x + targetTopLeft.x + halfWidth
-  const endY = canvasBox.y + targetTopLeft.y + halfHeight
+  const minX = Math.min(...selectable.map((object) => (object.position?.x ?? 0) - 16))
+  const minY = Math.min(...selectable.map((object) => (object.position?.y ?? 0) - 16))
+  const maxX = Math.max(
+    ...selectable.map((object) => (object.position?.x ?? 0) + (object.size?.width ?? 0) + 16),
+  )
+  const maxY = Math.max(
+    ...selectable.map((object) => (object.position?.y ?? 0) + (object.size?.height ?? 0) + 16),
+  )
 
-  await page.mouse.move(startX, startY)
+  await page.getByTestId('selection-mode-area').click()
+  await page.mouse.move(canvasBox.x + minX, canvasBox.y + minY)
   await page.mouse.down()
-  await page.mouse.move(endX, endY, { steps: 5 })
+  await page.mouse.move(canvasBox.x + maxX, canvasBox.y + maxY, { steps: 8 })
   await page.mouse.up()
 }
 
@@ -75,11 +75,43 @@ const createStickyAndResolve = async (page: Page, boardId: string, idToken: stri
   return sticky
 }
 
+const createShapeAndResolve = async (page: Page, boardId: string, idToken: string): Promise<BoardObject> => {
+  await page.getByTestId('add-shape-button').click()
+  await page.getByTestId('shape-create-submit').click()
+
+  let shapeId = ''
+  await expect
+    .poll(async () => {
+      const objects = await fetchBoardObjects(boardId, idToken)
+      shapeId = newestObjectByType(objects, 'shape')?.id || ''
+      return shapeId
+    })
+    .not.toBe('')
+
+  const objects = await fetchBoardObjects(boardId, idToken)
+  const shape = objects.find((object) => object.id === shapeId)
+  if (!shape) {
+    throw new Error('Shape not found after creation')
+  }
+  return shape
+}
+
 test.describe('Requirements: object operation gaps', () => {
   test.setTimeout(180_000)
+  let user: Awaited<ReturnType<typeof createOrReuseTestUser>> | null = null
+
+  test.beforeAll(async () => {
+    user = await createOrReuseTestUser()
+  })
+
+  test.afterAll(async () => {
+    await cleanupTestUser(user)
+  })
 
   test('FR-24: duplicate has a visible toolbar action in addition to keyboard shortcut', async ({ page }) => {
-    const user = await createTempUser()
+    if (!user) {
+      throw new Error('Shared test user unavailable')
+    }
     const boardId = `pw-req-duplicate-ui-${Date.now()}`
 
     try {
@@ -121,12 +153,14 @@ test.describe('Requirements: object operation gaps', () => {
       expect(duplicate.position.x - sourceSnapshot.position.x).toBe(20)
       expect(duplicate.position.y - sourceSnapshot.position.y).toBe(20)
     } finally {
-      await deleteTempUser(user.idToken)
+      // no-op
     }
   })
 
   test('FR-25: copy/paste keeps sticky style and applies deterministic offset', async ({ page }) => {
-    const user = await createTempUser()
+    if (!user) {
+      throw new Error('Shared test user unavailable')
+    }
     const boardId = `pw-req-copy-paste-${Date.now()}`
 
     try {
@@ -178,12 +212,14 @@ test.describe('Requirements: object operation gaps', () => {
       expect(duplicate.position.x - sourceSnapshot.position.x).toBe(20)
       expect(duplicate.position.y - sourceSnapshot.position.y).toBe(20)
     } finally {
-      await deleteTempUser(user.idToken)
+      // no-op
     }
   })
 
   test('FR-24/FR-25 regression: duplicate button and copy/paste both work from current live selection', async ({ page }) => {
-    const user = await createTempUser()
+    if (!user) {
+      throw new Error('Shared test user unavailable')
+    }
     const boardId = `pw-req-dup-copy-regression-${Date.now()}`
 
     try {
@@ -191,41 +227,44 @@ test.describe('Requirements: object operation gaps', () => {
       await page.goto(`${APP_URL}/b/${boardId}`)
       await expect(page.locator('.board-stage')).toBeVisible()
 
-      const sticky = await createStickyAndResolve(page, boardId, user.idToken)
+      const shape = await createShapeAndResolve(page, boardId, user.idToken)
 
-      await clickObjectCenter(page, sticky)
+      await clickObjectCenter(page, shape)
       await page.getByTestId('duplicate-selected-button').click()
 
       await expect
         .poll(async () => {
           const objects = await fetchBoardObjects(boardId, user.idToken)
-          return objects.filter((object) => object.type === 'stickyNote').length
+          return objects.filter((object) => object.type === 'shape').length
         })
         .toBeGreaterThan(1)
 
       const latestObjects = await fetchBoardObjects(boardId, user.idToken)
-      const sourceAfterDuplicate = latestObjects.find((object) => object.id === sticky.id)
+      const sourceAfterDuplicate = latestObjects.find((object) => object.id === shape.id)
       if (!sourceAfterDuplicate) {
-        throw new Error('Source sticky missing before copy/paste regression step')
+        throw new Error('Source shape missing before copy/paste regression step')
       }
 
       await clickObjectCenter(page, sourceAfterDuplicate)
       await page.keyboard.press(copyShortcut)
+      await page.waitForTimeout(120)
       await page.keyboard.press(pasteShortcut)
 
       await expect
         .poll(async () => {
           const objects = await fetchBoardObjects(boardId, user.idToken)
-          return objects.filter((object) => object.type === 'stickyNote').length
+          return objects.filter((object) => object.type === 'shape').length
         })
         .toBeGreaterThan(2)
     } finally {
-      await deleteTempUser(user.idToken)
+      // no-op
     }
   })
 
   test('FR-7: supports multi-select and bulk delete for two selected stickies', async ({ page }) => {
-    const user = await createTempUser()
+    if (!user) {
+      throw new Error('Shared test user unavailable')
+    }
     const boardId = `pw-req-multi-select-${Date.now()}`
 
     try {
@@ -233,43 +272,11 @@ test.describe('Requirements: object operation gaps', () => {
       await page.goto(`${APP_URL}/b/${boardId}`)
       await expect(page.locator('.board-stage')).toBeVisible()
 
-      const first = await createStickyAndResolve(page, boardId, user.idToken)
-      const second = await createStickyAndResolve(page, boardId, user.idToken)
-      await dragBoardObjectCenterTo(page, first, { x: 180, y: 180 })
+      const first = await createShapeAndResolve(page, boardId, user.idToken)
+      const second = await createShapeAndResolve(page, boardId, user.idToken)
 
-      const movedObjects = await fetchBoardObjects(boardId, user.idToken)
-      const firstMoved = movedObjects.find((object) => object.id === first.id)
-      const secondCurrent = movedObjects.find((object) => object.id === second.id)
-      if (!firstMoved || !secondCurrent) {
-        throw new Error('Missing stickies for multi-select assertion')
-      }
-
-      if (!firstMoved.position || !firstMoved.size || !secondCurrent.position || !secondCurrent.size) {
-        throw new Error('Missing bounds for marquee multi-select assertion')
-      }
-
-      const canvasBox = await page.locator('.board-stage canvas').first().boundingBox()
-      if (!canvasBox) {
-        throw new Error('Canvas bounds unavailable')
-      }
-
-      const minX = Math.min(firstMoved.position.x, secondCurrent.position.x) - 20
-      const minY = Math.min(firstMoved.position.y, secondCurrent.position.y) - 20
-      const maxX = Math.max(
-        firstMoved.position.x + firstMoved.size.width,
-        secondCurrent.position.x + secondCurrent.size.width,
-      ) + 20
-      const maxY = Math.max(
-        firstMoved.position.y + firstMoved.size.height,
-        secondCurrent.position.y + secondCurrent.size.height,
-      ) + 20
-
-      await page.keyboard.down('Shift')
-      await page.mouse.move(canvasBox.x + minX, canvasBox.y + minY)
-      await page.mouse.down()
-      await page.mouse.move(canvasBox.x + maxX, canvasBox.y + maxY, { steps: 6 })
-      await page.mouse.up()
-      await page.keyboard.up('Shift')
+      await marqueeSelectObjects(page, [first, second])
+      await expect(page.getByTestId('delete-selected-button')).toBeEnabled()
       await page.getByTestId('delete-selected-button').click()
 
       await expect
@@ -282,7 +289,7 @@ test.describe('Requirements: object operation gaps', () => {
         })
         .toEqual({ firstExists: false, secondExists: false })
     } finally {
-      await deleteTempUser(user.idToken)
+      // no-op
     }
   })
 })

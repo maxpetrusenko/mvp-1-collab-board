@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { readBoardPageSource } from './helpers/boardPageSource.mjs'
 
-const boardPageSource = readFileSync(new URL('../src/pages/BoardPage.tsx', import.meta.url), 'utf8')
+const boardPageSource = readBoardPageSource()
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8')
 const rulesSource = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8')
 

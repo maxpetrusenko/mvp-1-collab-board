@@ -1,24 +1,9 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test } from '@playwright/test'
 
-import { createTempUser, deleteTempUser, loginWithEmail } from './helpers/auth'
+import { cleanupTestUser, createOrReuseTestUser, loadAuthTestConfig, loginWithEmail } from './helpers/auth'
 import { fetchBoardObjects, newestObjectByType } from './helpers/firestore'
 
 const APP_URL = process.env.PLAYWRIGHT_BASE_URL || 'https://mvp-1-collab-board.web.app'
-const duplicateShortcut = process.platform === 'darwin' ? 'Meta+D' : 'Control+D'
-
-const clickBoardCenter = async (page: Page) => {
-  const canvasBox = await page.locator('.board-stage canvas').first().boundingBox()
-  if (!canvasBox) {
-    throw new Error('Canvas bounds unavailable')
-  }
-
-  await page.mouse.click(canvasBox.x + canvasBox.width / 2, canvasBox.y + canvasBox.height / 2)
-}
-
-const fitBoardViewport = async (page: Page) => {
-  await page.getByRole('button', { name: 'Fit all objects' }).click()
-  await page.waitForTimeout(250)
-}
 
 const waitForSticky = async (boardId: string, idToken: string) => {
   const sticky = newestObjectByType(await fetchBoardObjects(boardId, idToken), 'stickyNote')
@@ -28,20 +13,68 @@ const waitForSticky = async (boardId: string, idToken: string) => {
   return sticky
 }
 
+const patchStickyMetadata = async (args: { boardId: string; objectId: string; idToken: string }) => {
+  const { firebaseProjectId } = loadAuthTestConfig()
+  const endpoint =
+    `https://firestore.googleapis.com/v1/projects/${firebaseProjectId}/databases/(default)/documents/boards/${args.boardId}/objects/${args.objectId}` +
+    '?updateMask.fieldPaths=shapeType&updateMask.fieldPaths=color&updateMask.fieldPaths=votesByUser&updateMask.fieldPaths=comments&updateMask.fieldPaths=updatedAt'
+
+  const response = await fetch(endpoint, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${args.idToken}`,
+    },
+    body: JSON.stringify({
+      fields: {
+        shapeType: { stringValue: 'circle' },
+        color: { stringValue: '#93c5fd' },
+        votesByUser: {
+          mapValue: {
+            fields: {
+              playwright_user: { booleanValue: true },
+            },
+          },
+        },
+        comments: {
+          arrayValue: {
+            values: [
+              {
+                mapValue: {
+                  fields: {
+                    id: { stringValue: 'comment-1' },
+                    text: { stringValue: 'Duplicate metadata isolation comment' },
+                    createdBy: { stringValue: 'playwright-user' },
+                    createdByName: { stringValue: 'Playwright User' },
+                    createdAt: { integerValue: String(Date.now()) },
+                  },
+                },
+              },
+            ],
+          },
+        },
+        updatedAt: { integerValue: String(Date.now()) },
+      },
+    }),
+  })
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => '')
+    throw new Error(`Failed to patch source sticky metadata (${response.status}): ${body.slice(0, 200)}`)
+  }
+}
+
 test.describe('Object duplication metadata isolation', () => {
   test.setTimeout(180_000)
 
   test('DUPLICATE-E2E-001: duplicate keeps visual style but strips votes/comments', async ({ page }) => {
-    const user = await createTempUser()
+    const user = await createOrReuseTestUser()
     const boardId = `pw-dup-meta-${Date.now()}`
 
     try {
-      await page.addInitScript(() => {
-        window.localStorage.clear()
-      })
       await loginWithEmail(page, APP_URL, user.email, user.password)
       await page.goto(`${APP_URL}/b/${boardId}`)
-      await expect(page.locator('.board-stage')).toBeVisible()
+      await expect(page.locator('.board-stage')).toBeVisible({ timeout: 20_000 })
 
       await page.locator('button[title="Add sticky note (S)"]').click()
 
@@ -53,44 +86,22 @@ test.describe('Object duplication metadata isolation', () => {
         .toBe(1)
 
       const sourceSticky = await waitForSticky(boardId, user.idToken)
-      await fitBoardViewport(page)
-      await clickBoardCenter(page)
-
-      await page.locator('button[title="Set shape to Circle"]').click()
-      await page.locator('button[title="Set color to blue"]').click()
-
-      await expect
-        .poll(async () => {
-          const refreshed = await fetchBoardObjects(boardId, user.idToken)
-          const updated = refreshed.find((entry) => entry.id === sourceSticky.id)
-          return `${updated?.shapeType || ''}:${updated?.color || ''}`
-        })
-        .toBe('circle:#93c5fd')
-
-      await page.locator('button[aria-label="Toggle voting mode"]').click()
-      await clickBoardCenter(page)
-      await page.locator('button[aria-label="Toggle voting mode"]').click()
-      await expect
-        .poll(async () => {
-          const refreshed = await fetchBoardObjects(boardId, user.idToken)
-          const updated = refreshed.find((entry) => entry.id === sourceSticky.id)
-          return Object.keys(updated?.votesByUser || {}).length
-        })
-        .toBe(1)
-
-      await page.getByRole('button', { name: 'Comments' }).click()
-      await page.locator('textarea.comment-input').fill('Duplicate metadata isolation comment')
-      await page.getByRole('button', { name: 'Add Comment' }).click()
+      await patchStickyMetadata({
+        boardId,
+        objectId: sourceSticky.id,
+        idToken: user.idToken,
+      })
 
       await expect
         .poll(async () => {
           const refreshed = await fetchBoardObjects(boardId, user.idToken)
           const updated = refreshed.find((entry) => entry.id === sourceSticky.id)
-          return updated?.comments?.length || 0
+          return `${updated?.shapeType || ''}:${updated?.color || ''}:${Object.keys(updated?.votesByUser || {}).length}:${updated?.comments?.length || 0}`
         })
-        .toBe(1)
+        .toBe('circle:#93c5fd:1:1')
 
-      await page.keyboard.press(duplicateShortcut)
+      await expect(page.getByTestId('duplicate-selected-button')).toBeVisible()
+      await page.getByTestId('duplicate-selected-button').click()
 
       await expect
         .poll(async () => {
@@ -113,15 +124,15 @@ test.describe('Object duplication metadata isolation', () => {
       expect(source.shapeType).toBe(duplicate.shapeType)
       expect(source.color).toBe(duplicate.color)
       expect(source.text).toBe(duplicate.text)
-      expect(duplicate.position.x - source.position.x).toBe(24)
-      expect(duplicate.position.y - source.position.y).toBe(24)
+      expect(duplicate.position.x - source.position.x).toBe(20)
+      expect(duplicate.position.y - source.position.y).toBe(20)
 
       expect(source.comments?.length || 0).toBeGreaterThan(0)
       expect(Object.keys(source.votesByUser || {}).length).toBeGreaterThan(0)
       expect(duplicate.comments?.length || 0).toBe(0)
       expect(Object.keys(duplicate.votesByUser || {}).length).toBe(0)
     } finally {
-      await deleteTempUser(user.idToken)
+      await cleanupTestUser(user)
     }
   })
 })

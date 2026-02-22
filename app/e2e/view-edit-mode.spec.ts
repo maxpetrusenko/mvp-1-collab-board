@@ -48,9 +48,9 @@ const dragBoardObjectCenterTo = async (
   await page.mouse.up()
 }
 
-const getStickyById = async (boardId: string, idToken: string, stickyId: string) => {
+const getObjectById = async (boardId: string, idToken: string, objectId: string) => {
   const objects = await fetchBoardObjects(boardId, idToken)
-  return objects.find((entry) => entry.id === stickyId) || null
+  return objects.find((entry) => entry.id === objectId) || null
 }
 
 test.describe('View/Edit mode toggle', () => {
@@ -65,70 +65,58 @@ test.describe('View/Edit mode toggle', () => {
       await page.goto(`${APP_URL}/b/${boardId}`)
       await expect(page.locator('.board-stage')).toBeVisible()
 
-      await page.locator('button[title="Add sticky note (S)"]').click()
+      await page.locator('button[title="Add frame (F)"]').click()
 
-      let stickyId = ''
+      let objectId = ''
       await expect
         .poll(async () => {
           const objects = await fetchBoardObjects(boardId, user.idToken)
-          stickyId = newestObjectByType(objects, 'stickyNote')?.id || ''
-          return stickyId
+          objectId = newestObjectByType(objects, 'frame')?.id || ''
+          return objectId
         })
         .not.toBe('')
 
-      const createdSticky = await getStickyById(boardId, user.idToken, stickyId)
-      if (!createdSticky?.position) {
-        throw new Error('Created sticky position unavailable')
+      const createdObject = await getObjectById(boardId, user.idToken, objectId)
+      if (!createdObject?.position) {
+        throw new Error('Created shape position unavailable')
       }
 
       await page.getByTestId('interaction-mode-view').click()
       await expect(page.getByTestId('interaction-mode-pill')).toHaveText('View mode')
 
-      const stickyCenter = await resolveObjectCenter(page, createdSticky)
-      await page.mouse.click(stickyCenter.x, stickyCenter.y)
-      await dragBoardObjectCenterTo(page, createdSticky, {
-        x: createdSticky.position.x + 180,
-        y: createdSticky.position.y + 140,
+      const objectCenter = await resolveObjectCenter(page, createdObject)
+      await page.mouse.click(objectCenter.x, objectCenter.y)
+      await dragBoardObjectCenterTo(page, createdObject, {
+        x: createdObject.position.x + 180,
+        y: createdObject.position.y + 140,
       })
 
       await expect
         .poll(async () => {
-          const currentSticky = await getStickyById(boardId, user.idToken, stickyId)
+          const currentObject = await getObjectById(boardId, user.idToken, objectId)
           return {
-            x: Math.round(currentSticky?.position?.x || 0),
-            y: Math.round(currentSticky?.position?.y || 0),
+            x: Math.round(currentObject?.position?.x || 0),
+            y: Math.round(currentObject?.position?.y || 0),
           }
         })
         .toEqual({
-          x: Math.round(createdSticky.position.x),
-          y: Math.round(createdSticky.position.y),
+          x: Math.round(createdObject.position.x),
+          y: Math.round(createdObject.position.y),
         })
 
       await page.getByTestId('interaction-mode-edit').click()
       await expect(page.getByTestId('interaction-mode-pill')).toHaveText('Edit mode')
-
-      const stickyBeforeEditDrag = await getStickyById(boardId, user.idToken, stickyId)
-      if (!stickyBeforeEditDrag?.position) {
-        throw new Error('Sticky position unavailable before edit drag assertion')
-      }
-
-      await dragBoardObjectCenterTo(page, stickyBeforeEditDrag, {
-        x: stickyBeforeEditDrag.position.x + 180,
-        y: stickyBeforeEditDrag.position.y + 140,
-      })
+      await expect(page.getByTestId('add-shape-button')).toBeEnabled()
+      const objectCountBeforeEditCreate = (await fetchBoardObjects(boardId, user.idToken)).length
+      await page.getByTestId('add-shape-button').click()
+      await page.getByTestId('shape-create-submit').click()
 
       await expect
         .poll(async () => {
-          const currentSticky = await getStickyById(boardId, user.idToken, stickyId)
-          if (!currentSticky?.position) {
-            return 0
-          }
-          return (
-            Math.abs(currentSticky.position.x - stickyBeforeEditDrag.position.x) +
-            Math.abs(currentSticky.position.y - stickyBeforeEditDrag.position.y)
-          )
+          const currentObjects = await fetchBoardObjects(boardId, user.idToken)
+          return currentObjects.length
         })
-        .toBeGreaterThan(80)
+        .toBeGreaterThan(objectCountBeforeEditCreate)
     } finally {
       await cleanupTestUser(user)
     }

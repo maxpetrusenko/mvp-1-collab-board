@@ -49,7 +49,13 @@ describe('Requirements: AI tool schema completeness', () => {
     const toolRegistry = require('../src/tool-registry.js')
     const names = new Set(toolRegistry.TOOL_DEFINITIONS.map((tool) => tool?.function?.name))
 
-    const requiredAdvancedTools = ['createStickyGridTemplate', 'spaceElementsEvenly', 'createJourneyMap']
+    const requiredAdvancedTools = [
+      'createStickyGridTemplate',
+      'spaceElementsEvenly',
+      'createJourneyMap',
+      'createBusinessModelCanvas',
+      'createWorkflowFlowchart',
+    ]
     for (const name of requiredAdvancedTools) {
       assert.ok(names.has(name), `Missing advanced tool definition: ${name}`)
     }

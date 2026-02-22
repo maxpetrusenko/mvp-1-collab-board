@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { readBoardPageSource } from './helpers/boardPageSource.mjs'
 
-const boardPageSource = readFileSync(new URL('../src/pages/BoardPage.tsx', import.meta.url), 'utf8')
+const boardPageSource = readBoardPageSource()
 const mainSource = readFileSync(new URL('../src/main.tsx', import.meta.url), 'utf8')
 const appErrorBoundarySource = readFileSync(
   new URL('../src/components/AppErrorBoundary.tsx', import.meta.url),
@@ -14,8 +15,11 @@ test('RF-001: board object writes are centralized through helper callbacks', () 
   assert.equal(boardPageSource.includes('const writeBoardObjectPatch = useCallback('), true)
   assert.equal(boardPageSource.includes('const deleteBoardObjectById = useCallback('), true)
 
-  const directSetDocWrites = (boardPageSource.match(/setDoc\(doc\(db, 'boards', boardId, 'objects'/g) || []).length
-  const directDeleteWrites = (boardPageSource.match(/deleteDoc\(doc\(db, 'boards', boardId, 'objects'/g) || []).length
+  const directSetDocWrites = (boardPageSource.match(/setDoc\(doc\((?:db|dbInstance), 'boards', boardId, 'objects'/g) || [])
+    .length
+  const directDeleteWrites = (
+    boardPageSource.match(/deleteDoc\(doc\((?:db|dbInstance), 'boards', boardId, 'objects'/g) || []
+  ).length
 
   assert.equal(directSetDocWrites, 1)
   assert.equal(directDeleteWrites, 1)

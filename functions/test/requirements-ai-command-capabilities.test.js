@@ -125,6 +125,98 @@ test('AI-CMDS-002: planner routes open-ended prompts through LLM-first flow', as
   )
 })
 
+test('AI-CMDS-025: conversational prompts suppress accidental tool calls and return a chat-vs-board hint', async () => {
+  const writeCalls = []
+  const context = buildContext()
+  let result = null
+
+  await withMockObjectWriter(
+    async (payload) => {
+      writeCalls.push(payload)
+    },
+    async () => {
+      await withMockGlmClient(
+        {
+          callGLM: async () => ({
+            choices: [
+              {
+                message: {
+                  content: '4',
+                  tool_calls: [
+                    {
+                      id: 'accidental-tool-1',
+                      function: {
+                        name: 'createStickyNote',
+                        arguments: JSON.stringify({ text: '4', color: 'yellow' }),
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          parseToolCalls: parseToolCallsFromResponse,
+          getTextResponse: (response) => response?.choices?.[0]?.message?.content || '',
+        },
+        async () => {
+          result = await __test.runCommandPlan(context, '2+2')
+        },
+      )
+    },
+  )
+
+  assert.equal(result.level, 'warning')
+  assert.match(result.message, /reply in chat or create board objects/i)
+  assert.equal(context.state.length, 0)
+  assert.equal(writeCalls.length, 0)
+  assert.equal(context.executedTools.length, 1)
+  assert.equal(context.executedTools[0].tool, 'assistantResponse')
+  assert.equal(context.executedTools[0].conversationalIntent, true)
+  assert.equal(context.executedTools[0].suppressedToolCalls, 1)
+})
+
+test('AI-CMDS-026: board noun prompts continue to execute returned tool calls', async () => {
+  const context = buildContext()
+
+  await withMockObjectWriter(
+    async () => {},
+    async () => {
+      await withMockGlmClient(
+        {
+          callGLM: async () => ({
+            choices: [
+              {
+                message: {
+                  content: '',
+                  tool_calls: [
+                    {
+                      id: 'board-tool-1',
+                      function: {
+                        name: 'createStickyNote',
+                        arguments: JSON.stringify({ text: 'launch risk', color: 'red' }),
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          parseToolCalls: parseToolCallsFromResponse,
+          getTextResponse: (response) => response?.choices?.[0]?.message?.content || '',
+        },
+        async () => {
+          await __test.runCommandPlan(context, 'sticky note saying launch risk')
+        },
+      )
+    },
+  )
+
+  assert.equal(context.state.length, 1)
+  assert.equal(context.state[0].type, 'stickyNote')
+  assert.equal(context.state[0].text, 'launch risk')
+  assert.equal(context.executedTools.some((entry) => entry.tool === 'createStickyNote'), true)
+})
+
 test('AI-CMDS-007 / T-142: planner keeps sticky-style creation prompts on LLM-first path', async () => {
   const calls = []
 
@@ -194,7 +286,7 @@ test('AI-CMDS-010: non-BMC board framework prompts trigger compound-tool retry w
   )
 })
 
-test('AI-CMDS-017: business model canvas command creates 9 board objects with channels and revenue examples', async () => {
+test('AI-CMDS-017: business model canvas prompts stay LLM-driven and execute board tool calls', async () => {
   const llmCalls = []
   const context = buildContext()
   const command = 'Generate a Business Model Canvas for ai chat bot, including example channels and revenue streams.'
@@ -206,29 +298,62 @@ test('AI-CMDS-017: business model canvas command creates 9 board objects with ch
         {
           callGLM: async (issuedCommand) => {
             llmCalls.push(issuedCommand)
-            throw new Error('BMC deterministic path should bypass LLM')
+            return {
+              choices: [
+                {
+                  message: {
+                    content: 'Created the canvas on the board.',
+                    tool_calls: [
+                      {
+                        id: 'bmc-batch-1',
+                        function: {
+                          name: 'executeBatch',
+                          arguments: JSON.stringify({
+                            operations: [
+                              {
+                                tool: 'createStickyNote',
+                                args: { text: 'Key Partners', color: 'yellow' },
+                              },
+                              {
+                                tool: 'createStickyNote',
+                                args: { text: 'Channels', color: 'blue' },
+                              },
+                              {
+                                tool: 'createStickyNote',
+                                args: { text: 'Revenue Streams', color: 'green' },
+                              },
+                            ],
+                          }),
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            }
           },
-          parseToolCalls: () => [],
-          getTextResponse: () => '',
+          parseToolCalls: parseToolCallsFromResponse,
+          getTextResponse: (response) => response?.choices?.[0]?.message?.content || '',
         },
         async () => {
           const result = await __test.runCommandPlan(context, command)
           assert.equal(result.level, undefined)
-          assert.equal(result.message, 'Created Business Model Canvas on the board.')
+          assert.equal(result.message, 'Created the canvas on the board.')
         },
       )
     },
   )
 
-  assert.equal(llmCalls.length, 0)
+  assert.equal(llmCalls.length, 1)
+  assert.equal(llmCalls[0], command)
   const stickies = context.state.filter((item) => item.type === 'stickyNote')
-  assert.equal(stickies.length, 9)
+  assert.equal(stickies.length, 3)
   assert.equal(stickies.some((item) => item.text?.includes('Channels')), true)
   assert.equal(stickies.some((item) => item.text?.includes('Revenue Streams')), true)
-  assert.equal(stickies.some((item) => item.text?.includes('Examples:')), true)
+  assert.equal(stickies.some((item) => item.text?.includes('Key Partners')), true)
 })
 
-test('AI-CMDS-020: workflow flowchart commands create labeled shapes and connector arrows', async () => {
+test('AI-CMDS-020: workflow flowchart prompts stay LLM-driven and execute shape/connector tools', async () => {
   const llmCalls = []
   const context = buildContext()
   const command = 'Create a password reset flowchart for an email account with arrows between every step.'
@@ -240,10 +365,58 @@ test('AI-CMDS-020: workflow flowchart commands create labeled shapes and connect
         {
           callGLM: async (issuedCommand) => {
             llmCalls.push(issuedCommand)
-            throw new Error('Workflow deterministic path should bypass LLM')
+            return {
+              choices: [
+                {
+                  message: {
+                    content: 'Created workflow flowchart on the board.',
+                    tool_calls: [
+                      {
+                        id: 'flow-batch-1',
+                        function: {
+                          name: 'executeBatch',
+                          arguments: JSON.stringify({
+                            operations: [
+                              {
+                                tool: 'createShape',
+                                args: {
+                                  type: 'rectangle',
+                                  text: 'Start',
+                                  x: 180,
+                                  y: 180,
+                                },
+                              },
+                              {
+                                tool: 'createShape',
+                                args: {
+                                  type: 'diamond',
+                                  text: 'Account exists?',
+                                  x: 520,
+                                  y: 180,
+                                },
+                              },
+                              {
+                                tool: 'createConnector',
+                                args: {
+                                  style: 'arrow',
+                                  startX: 360,
+                                  startY: 250,
+                                  endX: 520,
+                                  endY: 250,
+                                },
+                              },
+                            ],
+                          }),
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            }
           },
-          parseToolCalls: () => [],
-          getTextResponse: () => '',
+          parseToolCalls: parseToolCallsFromResponse,
+          getTextResponse: (response) => response?.choices?.[0]?.message?.content || '',
         },
         async () => {
           const result = await __test.runCommandPlan(context, command)
@@ -254,23 +427,78 @@ test('AI-CMDS-020: workflow flowchart commands create labeled shapes and connect
     },
   )
 
-  assert.equal(llmCalls.length, 0)
+  assert.equal(llmCalls.length, 1)
+  assert.equal(llmCalls[0], command)
   const shapes = context.state.filter((item) => item.type === 'shape')
   const connectors = context.state.filter((item) => item.type === 'connector')
 
-  assert.ok(shapes.length >= 7)
-  assert.equal(connectors.length, Math.max(0, shapes.length - 1))
+  assert.equal(shapes.length, 2)
+  assert.equal(connectors.length, 1)
   assert.equal(shapes.every((item) => typeof item.text === 'string' && item.text.trim().length > 0), true)
   assert.equal(shapes.some((item) => item.shapeType === 'diamond'), true)
+  assert.equal(shapes.some((item) => item.text?.includes('Account exists?')), true)
   assert.equal(connectors.every((item) => item.color === '#1d4ed8'), true)
-  assert.equal(
-    connectors.every((item) => ['top', 'right', 'bottom', 'left'].includes(item.fromAnchor)),
-    true,
+  assert.equal(connectors.every((item) => item.style === 'arrow'), true)
+})
+
+test('AI-CMDS-023: repeated workflow prompts stay LLM-driven across consecutive calls', async () => {
+  const context = buildContext()
+  const command = 'Create a password reset flowchart for an email account with arrows between every step.'
+  const llmCalls = []
+
+  await withMockObjectWriter(
+    async () => {},
+    async () => {
+      await withMockGlmClient(
+        {
+          callGLM: async (issuedCommand) => {
+            llmCalls.push(issuedCommand)
+            return {
+              choices: [
+                {
+                  message: {
+                    content: `Created step ${llmCalls.length}.`,
+                    tool_calls: [
+                      {
+                        id: `flow-step-${llmCalls.length}`,
+                        function: {
+                          name: 'createShape',
+                          arguments: JSON.stringify({
+                            type: 'rectangle',
+                            text: `Step ${llmCalls.length}`,
+                            x: 180 + llmCalls.length * 120,
+                            y: 220,
+                          }),
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            }
+          },
+          parseToolCalls: parseToolCallsFromResponse,
+          getTextResponse: (response) => response?.choices?.[0]?.message?.content || '',
+        },
+        async () => {
+          const first = await __test.runCommandPlan(context, command)
+          assert.equal(first.level, undefined)
+          assert.equal(first.message, 'Created step 1.')
+          const second = await __test.runCommandPlan(context, command)
+          assert.equal(second.level, undefined)
+          assert.equal(second.message, 'Created step 2.')
+        },
+      )
+    },
   )
-  assert.equal(
-    connectors.every((item) => ['top', 'right', 'bottom', 'left'].includes(item.toAnchor)),
-    true,
-  )
+
+  assert.equal(llmCalls.length, 2)
+  assert.equal(llmCalls[0], command)
+  assert.equal(llmCalls[1], command)
+  const shapes = context.state.filter((item) => item.type === 'shape')
+  assert.equal(shapes.length, 2)
+  assert.equal(shapes.some((item) => item.text === 'Step 1'), true)
+  assert.equal(shapes.some((item) => item.text === 'Step 2'), true)
 })
 
 test('AI-CMDS-021: LLM connector tool calls default to visible blue and side anchors for object links', async () => {
@@ -547,20 +775,87 @@ test('AI-CMDS-016 / FR-16: runtime dispatcher routes grid, spacing, and journey-
   assert.match(executeBlock, /case 'createStickyGridTemplate'/)
   assert.match(executeBlock, /case 'spaceElementsEvenly'/)
   assert.match(executeBlock, /case 'createJourneyMap'/)
+  assert.match(executeBlock, /case 'createBusinessModelCanvas'/)
+  assert.match(executeBlock, /case 'createWorkflowFlowchart'/)
 })
 
 test('AI-CMDS-018 / T-103: runtime enforces latency/queue budgets for command execution', () => {
   assert.equal(__test.AI_RESPONSE_TARGET_MS, 2_000)
-  assert.ok(__test.AI_LOCK_WAIT_TIMEOUT_MS <= 1_500)
+  assert.equal(__test.AI_PROVIDER_TIMEOUT_DEFAULT_MS, 20_000)
+  assert.ok(__test.AI_LOCK_WAIT_TIMEOUT_MS >= 30_000)
+  assert.ok(__test.AI_LOCK_WAIT_TIMEOUT_MS <= 120_000)
   assert.ok(__test.AI_LOCK_RETRY_INTERVAL_MS <= 100)
 
   const executeViaLlmBlock = extractTopLevelBlock(functionsSource, 'const executeViaLLM = async (ctx, command) => {')
   assert.match(executeViaLlmBlock, /callGLM\(commandText, boardContext, \{\s*timeoutMs:/)
   assert.match(executeViaLlmBlock, /AI latency budget exhausted before model call/)
 
-  const lockBlock = extractTopLevelBlock(functionsSource, 'const acquireBoardLock = async (boardId, commandId, queueSequence) => {')
+  const lockBlock = extractTopLevelBlock(functionsSource, 'const acquireBoardLock = async (boardId, commandId, _queueSequence) => {')
   assert.match(lockBlock, /AI_LOCK_WAIT_TIMEOUT_MS/)
   assert.match(lockBlock, /AI_LOCK_RETRY_INTERVAL_MS/)
+  assert.equal(lockBlock.includes('processingSequence !== queueSequence'), false)
+
+  const heartbeatBlock = extractTopLevelBlock(functionsSource, 'const startBoardLockHeartbeat = ({')
+  assert.equal(heartbeatBlock.includes('processingSequence !== queueSequence'), false)
+})
+
+test('AI-CMDS-027: create-first prompts can skip board-state hydration while edit prompts require it', () => {
+  assert.equal(__test.shouldLoadBoardStateForCommand('create 6 boxes with message -'), false)
+  assert.equal(__test.shouldLoadBoardStateForCommand('generate a business model canvas'), false)
+  assert.equal(__test.shouldLoadBoardStateForCommand('move object-1 to x 200 y 100'), true)
+  assert.equal(__test.shouldLoadBoardStateForCommand('resize f7f05d9b-2d12-4b7e-8cc1-999999999999'), true)
+})
+
+test('AI-CMDS-028: repetitive box/sticky create prompts trigger grid-template execution hinting', () => {
+  assert.equal(__test.shouldHintGridTemplateCommand('create 6 boxes with message -'), true)
+  assert.equal(__test.shouldHintGridTemplateCommand('add three sticky notes for launch ideas'), true)
+  assert.equal(__test.shouldHintGridTemplateCommand('Generate a Business Model Canvas for ai chat bot'), false)
+  assert.equal(__test.shouldHintGridTemplateCommand('move object-1 to center'), false)
+})
+
+test('AI-CMDS-029: max token budget scales by command complexity', () => {
+  assert.equal(__test.resolveLlmMaxTokensForCommand('create one sticky note hello'), 90)
+  assert.equal(__test.resolveLlmMaxTokensForCommand('create 6 boxes with message -'), 140)
+  assert.equal(
+    __test.resolveLlmMaxTokensForCommand(
+      'Generate a Business Model Canvas for ai chat bot, including example channels and revenue streams.',
+    ),
+    160,
+  )
+  assert.equal(__test.resolveLlmMaxTokensForCommand('change color to blue'), 320)
+})
+
+test('AI-CMDS-022: warning-level command results persist warning status for command history parity', () => {
+  const apiBlock = extractTopLevelBlock(functionsSource, 'exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) => {')
+  assert.match(apiBlock, /const normalizedExistingStatus = resolveCommandStatus\(existingData\.status, existingData\.result\)/)
+  assert.match(apiBlock, /status: normalizedExistingStatus/)
+  assert.match(apiBlock, /const resultLevel = planResult\?\.level === 'warning' \? 'warning' : undefined/)
+  assert.match(apiBlock, /const commandStatus = resolveCommandStatus\('success', result\)/)
+  assert.match(apiBlock, /status: commandStatus/)
+  assert.match(apiBlock, /res\.status\(200\)\.json\(\{ status: commandStatus, commandId: clientCommandId, result \}\)/)
+})
+
+test('AI-CMDS-024: status normalization upgrades success records with warning-level result payloads', () => {
+  assert.equal(__test.resolveCommandStatus('success', { level: 'warning' }), 'warning')
+  assert.equal(__test.resolveCommandStatus('warning', { level: 'warning' }), 'warning')
+  assert.equal(__test.resolveCommandStatus('success', { level: undefined }), 'success')
+})
+
+test('AI-CMDS-025: queue-timeout errors return explicit board-busy responses with 429 status', () => {
+  const apiBlock = extractTopLevelBlock(functionsSource, 'exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) => {')
+  assert.match(apiBlock, /const queueTimeoutError = \/another ai command is still running\/i\.test\(errorMessage\)/)
+  assert.match(apiBlock, /const responseStatus = queueTimeoutError \? 429 : 500/)
+  assert.match(apiBlock, /res\.status\(responseStatus\)\.json\(\{ error: responseErrorMessage \}\)/)
+})
+
+test('AI-CMDS-026: aggregated provider-chain failures return classified, human-readable diagnostics', () => {
+  const error = new Error(
+    'All AI providers failed: [zai-glm] 429: 1113 quota | [minimax] 401: invalid api key | [deepseek] The operation was aborted due to timeout',
+  )
+  const message = __test.toHumanReadableAiErrorMessage(error)
+  assert.match(message, /Z\.ai provider quota is exhausted/i)
+  assert.match(message, /MiniMax provider credentials are invalid/i)
+  assert.match(message, /DeepSeek provider timed out/i)
 })
 
 test('AI-CMDS-003: planner returns warning when LLM provider is unavailable', async () => {
@@ -660,6 +955,7 @@ test('AI-CMDS-008 / T-103: template creation paths commit staged writes through 
     'const createRetrospectiveTemplate = async (ctx) => {',
     'const createStickyGridTemplate = async (ctx, args = {}) => {',
     'const createJourneyMap = async (ctx, stages) => {',
+    'const createBusinessModelCanvas = async (ctx, spec = {}) => {',
   ]
 
   for (const marker of templateMarkers) {
@@ -670,12 +966,16 @@ test('AI-CMDS-008 / T-103: template creation paths commit staged writes through 
   }
 })
 
-test('AI-CMDS-009 / T-142: runtime planning path is fully LLM-first without deterministic sticky parser gating', () => {
+test('AI-CMDS-009 / T-142: runtime planning path is fully LLM-first without deterministic command gating', () => {
   const runPlanBlock = extractTopLevelBlock(functionsSource, 'const runCommandPlan = async (ctx, command) => {')
   assert.match(runPlanBlock, /executeViaLLM/)
   assert.equal(runPlanBlock.includes('executeDeterministicStickyPlan'), false)
   assert.equal(runPlanBlock.includes('parseStickyCommand'), false)
   assert.equal(runPlanBlock.includes('parseReasonListCommand'), false)
+  assert.equal(runPlanBlock.includes('parseBusinessModelCanvasCommand'), false)
+  assert.equal(runPlanBlock.includes('parseWorkflowFlowchartCommand'), false)
+  assert.equal(runPlanBlock.includes('createBusinessModelCanvas'), false)
+  assert.equal(runPlanBlock.includes('createWorkflowFlowchart'), false)
 })
 
 test('AI-CMDS-006 / T-102 / T-103 / T-142: system prompt includes placement, batching, and intent handling guidance', () => {

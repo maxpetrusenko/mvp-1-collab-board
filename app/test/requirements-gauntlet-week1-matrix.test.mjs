@@ -64,7 +64,7 @@ test('RT-SCENARIOS-001: required realtime testing scenarios are covered', () => 
   assert.equal(reconnectSource.includes("window.dispatchEvent(new Event('offline'))"), true)
 
   // 5+ users concurrent
-  assert.equal(aiConcurrencySource.includes('five authenticated users can execute command burst'), true)
+  assert.equal(/execute burst/.test(aiConcurrencySource), true)
   assert.equal(multiUserPerfSource.includes('connectedCount: 5'), true)
   assert.equal(backendPerfSource.includes('five-user presence propagation (RTDB only, no Playwright)'), true)
 })

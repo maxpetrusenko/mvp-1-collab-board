@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { readBoardPageSource } from './helpers/boardPageSource.mjs'
 
-const boardPageSource = readFileSync(new URL('../src/pages/BoardPage.tsx', import.meta.url), 'utf8')
+const boardPageSource = readBoardPageSource()
 
 test('FR-32: client-side object patches do not assign updatedAt from local Date.now()', () => {
   assert.equal(

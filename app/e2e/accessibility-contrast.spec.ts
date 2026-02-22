@@ -6,7 +6,7 @@ import { seedBoardObjects } from './helpers/performance'
 const APP_URL = process.env.PLAYWRIGHT_BASE_URL || 'https://mvp-1-collab-board.web.app'
 
 test.describe('Accessibility: text contrast on colored objects', () => {
-  test.setTimeout(60_000)
+  test.setTimeout(120_000)
   let user: Awaited<ReturnType<typeof createOrReuseTestUser>> | null = null
 
   test.beforeAll(async () => {

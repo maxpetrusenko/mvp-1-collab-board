@@ -389,6 +389,64 @@ const TOOL_DEFINITIONS = [
   {
     type: 'function',
     function: {
+      name: 'createBusinessModelCanvas',
+      description:
+        'Create a 9-section Business Model Canvas with topic-aware section text and optional example channels/revenue streams.',
+      parameters: {
+        type: 'object',
+        properties: {
+          topic: {
+            type: 'string',
+            description: 'Optional product/topic focus for the canvas content'
+          },
+          includeExamples: {
+            type: 'boolean',
+            description: 'Include concrete examples across sections'
+          },
+          includeChannelExamples: {
+            type: 'boolean',
+            description: 'Include concrete examples in Channels section'
+          },
+          includeRevenueExamples: {
+            type: 'boolean',
+            description: 'Include concrete examples in Revenue Streams section'
+          }
+        },
+        required: []
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'createWorkflowFlowchart',
+      description: 'Create a connected workflow flowchart with labeled steps and arrows.',
+      parameters: {
+        type: 'object',
+        properties: {
+          topic: {
+            type: 'string',
+            description: 'Optional workflow topic (for example onboarding, checkout, incident triage)'
+          },
+          steps: {
+            type: 'array',
+            description: 'Optional ordered list of step labels to shape the flowchart',
+            items: {
+              type: 'string'
+            }
+          },
+          isPasswordReset: {
+            type: 'boolean',
+            description: 'Set true for the built-in password reset flowchart'
+          }
+        },
+        required: []
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'createSwotTemplate',
       description: 'Create a SWOT analysis template with 4 quadrants (Strengths, Weaknesses, Opportunities, Threats)',
       parameters: {
@@ -547,12 +605,12 @@ const describeBoardObject = (object) => {
   return `- id=${id} type=${type} color=${color} position=(${Math.round(x)},${Math.round(y)}) size=(${Math.round(width)}x${Math.round(height)})${text ? ` text="${text}"` : ''}`
 }
 
-const buildObjectSnapshot = (state, maxItems = 40) => {
+const buildObjectSnapshot = (state, maxItems = 24) => {
   if (!Array.isArray(state) || state.length === 0) {
     return '- (no objects on board)'
   }
 
-  const safeMaxItems = Math.max(1, Math.min(80, maxItems))
+  const safeMaxItems = Math.max(1, Math.min(40, maxItems))
   const preview = state.slice(0, safeMaxItems).map((item) => describeBoardObject(item))
   if (state.length > safeMaxItems) {
     preview.push(`- ... ${state.length - safeMaxItems} more objects omitted`)
@@ -635,16 +693,17 @@ POSITION OPTIONS: ${POSITION_OPTIONS.join(', ')}
 
 GUIDELINES:
 1. Treat the raw user message as authoritative intent and infer board actions from it.
-2. For board changes, call tools directly. Prefer executeBatch as a compound tool for multi-object or multi-step requests to reduce round-trips and latency.
+2. For board changes, call tools directly. Prefer executeBatch for mixed multi-step requests, and prefer dedicated bulk tools for repetitive layouts.
 3. Convert placement language into tool args: use "position" for named regions and x/y for coordinates like "at 640,360" or "x=640 y=360".
-4. Use dedicated layout/template tools when they match intent: arrangeGrid, createStickyGridTemplate (for 2x3-style requests), spaceElementsEvenly, createSwotTemplate, createRetrospectiveTemplate, createJourneyMap.
+4. Use dedicated layout/template tools when they match intent: arrangeGrid, createStickyGridTemplate (for 2x3-style requests and "N boxes/stickies" layouts), spaceElementsEvenly, createBusinessModelCanvas, createWorkflowFlowchart, createSwotTemplate, createRetrospectiveTemplate, createJourneyMap.
 5. If placement is missing, use client placement hints first, then sensible defaults.
 6. Use existing object IDs from board context. Never invent IDs for existing objects.
 7. Keep sticky text concise, concrete, and varied. Generate distinct high-quality ideas, reasons, or action items.
 8. Requests for board artifacts/frameworks (for example canvas, matrix, map, SWOT, retrospective, journey map) are board-mutation intents: create content on the board with tools, not text-only replies.
 9. Only return plain text with no tool calls when the user clearly asks for chat-only output and does not ask for a board artifact.
 10. For workflow/flowchart requests, create labeled shapes and connect steps using createConnector arrows.
-11. For uncertain intent, make the best reasonable assumption and execute useful board actions.`
+11. For uncertain intent, make the best reasonable assumption and execute useful board actions.
+12. When returning tool calls, keep assistant text empty or very short (under 12 words).`
 }
 
 module.exports = { TOOL_DEFINITIONS, buildSystemPrompt, COLOR_OPTIONS, SHAPE_TYPES, POSITION_OPTIONS }

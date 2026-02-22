@@ -37,6 +37,26 @@ const createStickyAndResolve = async (page: Page, boardId: string, idToken: stri
   return sticky
 }
 
+const createShapeAndResolve = async (page: Page, boardId: string, idToken: string) => {
+  await page.getByTestId('add-shape-button').click()
+  await page.getByTestId('shape-create-submit').click()
+
+  let shape: BoardObject | null = null
+  await expect
+    .poll(async () => {
+      const objects = await fetchBoardObjects(boardId, idToken)
+      shape = newestObjectByType(objects, 'shape')
+      return shape?.id || ''
+    })
+    .not.toBe('')
+
+  if (!shape) {
+    throw new Error('Shape not created')
+  }
+
+  return shape
+}
+
 test.describe('Object deletion', () => {
   test.setTimeout(180_000)
   let user: Awaited<ReturnType<typeof createOrReuseTestUser>> | null = null
@@ -81,14 +101,14 @@ test.describe('Object deletion', () => {
     await page.goto(`${APP_URL}/b/${boardId}`)
     await expect(page.locator('.board-stage')).toBeVisible()
 
-    const sticky = await createStickyAndResolve(page, boardId, user.idToken)
-    await clickObjectCenter(page, sticky)
+    const shape = await createShapeAndResolve(page, boardId, user.idToken)
+    await clickObjectCenter(page, shape)
     await page.keyboard.press('Delete')
 
     await expect
       .poll(async () => {
         const objects = await fetchBoardObjects(boardId, user.idToken)
-        return objects.some((object) => object.id === sticky.id)
+        return objects.some((object) => object.id === shape.id)
       })
       .toBe(false)
   })
@@ -103,14 +123,14 @@ test.describe('Object deletion', () => {
     await page.goto(`${APP_URL}/b/${boardId}`)
     await expect(page.locator('.board-stage')).toBeVisible()
 
-    const sticky = await createStickyAndResolve(page, boardId, user.idToken)
-    await clickObjectCenter(page, sticky)
+    const shape = await createShapeAndResolve(page, boardId, user.idToken)
+    await clickObjectCenter(page, shape)
     await page.keyboard.press('Backspace')
 
     await expect
       .poll(async () => {
         const objects = await fetchBoardObjects(boardId, user.idToken)
-        return objects.some((object) => object.id === sticky.id)
+        return objects.some((object) => object.id === shape.id)
       })
       .toBe(false)
   })

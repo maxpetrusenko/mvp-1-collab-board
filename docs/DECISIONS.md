@@ -393,6 +393,60 @@ Purpose: log system decisions, alternatives, rationale, and change history.
 - Consequences: `BoardPageRuntime.tsx` keeps orchestration state/actions while form/share rendering lives in dedicated components; guardrail source aggregation now includes `boardPanels.tsx`.
 - Revisit Trigger: Continue with command-palette, shortcuts modal, and right-sidebar panel extraction until runtime stays under the LOC target.
 
+### D-043
+- Date: 2026-02-22
+- Status: Accepted
+- Decision: Keep AI object creation on the LLM execution path and harden failure handling with explicit, human-readable provider error messages plus bounded provider timeout/retry controls.
+- Alternatives Considered: Add deterministic sticky fallback creation when the provider fails; keep generic “temporarily unavailable” warnings with no provider diagnostics.
+- Rationale: LLM-first intent execution stays consistent with runtime architecture while clearer error messages and bounded provider call controls improve operator debugging and user trust when provider failures occur.
+- Consequences: Runtime now passes explicit provider timeout/retry overrides to the LLM client, warning responses include actionable failure context, and warning responses keep clean messaging without appending latency-budget text.
+- Revisit Trigger: If telemetry shows persistent provider failures that require queue-tiered retry policy or dynamic provider timeout classes by command type.
+
+### D-044
+- Date: 2026-02-22
+- Status: Accepted
+- Decision: Increase AI board lock wait budget to `90s` and return a clear board-busy response when the queue wait exceeds the budget.
+- Alternatives Considered: Keep sub-2s lock wait budget with frequent timeout failures; remove board lock queueing altogether.
+- Rationale: Real provider latency regularly exceeds the prior lock wait budget, causing user-visible queue timeout failures on normal sequential commands.
+- Consequences: Sequential commands now wait long enough for in-flight command completion, timeout responses are explicit (`Another AI command is still running...`), and timeout HTTP status uses `429`.
+- Revisit Trigger: If queue depth or tail latency grows materially, requiring queue-drain workers or per-board parallelism controls.
+
+### D-045
+- Date: 2026-02-22
+- Status: Accepted
+- Decision: Raise provider timeout default to `12s` for LLM tool-plan calls and prioritize aggregated provider-chain diagnostics over single-provider auth heuristics.
+- Alternatives Considered: Keep `6s` timeout budget and generic auth-first error messaging; add deterministic fallback object creation.
+- Rationale: Multi-object prompts can exceed a 6-second deepseek response window, and mixed provider failures were surfacing misleading auth-only messaging.
+- Consequences: Complex create commands complete reliably through the working provider path, and warning responses now report provider-chain context (`quota`, `invalid credentials`, `timeout`) in human-readable form.
+- Revisit Trigger: If median command latency remains above target under healthy providers, add provider-priority controls or circuit-breaker suppression for known-bad providers.
+
+### D-046
+- Date: 2026-02-22
+- Status: Accepted
+- Decision: Support explicit AI backend endpoint split by runtime mode (`VITE_AI_API_BASE_URL_DEV` for local/dev, `VITE_AI_API_BASE_URL_PROD` for production) with shared fallback.
+- Alternatives Considered: Keep a single `VITE_AI_API_BASE_URL` for all environments.
+- Rationale: Shared endpoint configuration couples local and production behavior, making debugging and rollout isolation difficult.
+- Consequences: Local Vite sessions can target a separate dev/staging backend without changing production URL settings.
+- Revisit Trigger: If endpoint routing moves to reverse-proxy or environment-specific build pipelines that make client-side endpoint branching unnecessary.
+
+### D-047
+- Date: 2026-02-22
+- Status: Accepted
+- Decision: Add provider-priority routing and provider cooldown suppression in the LLM client, and reduce default max token budget for command planning responses.
+- Alternatives Considered: Keep static provider order with no health memory and high token ceiling per request.
+- Rationale: Repeated attempts to known-bad providers increased latency and made command UX feel slower under partial provider outages.
+- Consequences: Providers with auth/quota/timeout failures are skipped for a cooldown window, provider order can be configured via `AI_PROVIDER_PRIORITY`, and default token budget is lowered to reduce response latency.
+- Revisit Trigger: If command quality degrades due token limits or if provider health stabilizes and cooldown tuning needs adjustment.
+
+### D-048
+- Date: 2026-02-22
+- Status: Accepted
+- Decision: Route AI planning through command profiles with compact system prompts + reduced tool schemas for repetitive and structured creation commands, and force tool-call mode (`tool_choice=required`) for board-mutation intent.
+- Alternatives Considered: Keep one full system prompt and broad tool schema for every command; add deterministic non-LLM command handlers for high-volume prompts.
+- Rationale: Full-context prompt + broad schema added measurable latency for compound create commands while LLM-first execution remained mandatory.
+- Consequences: Added dedicated LLM-exposed artifact tools (`createBusinessModelCanvas`, `createWorkflowFlowchart`), introduced grid/artifact prompt+tool fast paths, and moved live prod compound commands into low-3-second runtime range with stable tool-call execution.
+- Revisit Trigger: If strict sub-3s runtime on every compound command is mandatory, evaluate lower-latency model tier or asynchronous multi-object write acknowledgement strategy.
+
 ## Change Log
 - 2026-02-16: Initial decision set created.
 - 2026-02-16: Added auth provider, deployment URL strategy, and error recovery UX decisions.
@@ -422,3 +476,9 @@ Purpose: log system decisions, alternatives, rationale, and change history.
 - 2026-02-22: Added explicit advanced layout/journey tool exposure and runtime latency-budget enforcement decision.
 - 2026-02-22: Added BoardPageRuntime primitive-helper extraction decision with refactor-safe source guardrail aggregation.
 - 2026-02-22: Added boards-side reusable component extraction decision for board create/share UI.
+- 2026-02-22: Added LLM-only create-path reliability decision with human-readable provider failure messaging and bounded provider retry controls.
+- 2026-02-22: Added AI queue wait-budget decision with explicit board-busy timeout response semantics.
+- 2026-02-22: Added provider-timeout and provider-chain diagnostic decision for multi-object command reliability.
+- 2026-02-22: Added runtime AI endpoint split decision for local/dev and production isolation.
+- 2026-02-22: Added provider-priority and cooldown suppression decision to reduce degraded-provider latency impact.
+- 2026-02-22: Added command-profiled compact prompt/tool-routing decision with required tool-call mode for fast compound AI execution.

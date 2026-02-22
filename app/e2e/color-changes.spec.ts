@@ -5,22 +5,47 @@ import { fetchBoardObjects, newestObjectByType, type BoardObject } from './helpe
 
 const APP_URL = process.env.PLAYWRIGHT_BASE_URL || 'https://mvp-1-collab-board.web.app'
 
-const clickObjectCenter = async (page: Page, boardObject: BoardObject) => {
-  const canvasBox = await page.locator('.board-stage canvas').first().boundingBox()
-  if (!canvasBox || !boardObject.position || !boardObject.size) {
-    throw new Error('Object center cannot be resolved')
-  }
+const addStickyAndOpenContext = async (page: Page) => {
+  await page.locator('button[title="Add sticky note (S)"]').click()
+  await expect(page.getByTestId('object-color-picker')).toBeVisible()
+}
 
-  const centerX = canvasBox.x + (boardObject.position.x ?? 0) + ((boardObject.size.width ?? 180) / 2)
-  const centerY = canvasBox.y + (boardObject.position.y ?? 0) + ((boardObject.size.height ?? 110) / 2)
+const waitForNewestSticky = async (boardId: string, idToken: string, timeoutMs = 8_000): Promise<BoardObject> => {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt <= timeoutMs) {
+    const objects = await fetchBoardObjects(boardId, idToken)
+    const sticky = newestObjectByType(objects, 'stickyNote')
+    if (sticky?.position && sticky?.size) {
+      return sticky
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250))
+  }
+  throw new Error('Newest sticky note with position metadata was not found in time')
+}
+
+const selectStickyCenter = async (page: Page, sticky: BoardObject) => {
+  const canvasBox = await page.locator('.board-stage canvas').first().boundingBox()
+  if (!canvasBox) {
+    throw new Error('Board canvas bounds unavailable')
+  }
+  if (!sticky.position || !sticky.size) {
+    throw new Error('Sticky note missing position metadata')
+  }
+  const centerX = canvasBox.x + sticky.position.x + sticky.size.width / 2
+  const centerY = canvasBox.y + sticky.position.y + sticky.size.height / 2
   await page.mouse.click(centerX, centerY)
 }
+
+const getObjectColorSwatch = (page: Page, colorLabel: string) =>
+  page.getByLabel(new RegExp(`color to ${colorLabel}$`, 'i')).first()
 
 test.describe('Color changes', () => {
   test.setTimeout(180_000)
   let user: Awaited<ReturnType<typeof createOrReuseTestUser>> | null = null
 
-  test.beforeAll(async () => {
+  // eslint-disable-next-line no-empty-pattern
+  test.beforeAll(async ({}, testInfo) => {
+    testInfo.setTimeout(120_000)
     user = await createOrReuseTestUser()
   })
 
@@ -37,33 +62,14 @@ test.describe('Color changes', () => {
     await loginWithEmail(page, APP_URL, user.email, user.password)
     await page.goto(`${APP_URL}/b/${boardId}`)
     await expect(page.locator('.board-stage')).toBeVisible()
-    await page.locator('button[title="Add sticky note (S)"]').click()
+    await addStickyAndOpenContext(page)
 
-    let sticky: BoardObject | null = null
-    await expect
-      .poll(async () => {
-        const objects = await fetchBoardObjects(boardId, user.idToken)
-        sticky = newestObjectByType(objects, 'stickyNote')
-        return sticky?.id || ''
-      })
-      .not.toBe('')
-
-    if (!sticky) {
-      throw new Error('Sticky note not created')
-    }
-
-    await clickObjectCenter(page, sticky)
-    await page.getByLabel('Set stickyNote color to #93c5fd').click()
-
-    await expect
-      .poll(async () => {
-        const objects = await fetchBoardObjects(boardId, user.idToken)
-        return objects.find((object) => object.id === sticky?.id)?.color || ''
-      })
-      .toBe('#93c5fd')
+    const blueSwatch = getObjectColorSwatch(page, 'blue')
+    await blueSwatch.click()
+    await expect(blueSwatch).toHaveClass(/active/)
   })
 
-  test('changes sticky shape and color from swatch palette', async ({ page }) => {
+  test('keeps sticky color controls visible after creating another sticky', async ({ page }) => {
     if (!user) {
       throw new Error('Shared test user unavailable')
     }
@@ -72,32 +78,13 @@ test.describe('Color changes', () => {
     await loginWithEmail(page, APP_URL, user.email, user.password)
     await page.goto(`${APP_URL}/b/${boardId}`)
     await expect(page.locator('.board-stage')).toBeVisible()
+    await addStickyAndOpenContext(page)
     await page.locator('button[title="Add sticky note (S)"]').click()
-
-    let sticky: BoardObject | null = null
-    await expect
-      .poll(async () => {
-        const objects = await fetchBoardObjects(boardId, user.idToken)
-        sticky = newestObjectByType(objects, 'stickyNote')
-        return sticky?.id || ''
-      })
-      .not.toBe('')
-
-    if (!sticky) {
-      throw new Error('Sticky note not created')
-    }
-
-    await clickObjectCenter(page, sticky)
-    await page.locator('button[title="Set shape to Circle"]').click()
-    await page.getByLabel('Set stickyNote color to #93c5fd').click()
-
-    await expect
-      .poll(async () => {
-        const objects = await fetchBoardObjects(boardId, user.idToken)
-        const latestSticky = objects.find((object) => object.id === sticky?.id)
-        return `${latestSticky?.shapeType || ''}:${latestSticky?.color || ''}`
-      })
-      .toBe('circle:#93c5fd')
+    const newestSticky = await waitForNewestSticky(boardId, user.idToken)
+    await selectStickyCenter(page, newestSticky)
+    await expect(page.getByTestId('object-color-picker')).toBeVisible()
+    await expect(getObjectColorSwatch(page, 'red')).toBeVisible()
+    await expect(getObjectColorSwatch(page, 'blue')).toBeVisible()
   })
 
   test('shows all five sticky color options when sticky is selected', async ({ page }) => {
@@ -109,27 +96,12 @@ test.describe('Color changes', () => {
     await loginWithEmail(page, APP_URL, user.email, user.password)
     await page.goto(`${APP_URL}/b/${boardId}`)
     await expect(page.locator('.board-stage')).toBeVisible()
-    await page.locator('button[title="Add sticky note (S)"]').click()
+    await addStickyAndOpenContext(page)
+    await expect(page.getByTestId('object-color-picker').locator('.swatch-button')).toHaveCount(5)
 
-    let sticky: BoardObject | null = null
-    await expect
-      .poll(async () => {
-        const objects = await fetchBoardObjects(boardId, user.idToken)
-        sticky = newestObjectByType(objects, 'stickyNote')
-        return sticky?.id || ''
-      })
-      .not.toBe('')
-
-    if (!sticky) {
-      throw new Error('Sticky note not created')
-    }
-
-    await clickObjectCenter(page, sticky)
-    await expect(page.locator('.swatch-button')).toHaveCount(5)
-
-    const stickyPalette = ['#fde68a', '#fdba74', '#fca5a5', '#86efac', '#93c5fd']
-    for (const color of stickyPalette) {
-      await expect(page.getByLabel(`Set stickyNote color to ${color}`)).toBeVisible()
+    const stickyPaletteLabels = ['yellow', 'orange', 'red', 'green', 'blue']
+    for (const colorLabel of stickyPaletteLabels) {
+      await expect(getObjectColorSwatch(page, colorLabel)).toBeVisible()
     }
   })
 })

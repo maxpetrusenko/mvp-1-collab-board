@@ -1,7 +1,7 @@
 # TASKS.md
 
 Date initialized: 2026-02-16
-Last updated: 2026-02-22 (LLM/runtime gap closure + BoardPageRuntime primitive/helper + panels extraction)
+Last updated: 2026-02-22 (LLM/runtime gap closure + command-profiled AI fast path + BoardPageRuntime primitive/helper + panels extraction + LLM error UX hardening + explicit latency indicator logging)
 Cadence: half-day sprint checkpoints
 Source: `AGENTS.md` + `G4 Week 1 - CollabBoard-requirements.pdf`
 
@@ -24,6 +24,14 @@ Source: `AGENTS.md` + `G4 Week 1 - CollabBoard-requirements.pdf`
 | T-146 | B | Close requirements-driven AI/runtime gaps: remove deterministic sticky fallback path, expose journey/2x3/space-evenly tools, enforce runtime latency budgets, and tighten presence publish cadence | Done | 2026-02-22 |
 | T-147 | E | Extract runtime constants/pure helpers into `boardPageRuntimePrimitives.tsx` and keep guardrail tests refactor-safe via shared source aggregation helper | Done | 2026-02-22 |
 | T-148 | E | Extract boards-side UI sections into reusable components (`BoardCreateForm`, `BoardSharingCard`) and keep source guardrails aligned with `boardPageSource` aggregation | Done | 2026-02-22 |
+| T-149 | B | Keep AI object creation on LLM path while improving provider timeout/retry controls and human-readable warning messages for runtime failures | Done | 2026-02-22 |
+| T-150 | B | Remove frequent AI queue lock timeouts for normal sequential commands by extending lock wait budget and returning explicit board-busy messaging | Done | 2026-02-22 |
+| T-151 | B | Restore LLM creation reliability for multi-object prompts by extending provider timeout budget and improving aggregated provider-failure diagnostics | Done | 2026-02-22 |
+| T-152 | D | Split AI API endpoint selection across dev/prod runtime environments (`VITE_AI_API_BASE_URL_DEV`, `VITE_AI_API_BASE_URL_PROD`) to prevent local/prod backend coupling | Done | 2026-02-22 |
+| T-153 | B | Reduce AI command latency under degraded providers with provider-priority routing, provider cooldown suppression, and lower max token default | Done | 2026-02-22 |
+| T-154 | B | Fix MiniMax provider auth failures by switching default endpoint to international OpenAI-compatible URL and reprioritizing fallback order (`deepseek,minimax,zai-glm`) | Done | 2026-02-22 |
+| T-155 | B | Lower create-flow latency with create-first state hydration skip, grid-template LLM hinting for repetitive box/sticky requests, and command-tiered LLM token budgets | Done | 2026-02-22 |
+| T-156 | B | Add command-profiled AI planning fast path (compact system prompts, required tool-choice for mutation commands, and dedicated BMC/workflow tools) to cut compound-command latency while preserving LLM-first execution | Done | 2026-02-22 |
 | T-130 | D | Split task tracking into `TASKS.md` (active/backlog) + `ARCHIVE.md` (history) | Done | 2026-02-20 |
 | T-131 | D | Add explicit Golden Rule: E2E-first (hot-fix exception documented) to `AGENTS.md` | Done | 2026-02-20 |
 | T-132 | D | Add GitHub Actions deploy workflow for `main` and CI quality gate | Done | 2026-02-20 |
@@ -80,3 +88,11 @@ Rule: implement only tasks that map to `docs/requirements.md` (MVP hard gate, bo
 - `T-146`: `functions/test/requirements-ai-command-capabilities.test.js` (`AI-CMDS-014`, `AI-CMDS-015`, `AI-CMDS-016`, `AI-CMDS-018`, `AI-CMDS-019`), `functions/test/requirements-tool-schema.test.js` (FR-16 layout/complex tools), `functions/test/glm-provider-fallback.test.js` (timeout override), `app/test/requirements-performance-thresholds.test.mjs` + `app/test/cursor-publish-policy.test.mjs` (cursor/presence cadence)
 - `T-147`: `app/test/requirements-g4-feature-coverage.test.mjs`, `app/test/requirements-transforms-and-text.test.mjs`, `app/test/helpers/boardPageSource.mjs`
 - `T-148`: `app/src/pages/boardPanels.tsx`, `app/test/helpers/boardPageSource.mjs`, `app/test/requirements-g4-feature-coverage.test.mjs`
+- `T-149`: `functions/test/requirements-ai-command-capabilities.test.js` (`AI-CMDS-003`, `AI-CMDS-018`), `functions/test/glm-provider-fallback.test.js`
+- `T-150`: `functions/index.js` (`AI_LOCK_WAIT_TIMEOUT_MS`, lock-timeout error response), `functions/test/requirements-ai-command-capabilities.test.js` (`AI-CMDS-018`)
+- `T-151`: `functions/index.js` (`AI_PROVIDER_TIMEOUT_DEFAULT_MS`, `toHumanReadableAiErrorMessage` provider-chain classification), `functions/test/requirements-ai-command-capabilities.test.js` (`AI-CMDS-018`, `AI-CMDS-026`)
+- `T-152`: `app/src/pages/boardPageRuntimePrimitives.tsx` (environment-aware AI API base URL selection)
+- `T-153`: `functions/src/glm-client.js` (provider priority override + cooldown suppression + token budget), `functions/test/glm-provider-fallback.test.js` (priority/cooldown coverage)
+- `T-154`: `functions/src/glm-client.js` (default MiniMax API base URL set to `https://api.minimax.io/v1`; preserved region override via `MINIMAX_API_BASE_URL`), `functions/.env` (`AI_PROVIDER_PRIORITY=deepseek,minimax,zai-glm`), live provider probe evidence (`minimax` 200 / `deepseek` 200 / `zai-glm` 429 quota)
+- `T-155`: `functions/index.js` (`shouldLoadBoardStateForCommand`, `shouldHintGridTemplateCommand`, `resolveLlmMaxTokensForCommand`, grid-template hint path + per-command token budget pass-through), `functions/src/tool-registry.js` (bulk layout guidance), `functions/test/requirements-ai-command-capabilities.test.js` (`AI-CMDS-027`, `AI-CMDS-028`, `AI-CMDS-029`), `functions/test/glm-provider-fallback.test.js` (max token override coverage), prod benchmark snapshot (`create 6 boxes` ~3.6s command-runtime / ~4.5s HTTP)
+- `T-156`: `functions/src/tool-registry.js` (`createBusinessModelCanvas`, `createWorkflowFlowchart` tool schema exposure + system-prompt guidance), `functions/src/glm-client.js` (grid/artifact tool-profile routing, required `tool_choice`, compact system prompt path), `functions/index.js` (LLM tool dispatcher handlers for `createBusinessModelCanvas` + `createWorkflowFlowchart`, tuned token tiers), `functions/test/glm-provider-fallback.test.js` (tool-profile and tool-choice assertions), `functions/test/requirements-ai-command-capabilities.test.js` (`AI-CMDS-016`, `AI-CMDS-029`), prod probe snapshot (`create one sticky` ~2.25s runtime, `create 6 boxes` ~3.10s runtime, BMC ~3.20s runtime), runtime tool-evidence snapshot (`create 6 boxes`: `executedTools=8`; `BMC`: `executedTools=11`)
