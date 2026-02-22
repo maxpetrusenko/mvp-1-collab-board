@@ -143,11 +143,16 @@ test('parseStickyCommand supports stickies plural phrasing with count and reason
 
 test('parseStickyCommand supports common sticky typo variants', () => {
   const parsed = __test.parseStickyCommand('add 10 sticikies that list the reasons why my husband is awesome')
+  const parsedSingular = __test.parseStickyCommand('add 1 red stikie saying launch risk')
 
   assert.ok(parsed)
   assert.equal(parsed.count, 10)
   assert.equal(parsed.texts.length, 10)
   assert.equal(new Set(parsed.texts).size, 10)
+  assert.ok(parsedSingular)
+  assert.equal(parsedSingular.count, 1)
+  assert.equal(parsedSingular.color, 'red')
+  assert.deepEqual(parsedSingular.texts, ['launch risk'])
 })
 
 test('parseReasonListCommand supports creative reason generation without explicit sticky wording', () => {

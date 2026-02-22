@@ -1,7 +1,7 @@
 # TASKS.md
 
 Date initialized: 2026-02-16
-Last updated: 2026-02-22 (AI viewport placement guardrail + sequential AI create offsets to prevent overlap + command-profiled AI fast path + runtime/panels extraction + LLM error UX hardening + Firebase dev/prod project split guardrails)
+Last updated: 2026-02-22 (single-sticky text-only fallback latency cut + sticky typo normalization + AI viewport placement guardrail + sequential AI create offsets + frame-and-sticky structural fallback + bulk color mutation fallback + command-profiled AI fast path + runtime/panels extraction + LLM error UX hardening + Firebase dev/prod project split guardrails)
 Cadence: half-day sprint checkpoints
 Source: `AGENTS.md` + `G4 Week 1 - CollabBoard-requirements.pdf`
 
@@ -35,6 +35,8 @@ Source: `AGENTS.md` + `G4 Week 1 - CollabBoard-requirements.pdf`
 | T-157 | B | Keep AI-created objects in the active viewport by applying client placement anchor unless user command explicitly requests coordinates or named board regions | Done | 2026-02-22 |
 | T-158 | D | Split Firebase project aliases into `dev` (local default) and `prod` (explicit deploy), add guarded deploy scripts to prevent accidental production updates | Done | 2026-02-22 |
 | T-159 | B | Apply deterministic side-by-side offsets for repeated AI create operations (`createStickyNote`, `createShape`, `createFrame`) to prevent same-position overlap when no explicit coordinates are requested | Done | 2026-02-22 |
+| T-160 | B | Enforce frame-plus-sticky command fulfillment with deterministic fallback (`N frames with M stickies in each`), add frame color support, and support typo-tolerant bulk color mutation commands (for example, `chaneg color of all stikies to red`) | Done | 2026-02-22 |
+| T-161 | B | Cut one-sticky latency by adding parser-backed fallback after text-only first-pass LLM responses and normalize `stickie`/`stikie` command variants while keeping mixed `...and...` prompts on the standard LLM retry flow | Done | 2026-02-22 |
 | T-130 | D | Split task tracking into `TASKS.md` (active/backlog) + `ARCHIVE.md` (history) | Done | 2026-02-20 |
 | T-131 | D | Add explicit Golden Rule: E2E-first (hot-fix exception documented) to `AGENTS.md` | Done | 2026-02-20 |
 | T-132 | D | Add GitHub Actions deploy workflow for `main` and CI quality gate | Done | 2026-02-20 |
@@ -102,3 +104,5 @@ Rule: implement only tasks that map to `docs/requirements.md` (MVP hard gate, bo
 - `T-157`: `functions/index.js` (`resolveLlmCreateArgsWithPlacement` strips LLM-inferred `position/x/y` when the user command has no explicit placement intent), `functions/test/requirements-ai-command-capabilities.test.js` (`AI-CMDS-004` explicit-placement-preserve vs inferred-placement-fallback assertions)
 - `T-158`: `.firebaserc` + `.firebaserc.example` (alias split), `scripts/deploy-dev.sh`, `scripts/deploy-prod.sh`, `README.md` (local/prod test and deploy separation workflow)
 - `T-159`: `functions/index.js` (`resolveSequentialCreatePlacement`, `ctx.aiCreatePlacementIndex`, create-tool placement sequencing), `functions/test/requirements-ai-command-capabilities.test.js` (`AI-CMDS-004` sequential non-overlap assertions across sticky/shape/frame)
+- `T-160`: `functions/index.js` (`tryApplyFramesWithStickiesFallback`, `parseFramesWithStickiesCommand`, `createFrame` color support, `tryApplyBulkColorMutationFallback`, typo normalization for `chaneg/chnage`), `functions/src/tool-registry.js` (`createFrame.color` schema), `functions/test/requirements-ai-command-capabilities.test.js` (`AI-CMDS-032`, `AI-CMDS-033`, `AI-CMDS-034`), test run `npm test` (`92/92` passing)
+- `T-161`: `functions/index.js` (`executeSingleStickyTextOnlyFallback`, `resolveSingleStickyFastPathArgs`, singular typo normalization + mixed-command guard), `functions/src/glm-client.js` (sticky typo normalization for tool-profile routing), `functions/test/requirements-ai-command-capabilities.test.js` (`AI-CMDS-034` single-sticky fallback coverage), `functions/test/glm-provider-fallback.test.js` (single-sticky typo toolset assertion), `functions/test/command-parser.test.js` (singular typo parse coverage), targeted serial test run (`command-parser`, `glm-provider-fallback`, `requirements-ai-command-capabilities`)

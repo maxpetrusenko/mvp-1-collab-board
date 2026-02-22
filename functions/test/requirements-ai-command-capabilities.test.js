@@ -79,6 +79,9 @@ test('AI-CMDS-001 / T-102 / T-103: tool schema supports command breadth, frame p
 
   const frameTool = toolRegistry.TOOL_DEFINITIONS.find((tool) => tool?.function?.name === 'createFrame')
   assert.ok(frameTool, 'Expected createFrame tool schema')
+  assert.equal(frameTool?.function?.parameters?.properties?.color?.type, 'string')
+  assert.ok(frameTool?.function?.parameters?.properties?.color?.enum?.includes('gray'))
+  assert.ok(frameTool?.function?.parameters?.properties?.color?.enum?.includes('red'))
   assert.equal(frameTool?.function?.parameters?.properties?.position?.type, 'string')
   assert.ok(frameTool?.function?.parameters?.properties?.position?.enum?.includes('top left'))
   assert.ok(frameTool?.function?.parameters?.properties?.position?.enum?.includes('center'))
@@ -276,6 +279,248 @@ test('AI-CMDS-031: no-tool color-edit prompts recover by matching target text to
   assert.equal(context.executedTools.some((entry) => entry.tool === 'changeColor' && entry.id === 'sticky-hello'), true)
 })
 
+test('AI-CMDS-032: frame-plus-sticky prompts recover from partial tool output by creating frames and applying color layouts', async () => {
+  const context = buildContext()
+  const command = 'create 3 frames with 2 stikies in each with different colors'
+
+  await withMockObjectWriter(
+    async () => {},
+    async () => {
+      await withMockGlmClient(
+        {
+          callGLM: async () => ({
+            choices: [
+              {
+                message: {
+                  content: 'Created sticky notes.',
+                  tool_calls: [
+                    {
+                      id: 'partial-frame-layout-1',
+                      function: {
+                        name: 'executeBatch',
+                        arguments: JSON.stringify({
+                          operations: Array.from({ length: 6 }, (_, index) => ({
+                            tool: 'createStickyNote',
+                            args: { text: `Idea ${index + 1}` },
+                          })),
+                        }),
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          parseToolCalls: parseToolCallsFromResponse,
+          getTextResponse: (response) => response?.choices?.[0]?.message?.content || '',
+        },
+        async () => {
+          const result = await __test.runCommandPlan(context, command)
+          assert.equal(result.level, undefined)
+        },
+      )
+    },
+  )
+
+  const frames = context.state.filter((item) => item.type === 'frame')
+  const stickies = context.state.filter((item) => item.type === 'stickyNote')
+
+  assert.equal(frames.length, 3)
+  assert.equal(stickies.length, 6)
+  assert.ok(new Set(frames.map((frame) => frame.color)).size >= 2)
+  assert.ok(new Set(stickies.map((sticky) => sticky.color)).size >= 2)
+
+  const stickyCountPerFrame = frames.map((frame) =>
+    stickies.filter((sticky) => {
+      const stickyWidth = sticky.size?.width || 180
+      const stickyHeight = sticky.size?.height || 110
+      return (
+        sticky.position.x >= frame.position.x &&
+        sticky.position.x + stickyWidth <= frame.position.x + frame.size.width &&
+        sticky.position.y >= frame.position.y &&
+        sticky.position.y + stickyHeight <= frame.position.y + frame.size.height
+      )
+    }).length,
+  )
+  assert.equal(stickyCountPerFrame.every((count) => count >= 2), true)
+})
+
+test('AI-CMDS-033: no-tool bulk color prompts update all matching sticky notes', async () => {
+  const now = Date.now()
+  const writeCalls = []
+  const context = buildContext({
+    state: [
+      {
+        id: 'sticky-green-1',
+        boardId: 'test-board',
+        type: 'stickyNote',
+        text: 'Alpha',
+        color: '#86efac',
+        position: { x: 120, y: 120 },
+        size: { width: 180, height: 110 },
+        zIndex: 1,
+        createdBy: 'test-user',
+        createdAt: now,
+        updatedBy: 'test-user',
+        updatedAt: now,
+        version: 1,
+      },
+      {
+        id: 'sticky-green-2',
+        boardId: 'test-board',
+        type: 'stickyNote',
+        text: 'Beta',
+        color: '#86efac',
+        position: { x: 340, y: 120 },
+        size: { width: 180, height: 110 },
+        zIndex: 2,
+        createdBy: 'test-user',
+        createdAt: now,
+        updatedBy: 'test-user',
+        updatedAt: now,
+        version: 1,
+      },
+      {
+        id: 'sticky-yellow',
+        boardId: 'test-board',
+        type: 'stickyNote',
+        text: 'Gamma',
+        color: '#fde68a',
+        position: { x: 560, y: 120 },
+        size: { width: 180, height: 110 },
+        zIndex: 3,
+        createdBy: 'test-user',
+        createdAt: now,
+        updatedBy: 'test-user',
+        updatedAt: now,
+        version: 1,
+      },
+    ],
+  })
+
+  await withMockObjectWriter(
+    async (payload) => {
+      writeCalls.push(payload)
+    },
+    async () => {
+      await withMockGlmClient(
+        {
+          callGLM: async () => ({
+            choices: [
+              {
+                message: {
+                  content: '',
+                  tool_calls: [],
+                },
+              },
+            ],
+          }),
+          parseToolCalls: () => [],
+          getTextResponse: (response) => response?.choices?.[0]?.message?.content || '',
+        },
+        async () => {
+          const result = await __test.runCommandPlan(context, 'changing all green stikies to red')
+          assert.equal(result.level, undefined)
+          assert.match(result.message, /changed 2 sticky notes from green to red/i)
+        },
+      )
+    },
+  )
+
+  const redStickies = context.state.filter((item) => item.type === 'stickyNote' && item.color === '#fca5a5')
+  const yellowStickies = context.state.filter((item) => item.type === 'stickyNote' && item.color === '#fde68a')
+  assert.equal(redStickies.length, 2)
+  assert.equal(yellowStickies.length, 1)
+  assert.equal(writeCalls.filter((entry) => entry.payload?.color === '#fca5a5').length, 2)
+})
+
+test('AI-CMDS-034: typo-tolerant bulk recolor prompts update all target stickies without source-color filtering', async () => {
+  const now = Date.now()
+  const writeCalls = []
+  const context = buildContext({
+    state: [
+      {
+        id: 'sticky-1',
+        boardId: 'test-board',
+        type: 'stickyNote',
+        text: 'Alpha',
+        color: '#86efac',
+        position: { x: 120, y: 120 },
+        size: { width: 180, height: 110 },
+        zIndex: 1,
+        createdBy: 'test-user',
+        createdAt: now,
+        updatedBy: 'test-user',
+        updatedAt: now,
+        version: 1,
+      },
+      {
+        id: 'sticky-2',
+        boardId: 'test-board',
+        type: 'stickyNote',
+        text: 'Beta',
+        color: '#fde68a',
+        position: { x: 340, y: 120 },
+        size: { width: 180, height: 110 },
+        zIndex: 2,
+        createdBy: 'test-user',
+        createdAt: now,
+        updatedBy: 'test-user',
+        updatedAt: now,
+        version: 1,
+      },
+      {
+        id: 'sticky-3',
+        boardId: 'test-board',
+        type: 'stickyNote',
+        text: 'Gamma',
+        color: '#93c5fd',
+        position: { x: 560, y: 120 },
+        size: { width: 180, height: 110 },
+        zIndex: 3,
+        createdBy: 'test-user',
+        createdAt: now,
+        updatedBy: 'test-user',
+        updatedAt: now,
+        version: 1,
+      },
+    ],
+  })
+
+  await withMockObjectWriter(
+    async (payload) => {
+      writeCalls.push(payload)
+    },
+    async () => {
+      await withMockGlmClient(
+        {
+          callGLM: async () => ({
+            choices: [
+              {
+                message: {
+                  content: '',
+                  tool_calls: [],
+                },
+              },
+            ],
+          }),
+          parseToolCalls: () => [],
+          getTextResponse: (response) => response?.choices?.[0]?.message?.content || '',
+        },
+        async () => {
+          const result = await __test.runCommandPlan(context, 'chaneg color of all stikies to red')
+          assert.equal(result.level, undefined)
+          assert.match(result.message, /changed 3 sticky notes to red/i)
+        },
+      )
+    },
+  )
+
+  const redStickies = context.state.filter((item) => item.type === 'stickyNote' && item.color === '#fca5a5')
+  assert.equal(redStickies.length, 3)
+  assert.equal(writeCalls.filter((entry) => entry.payload?.color === '#fca5a5').length, 3)
+})
+
 test('AI-CMDS-007 / T-142: planner keeps sticky-style creation prompts on LLM-first path', async () => {
   const calls = []
 
@@ -307,6 +552,48 @@ test('AI-CMDS-007 / T-142: planner keeps sticky-style creation prompts on LLM-fi
       assert.equal(result.message, 'Created requested board notes.')
     },
   )
+})
+
+test('AI-CMDS-034: single-sticky text-only first pass applies parser fallback without a second LLM round-trip', async () => {
+  const calls = []
+  const context = buildContext()
+
+  await withMockObjectWriter(
+    async () => {},
+    async () => {
+      await withMockGlmClient(
+        {
+          callGLM: async (command) => {
+            calls.push(command)
+            return {
+              choices: [
+                {
+                  message: {
+                    content: 'Created requested board note.',
+                    tool_calls: [],
+                  },
+                },
+              ],
+            }
+          },
+          parseToolCalls: () => [],
+          getTextResponse: (response) => response?.choices?.[0]?.message?.content || '',
+        },
+        async () => {
+          const result = await __test.runCommandPlan(context, 'add 1 red stikie saying launch risk')
+          assert.equal(result.level, undefined)
+          assert.equal(result.message, 'Created requested board note.')
+        },
+      )
+    },
+  )
+
+  assert.equal(calls.length, 1)
+  const stickies = context.state.filter((item) => item.type === 'stickyNote')
+  assert.equal(stickies.length, 1)
+  assert.equal(stickies[0].text, 'launch risk')
+  assert.equal(stickies[0].color, '#fca5a5')
+  assert.equal(context.executedTools.some((entry) => entry.tool === 'singleStickyTextOnlyFallback'), true)
 })
 
 test('AI-CMDS-010: non-BMC board framework prompts trigger compound-tool retry when the first LLM pass is text-only', async () => {
@@ -869,6 +1156,7 @@ test('AI-CMDS-027: create-first prompts can skip board-state hydration while edi
 
 test('AI-CMDS-030: typo-tolerant color-change commands are classified as board mutations', () => {
   assert.equal(__test.isLikelyBoardMutationCommand('change hello world stiky color to red'), true)
+  assert.equal(__test.isLikelyBoardMutationCommand('chaneg color of all stikies to red'), true)
   assert.equal(__test.isLikelyBoardMutationCommand('set selected color to blue'), true)
 })
 

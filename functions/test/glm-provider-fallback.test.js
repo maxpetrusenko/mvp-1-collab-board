@@ -226,6 +226,35 @@ test('callGLM uses grid-focused toolset and required tool choice for repetitive 
   assert.equal(requestedToolChoice, 'required')
 })
 
+test('callGLM treats stickie typo as single-sticky command and requests only createStickyNote', async () => {
+  delete process.env.Z_AI_GLM_API_KEY
+  delete process.env.MINIMAX_API_KEY
+  process.env.DEEPSEEK_API_KEY = 'deepseek-key'
+  process.env.AI_PROVIDER_MAX_RETRIES = '0'
+
+  let requestedToolNames = []
+  let requestedToolChoice = null
+  global.fetch = async (_url, request) => {
+    const requestBody = JSON.parse(String(request.body))
+    requestedToolNames = (requestBody.tools || []).map((tool) => tool?.function?.name).filter(Boolean)
+    requestedToolChoice = requestBody.tool_choice
+    return {
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          choices: [{ message: { content: 'ok', tool_calls: [] } }],
+        }),
+    }
+  }
+
+  const client = loadFreshClient()
+  await client.callGLM('add 1 red stikie saying launch risk', { state: [], boardId: 'board-1' })
+
+  assert.deepEqual(requestedToolNames, ['createStickyNote'])
+  assert.equal(requestedToolChoice, 'required')
+})
+
 test('callGLM uses structured artifact toolset for business model canvas prompts', async () => {
   delete process.env.Z_AI_GLM_API_KEY
   delete process.env.MINIMAX_API_KEY
