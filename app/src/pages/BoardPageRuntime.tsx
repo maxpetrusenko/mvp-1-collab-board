@@ -4442,13 +4442,6 @@ export const BoardPageRuntime = () => {
     }
     const currentWorldPointer = stageRef.current ? resolveWorldPointer(stageRef.current) : null
     const placementAnchor = currentWorldPointer || lastWorldPointerRef.current || viewportCenter
-    console.info('[AI_UI_DEBUG] submit', {
-      boardId,
-      command,
-      placementAnchor,
-      pointer: currentWorldPointer || lastWorldPointerRef.current || null,
-      viewportCenter,
-    })
     const response = await fetch(aiCommandEndpoint, {
       method: 'POST',
       headers: {
@@ -4470,22 +4463,8 @@ export const BoardPageRuntime = () => {
     })
 
     const payload = (await response.json().catch(() => null)) as
-      | {
-          error?: string
-          result?: { message?: string; aiResponse?: string; level?: 'warning'; objectCount?: number }
-        }
+      | { error?: string; result?: { message?: string; aiResponse?: string; level?: 'warning' } }
       | null
-    console.info('[AI_UI_DEBUG] response', {
-      boardId,
-      command,
-      status: response.status,
-      ok: response.ok,
-      message: payload?.result?.message || null,
-      aiResponse: payload?.result?.aiResponse || null,
-      level: payload?.result?.level || 'info',
-      objectCount: payload?.result?.objectCount ?? null,
-      error: payload?.error || null,
-    })
 
     if (!response.ok) {
       throw new Error(payload?.error || 'AI command failed')

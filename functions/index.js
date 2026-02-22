@@ -168,10 +168,6 @@ const parseNumber = (value, fallback) => {
 }
 
 const sanitizeText = (text) => String(text || '').trim().slice(0, 300)
-
-const logAiDebug = (event, details = {}) => {
-  console.log(`[AI_DEBUG] ${event}`, details)
-}
 const sanitizeAiAssistantResponse = (text) => sanitizeText(String(text || '').replace(/\s+/g, ' '))
 const OUT_OF_SCOPE_AI_MESSAGE = "I can't help with that."
 const AI_TEMP_UNAVAILABLE_MESSAGE =
@@ -2282,15 +2278,6 @@ const executeDeterministicCompoundStickyFallback = async (ctx, command) => {
   if (operations.length === 0) {
     return { count: 0 }
   }
-  logAiDebug('deterministic_compound_fallback', {
-    boardId: ctx.boardId,
-    operationCount: operations.length,
-    operations: operations.map((operation) => ({
-      shapeType: operation.shapeType,
-      color: operation.color,
-      text: operation.text,
-    })),
-  })
 
   await executeBatchTool(ctx, {
     operations: operations.map((args) => ({
@@ -2307,14 +2294,6 @@ const executeDeterministicCompoundStickyFallback = async (ctx, command) => {
 
 const createBusinessModelCanvas = async (ctx, spec = {}) => {
   const anchor = resolvePlacementAnchor(ctx.commandPlacement) || { x: 640, y: 360 }
-  logAiDebug('create_business_model_canvas', {
-    boardId: ctx.boardId,
-    topic: spec.topic || 'AI assistant product',
-    anchor,
-    includeExamples: Boolean(spec.includeExamples),
-    includeChannelExamples: Boolean(spec.includeChannelExamples),
-    includeRevenueExamples: Boolean(spec.includeRevenueExamples),
-  })
   const width = STICKY_SHAPE_SIZES.rectangle.width
   const height = STICKY_SHAPE_SIZES.rectangle.height
   const gapX = width + 54
@@ -2380,19 +2359,8 @@ const executeParsedToolCalls = async (ctx, toolCalls = []) => {
 
 const runCommandPlan = async (ctx, command) => {
   const normalizedCommand = normalizeCommandForPlan(command)
-  logAiDebug('run_command_plan_start', {
-    boardId: ctx.boardId,
-    command: normalizedCommand,
-  })
   const bmcCommand = parseBusinessModelCanvasCommand(normalizedCommand)
   if (bmcCommand) {
-    logAiDebug('run_command_plan_route_bmc', {
-      boardId: ctx.boardId,
-      topic: bmcCommand.topic,
-      includeExamples: bmcCommand.includeExamples,
-      includeChannelExamples: bmcCommand.includeChannelExamples,
-      includeRevenueExamples: bmcCommand.includeRevenueExamples,
-    })
     const bmcResult = await createBusinessModelCanvas(ctx, bmcCommand)
     if (bmcResult.count > 0) {
       const successMessage = 'Created Business Model Canvas on the board.'
@@ -2405,10 +2373,6 @@ const runCommandPlan = async (ctx, command) => {
 
   const deterministicCompoundResult = await executeDeterministicCompoundStickyFallback(ctx, normalizedCommand)
   if (deterministicCompoundResult.count > 0) {
-    logAiDebug('run_command_plan_route_deterministic_compound', {
-      boardId: ctx.boardId,
-      count: deterministicCompoundResult.count,
-    })
     const successMessage = 'Created requested board objects.'
     return {
       message: successMessage,
@@ -2425,10 +2389,6 @@ const runCommandPlan = async (ctx, command) => {
   }
 
   try {
-    logAiDebug('run_command_plan_route_llm', {
-      boardId: ctx.boardId,
-      command: normalizedCommand,
-    })
     return await executeViaLLM(ctx, normalizedCommand)
   } catch (llmError) {
     console.error('LLM-first execution failed:', llmError)
@@ -3067,14 +3027,6 @@ exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) =>
       ...(aiResponse ? { aiResponse } : {}),
       ...(resultLevel ? { level: resultLevel } : {}),
     }
-    logAiDebug('api_ai_command_result', {
-      boardId,
-      commandId: clientCommandId,
-      objectCount: result.objectCount,
-      toolCount: result.executedTools.length,
-      message: result.message,
-      level: result.level || 'info',
-    })
 
     await commandRef.set(
       {
