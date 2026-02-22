@@ -709,7 +709,7 @@ const parseBulkColorMutationIntent = (command) => {
     return null
   }
 
-  const objectTypePattern = '(sticky(?:\\s*note)?s?|stickers?|notes?|shapes?|frames?|objects?|items?)'
+  const objectTypePattern = '(sticky(?:\\s*note)?s?|stickie?s?|notes?|shapes?|frames?|objects?|items?)'
   const hasMutationVerb = /\b(?:change|changing|changed|set|update|recolor|edit|turn|make)\b/i.test(normalized)
   if (!hasMutationVerb) {
     return null
