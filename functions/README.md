@@ -47,5 +47,11 @@ Notes:
 ## Deploy with Firebase
 From `mvp-1-collab-board/` root:
 ```bash
-firebase deploy --only functions
+bash scripts/deploy-dev.sh --only functions
+```
+
+Explicit production deploy:
+```bash
+git switch main
+ALLOW_PROD_DEPLOY=1 bash scripts/deploy-prod.sh --only functions
 ```

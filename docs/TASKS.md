@@ -1,7 +1,7 @@
 # TASKS.md
 
 Date initialized: 2026-02-16
-Last updated: 2026-02-22 (LLM/runtime gap closure + command-profiled AI fast path + BoardPageRuntime primitive/helper + panels extraction + LLM error UX hardening + explicit latency indicator logging)
+Last updated: 2026-02-22 (AI viewport placement guardrail for LLM-inferred coordinates + command-profiled AI fast path + runtime/panels extraction + LLM error UX hardening + explicit latency indicator logging + Firebase dev/prod project split guardrails)
 Cadence: half-day sprint checkpoints
 Source: `AGENTS.md` + `G4 Week 1 - CollabBoard-requirements.pdf`
 
@@ -32,6 +32,8 @@ Source: `AGENTS.md` + `G4 Week 1 - CollabBoard-requirements.pdf`
 | T-154 | B | Fix MiniMax provider auth failures by switching default endpoint to international OpenAI-compatible URL and reprioritizing fallback order (`deepseek,minimax,zai-glm`) | Done | 2026-02-22 |
 | T-155 | B | Lower create-flow latency with create-first state hydration skip, grid-template LLM hinting for repetitive box/sticky requests, and command-tiered LLM token budgets | Done | 2026-02-22 |
 | T-156 | B | Add command-profiled AI planning fast path (compact system prompts, required tool-choice for mutation commands, and dedicated BMC/workflow tools) to cut compound-command latency while preserving LLM-first execution | Done | 2026-02-22 |
+| T-157 | B | Keep AI-created objects in the active viewport by applying client placement anchor unless user command explicitly requests coordinates or named board regions | Done | 2026-02-22 |
+| T-158 | D | Split Firebase project aliases into `dev` (local default) and `prod` (explicit deploy), add guarded deploy scripts to prevent accidental production updates | Done | 2026-02-22 |
 | T-130 | D | Split task tracking into `TASKS.md` (active/backlog) + `ARCHIVE.md` (history) | Done | 2026-02-20 |
 | T-131 | D | Add explicit Golden Rule: E2E-first (hot-fix exception documented) to `AGENTS.md` | Done | 2026-02-20 |
 | T-132 | D | Add GitHub Actions deploy workflow for `main` and CI quality gate | Done | 2026-02-20 |
@@ -96,3 +98,5 @@ Rule: implement only tasks that map to `docs/requirements.md` (MVP hard gate, bo
 - `T-154`: `functions/src/glm-client.js` (default MiniMax API base URL set to `https://api.minimax.io/v1`; preserved region override via `MINIMAX_API_BASE_URL`), `functions/.env` (`AI_PROVIDER_PRIORITY=deepseek,minimax,zai-glm`), live provider probe evidence (`minimax` 200 / `deepseek` 200 / `zai-glm` 429 quota)
 - `T-155`: `functions/index.js` (`shouldLoadBoardStateForCommand`, `shouldHintGridTemplateCommand`, `resolveLlmMaxTokensForCommand`, grid-template hint path + per-command token budget pass-through), `functions/src/tool-registry.js` (bulk layout guidance), `functions/test/requirements-ai-command-capabilities.test.js` (`AI-CMDS-027`, `AI-CMDS-028`, `AI-CMDS-029`), `functions/test/glm-provider-fallback.test.js` (max token override coverage), prod benchmark snapshot (`create 6 boxes` ~3.6s command-runtime / ~4.5s HTTP)
 - `T-156`: `functions/src/tool-registry.js` (`createBusinessModelCanvas`, `createWorkflowFlowchart` tool schema exposure + system-prompt guidance), `functions/src/glm-client.js` (grid/artifact tool-profile routing, required `tool_choice`, compact system prompt path), `functions/index.js` (LLM tool dispatcher handlers for `createBusinessModelCanvas` + `createWorkflowFlowchart`, tuned token tiers), `functions/test/glm-provider-fallback.test.js` (tool-profile and tool-choice assertions), `functions/test/requirements-ai-command-capabilities.test.js` (`AI-CMDS-016`, `AI-CMDS-029`), prod probe snapshot (`create one sticky` ~2.25s runtime, `create 6 boxes` ~3.10s runtime, BMC ~3.20s runtime), runtime tool-evidence snapshot (`create 6 boxes`: `executedTools=8`; `BMC`: `executedTools=11`)
+- `T-157`: `functions/index.js` (`resolveLlmCreateArgsWithPlacement` strips LLM-inferred `position/x/y` when the user command has no explicit placement intent), `functions/test/requirements-ai-command-capabilities.test.js` (`AI-CMDS-004` explicit-placement-preserve vs inferred-placement-fallback assertions)
+- `T-158`: `.firebaserc` + `.firebaserc.example` (alias split), `scripts/deploy-dev.sh`, `scripts/deploy-prod.sh`, `README.md` (local/prod test and deploy separation workflow)

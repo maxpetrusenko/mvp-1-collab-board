@@ -259,6 +259,15 @@ Purpose: log system decisions, alternatives, rationale, and change history.
 - Revisit Trigger: If modal usability testing shows the side-column scroll pattern causes discoverability issues on smaller devices.
 
 ### D-028
+- Date: 2026-02-22
+- Status: Accepted
+- Decision: Split Firebase project aliases into `dev` and `prod`, with `dev` as local default and explicit guarded script for `prod` deploys.
+- Alternatives Considered: Keep single default production project; rely on manual `--project` flags per command.
+- Rationale: Prevents local iteration and ad hoc deploys from changing production behavior.
+- Consequences: Team maintains two Firebase project ids and follows alias-based deploy scripts.
+- Revisit Trigger: If infrastructure shifts to a separate environment promotion pipeline with automated release gating.
+
+### D-028
 - Date: 2026-02-20
 - Status: Accepted
 - Decision: Use a two-tier quality workflow: fast dev gate (lint + build, no tests) for day-to-day iteration, and a parallelized full gate (unit + functions + sharded Playwright) only before production pushes.
@@ -447,6 +456,15 @@ Purpose: log system decisions, alternatives, rationale, and change history.
 - Consequences: Added dedicated LLM-exposed artifact tools (`createBusinessModelCanvas`, `createWorkflowFlowchart`), introduced grid/artifact prompt+tool fast paths, and moved live prod compound commands into low-3-second runtime range with stable tool-call execution.
 - Revisit Trigger: If strict sub-3s runtime on every compound command is mandatory, evaluate lower-latency model tier or asynchronous multi-object write acknowledgement strategy.
 
+### D-049
+- Date: 2026-02-22
+- Status: Accepted
+- Decision: Treat user-authored placement phrases/coordinates as the only source that may preserve direct `x/y` or named `position` from model tool arguments; otherwise apply the client viewport anchor for create operations.
+- Alternatives Considered: Trust model-provided `x/y` or named positions on every create call; always force anchor placement and ignore explicit user placement text.
+- Rationale: Users reported AI-created objects appearing outside their active view when model-inferred coordinates drifted; explicit user placement still needs deterministic support.
+- Consequences: Default create behavior stays in-view for sticky/shape/frame generation, while commands such as `at top right` and `at 640,360` preserve explicit intent.
+- Revisit Trigger: If advanced layout prompts require autonomous model coordinate planning without explicit user placement language.
+
 ## Change Log
 - 2026-02-16: Initial decision set created.
 - 2026-02-16: Added auth provider, deployment URL strategy, and error recovery UX decisions.
@@ -482,3 +500,4 @@ Purpose: log system decisions, alternatives, rationale, and change history.
 - 2026-02-22: Added runtime AI endpoint split decision for local/dev and production isolation.
 - 2026-02-22: Added provider-priority and cooldown suppression decision to reduce degraded-provider latency impact.
 - 2026-02-22: Added command-profiled compact prompt/tool-routing decision with required tool-call mode for fast compound AI execution.
+- 2026-02-22: Added explicit-user-placement-only preservation decision to keep AI-created objects anchored in active viewport by default.

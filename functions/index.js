@@ -38,11 +38,13 @@ const COLOR_NAME_ALTERNATION = 'yellow|blue|green|pink|red|orange|purple|gray'
 const COLOR_NAME_PATTERN = `(?:${COLOR_NAME_ALTERNATION})`
 const CREATE_VERB_PATTERN = '(?:add(?:ed)?|create(?:d)?|make|generate|build|insert|put)'
 const BOARD_MUTATION_VERB_REGEX =
-  /\b(?:add|create|make|generate|build|insert|put|arrange|organize|organise|move|resize|rotate|delete|duplicate|connect|group|cluster|layout|map|draft|brainstorm|draw|outline)\b/i
+  /\b(?:add|create|make|generate|build|insert|put|arrange|organize|organise|move|resize|rotate|delete|duplicate|connect|group|cluster|layout|map|draft|brainstorm|draw|outline|change|set|update|recolor|edit|rename|retitle|align|distribute|space|share)\b/i
 const BOARD_ARTIFACT_REGEX =
   /\b(?:board|whiteboard|sticky(?:\s*note)?s?|sticker(?:s)?|notes?|frame(?:s)?|shape(?:s)?|connector(?:s)?|canvas|matrix|map|roadmap|retrospective|swot|journey(?:\s+map)?|mind\s*map|business\s+model\s+canvas|flow\s*chart|workflow|process\s+flow)\b/i
 const STRUCTURED_BOARD_ARTIFACT_REGEX =
   /\b(?:business\s+model\s+canvas|swot|retrospective|journey\s+map|mind\s*map|kanban|value\s+proposition\s+canvas|flow\s*chart|workflow)\b/i
+const BOARD_COLOR_MUTATION_REGEX =
+  /\b(?:change|set|update|recolor|edit)\b(?:\s+\w+){0,8}\s+\bcolor\b/i
 const CHAT_QUESTION_PREFIX_REGEX = /\b(?:what|who|when|where|why|how|explain|summarize|summarise|tell|calculate|solve)\b/i
 const PURE_MATH_EXPRESSION_REGEX = /^[\d+\-*/().=%\s]+$/
 const COLOR_PHRASE_REGEX = new RegExp(`\\b(${COLOR_NAME_ALTERNATION})\\s+color\\b`, 'i')
@@ -360,8 +362,24 @@ const isLikelyBoardMutationCommand = (command) => {
 
   const hasMutationVerb = BOARD_MUTATION_VERB_REGEX.test(normalized)
   const hasBoardArtifact = BOARD_ARTIFACT_REGEX.test(normalized)
+  const hasColorMutation = BOARD_COLOR_MUTATION_REGEX.test(normalized)
 
   if (hasBoardArtifact && hasMutationVerb) {
+    return true
+  }
+
+  if (hasBoardArtifact && hasColorMutation) {
+    return true
+  }
+
+  if (hasColorMutation && /\b(?:selected|selection|object|item)\b/i.test(normalized)) {
+    return true
+  }
+
+  if (
+    hasColorMutation &&
+    /^(?:please\s+)?(?:change|set|update|recolor|edit)\b/i.test(normalized)
+  ) {
     return true
   }
 
@@ -422,14 +440,146 @@ const shouldLoadBoardStateForCommand = (command) => {
   }
 
   if (
-    /\b(move|resize|rotate|delete|duplicate|connect|link|recolor|change color|update text|rename|retitle|align|distribute|space|share|permission|access)\b/i.test(
+    /\b(move|resize|rotate|delete|duplicate|connect|link|recolor|change|set|update|rename|retitle|align|distribute|space|share|permission|access)\b/i.test(
       normalized,
     )
   ) {
     return true
   }
 
+  if (BOARD_COLOR_MUTATION_REGEX.test(normalized)) {
+    return true
+  }
+
   return false
+}
+
+const COLOR_MUTABLE_OBJECT_TYPES = new Set(['stickyNote', 'shape', 'frame', 'text', 'connector'])
+
+const normalizeSearchText = (value) =>
+  String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9#\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+const extractColorMutationIntent = (command) => {
+  const normalized = normalizeCommandForPlan(command).toLowerCase()
+  if (!normalized || !BOARD_COLOR_MUTATION_REGEX.test(normalized)) {
+    return null
+  }
+
+  const quotedTarget =
+    command
+      .match(/["']([^"']{1,120})["']/)?.[1]
+      ?.trim() || ''
+
+  const hexMatches = normalized.match(/#(?:[0-9a-f]{3}|[0-9a-f]{6})\b/gi) || []
+  const namedColorRegex = new RegExp(`\\b(${COLOR_NAME_ALTERNATION})\\b`, 'gi')
+  const namedColorMatches = normalized.match(namedColorRegex) || []
+  const rawColor = hexMatches.at(-1) || namedColorMatches.at(-1) || ''
+  if (!rawColor) {
+    return null
+  }
+
+  const beforeColor = normalized.split(/\bcolor\b/i)[0] || ''
+  const normalizedTarget = normalizeSearchText(
+    beforeColor
+      .replace(/^(?:please\s+)?(?:change|set|update|recolor|edit)\b\s*/i, '')
+      .replace(
+        /\b(?:the|a|an|my|this|that|selected|selection|current|existing|note|notes|sticky|sticker|shape|frame|text|object|item|of|to|for|with)\b/gi,
+        ' ',
+      ),
+  )
+
+  return {
+    color: rawColor,
+    targetText: normalizeSearchText(quotedTarget || normalizedTarget),
+    selectedOnly: /\b(?:selected|selection|current)\b/i.test(normalized),
+  }
+}
+
+const buildColorMutationSearchLabel = (candidate) => {
+  const typeAlias =
+    candidate.type === 'stickyNote'
+      ? 'sticky sticky note note'
+      : candidate.type === 'frame'
+        ? 'frame'
+        : candidate.type === 'shape'
+          ? `shape ${normalizeSearchText(candidate.shapeType)}`
+          : candidate.type === 'text'
+            ? 'text'
+            : 'connector'
+
+  return normalizeSearchText(
+    [
+      typeAlias,
+      sanitizeText(candidate.text || ''),
+      sanitizeText(candidate.title || ''),
+    ].join(' '),
+  )
+}
+
+const resolveColorMutationTarget = (state = [], intent) => {
+  const candidates = state.filter((candidate) => COLOR_MUTABLE_OBJECT_TYPES.has(candidate.type))
+  if (candidates.length === 0) {
+    return null
+  }
+
+  if (intent.selectedOnly) {
+    const orderedByRecent = [...candidates].sort((left, right) => (right.updatedAt || 0) - (left.updatedAt || 0))
+    return orderedByRecent[0] || null
+  }
+
+  const targetText = normalizeSearchText(intent.targetText)
+  if (!targetText) {
+    return candidates.length === 1 ? candidates[0] : null
+  }
+
+  const targetTokens = targetText.split(' ').filter((token) => token.length > 1)
+  let winner = null
+  let winnerScore = 0
+  let scoreTies = 0
+
+  for (const candidate of candidates) {
+    const label = buildColorMutationSearchLabel(candidate)
+    let score = 0
+    if (label === targetText) {
+      score = 100
+    } else if (label.includes(targetText)) {
+      score = 85
+    } else if (targetTokens.length > 0) {
+      const tokenMatches = targetTokens.filter((token) => label.includes(token)).length
+      if (tokenMatches > 0) {
+        score = tokenMatches * 10
+      }
+    }
+
+    if (score <= 0) {
+      continue
+    }
+
+    if (score > winnerScore) {
+      winner = candidate
+      winnerScore = score
+      scoreTies = 1
+      continue
+    }
+
+    if (score === winnerScore) {
+      scoreTies += 1
+    }
+  }
+
+  if (!winner || winnerScore <= 0) {
+    return null
+  }
+
+  if (scoreTies > 1 && winnerScore < 85) {
+    return null
+  }
+
+  return winner
 }
 
 const stripLeadingCreateInstruction = (value) =>
@@ -563,6 +713,36 @@ const toFiniteViewport = (candidate) => {
   return { x, y, width, height }
 }
 
+const resolveViewportCenterFromPlacement = (commandPlacement) => {
+  const viewportCenter = toFinitePoint(commandPlacement?.viewportCenter)
+  if (viewportCenter) {
+    return viewportCenter
+  }
+
+  const viewport = toFiniteViewport(commandPlacement?.viewport)
+  if (!viewport) {
+    return null
+  }
+
+  return {
+    x: viewport.x + viewport.width / 2,
+    y: viewport.y + viewport.height / 2,
+  }
+}
+
+const isPointInsideViewport = (point, viewport, padding = 0) => {
+  if (!point || !viewport) {
+    return false
+  }
+
+  return (
+    point.x >= viewport.x - padding &&
+    point.x <= viewport.x + viewport.width + padding &&
+    point.y >= viewport.y - padding &&
+    point.y <= viewport.y + viewport.height + padding
+  )
+}
+
 const normalizeAiPlacementHint = (candidate) => {
   console.log('[PLACEMENT] Raw input:', JSON.stringify(candidate))
   if (!candidate || typeof candidate !== 'object') {
@@ -633,14 +813,27 @@ const resolveLlmCreateArgsWithPlacement = (
     console.log('[PLACEMENT_RESOLVE] Ignoring model-provided placement because command has no explicit user placement intent')
   }
 
-  const anchor = resolvePlacementAnchor(commandPlacement)
+  let anchor = resolvePlacementAnchor(commandPlacement)
+  if (!userPlacementIntent) {
+    const viewport = toFiniteViewport(commandPlacement?.viewport)
+    const viewportCenter = resolveViewportCenterFromPlacement(commandPlacement)
+    if (viewport && anchor && !isPointInsideViewport(anchor, viewport, 0)) {
+      console.log('[PLACEMENT_RESOLVE] Anchor outside viewport for non-explicit placement intent, using viewport center')
+      anchor = viewportCenter || anchor
+    } else if (!anchor && viewportCenter) {
+      anchor = viewportCenter
+    }
+  }
   console.log('[PLACEMENT_RESOLVE] anchor from commandPlacement:', anchor)
   if (!anchor) {
     console.log('[PLACEMENT_RESOLVE] No anchor, returning args as-is')
     return args
   }
 
-  const resolved = { ...args }
+  const resolved =
+    modelProvidedPlacement && !userPlacementIntent
+      ? { ...args, position: undefined, x: undefined, y: undefined }
+      : { ...args }
   if (toolName === 'createStickyNote') {
     const stickyShapeType = normalizeShapeType(resolved.shapeType || resolved.type, 'rectangle')
     const stickySize = STICKY_SHAPE_SIZES[stickyShapeType] || STICKY_SHAPE_SIZES.rectangle
@@ -2069,6 +2262,35 @@ const changeColor = async (ctx, args) => {
   return object
 }
 
+const tryApplyColorMutationFallback = async (ctx, command) => {
+  const intent = extractColorMutationIntent(command)
+  if (!intent) {
+    return null
+  }
+
+  const target = resolveColorMutationTarget(ctx.state, intent)
+  if (!target) {
+    return null
+  }
+
+  const updated = await changeColor(ctx, {
+    objectId: target.id,
+    color: intent.color,
+  })
+  if (!updated) {
+    return null
+  }
+
+  const colorLabel = String(intent.color || '').trim() || 'requested'
+  const typeLabel = target.type === 'stickyNote' ? 'sticky note' : target.type
+  const message = sanitizeAiAssistantResponse(`Changed ${typeLabel} color to ${colorLabel}.`)
+  return {
+    objectId: target.id,
+    color: updated.color,
+    message,
+  }
+}
+
 const createSwotTemplate = async (ctx) => {
   const startX = 100
   const startY = 100
@@ -3152,6 +3374,16 @@ const executeViaLLM = async (ctx, command) => {
   }
 
   if (llmPass.toolCalls.length === 0) {
+    if (boardMutationIntent) {
+      const colorMutationFallback = await tryApplyColorMutationFallback(ctx, command)
+      if (colorMutationFallback) {
+        return {
+          message: colorMutationFallback.message,
+          aiResponse: colorMutationFallback.message,
+        }
+      }
+    }
+
     const assistantMessage = llmPass.textResponse || OUT_OF_SCOPE_AI_MESSAGE
     ctx.executedTools.push({
       tool: 'assistantResponse',
@@ -3208,6 +3440,14 @@ const executeViaLLM = async (ctx, command) => {
   }
 
   if (boardMutationIntent && !boardMutationApplied) {
+    const colorMutationFallback = await tryApplyColorMutationFallback(ctx, command)
+    if (colorMutationFallback) {
+      return {
+        message: colorMutationFallback.message,
+        aiResponse: colorMutationFallback.message,
+      }
+    }
+
     const assistantMessage =
       llmPass.textResponse ||
       "I couldn't apply that command to the board. Please retry with explicit board actions."

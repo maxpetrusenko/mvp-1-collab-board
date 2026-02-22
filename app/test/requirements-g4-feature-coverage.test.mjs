@@ -576,7 +576,8 @@ test('G4-GLM-002: GLM function handlers implemented in index.js', () => {
     true,
   )
   assert.equal(
-    glmIndexSource.includes('await executeLlmToolCall(ctx, toolCall.name, toolCall.arguments'),
+    glmIndexSource.includes("await executeLlmToolCall(ctx, toolCall.name, toolCall.arguments)") ||
+      glmIndexSource.includes("await executeLlmToolCall(ctx, toolCall.name, toolCall.arguments, {"),
     true,
   )
   assert.equal(glmIndexSource.includes("case 'deleteObject':"), true)

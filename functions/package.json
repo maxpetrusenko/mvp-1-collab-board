@@ -7,7 +7,7 @@
     "node": "22"
   },
   "scripts": {
-    "deploy": "firebase deploy --only functions",
+    "deploy": "bash ../scripts/deploy-dev.sh --only functions",
     "test": "node --test"
   },
   "dependencies": {
