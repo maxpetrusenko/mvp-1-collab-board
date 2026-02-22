@@ -25,7 +25,11 @@ test('TS-012 / RQ-012: board list panel exists for board switching', () => {
   assert.equal(boardPageSource.includes('data-testid="board-list-owned"'), true)
   assert.equal(boardPageSource.includes('data-testid="board-list-shared"'), true)
   assert.equal(boardPageSource.includes('ownedBoards.map((boardMeta) => renderBoardListItem(boardMeta))'), true)
-  assert.equal(boardPageSource.includes('scheduleBoardNavigate(boardMeta.id)'), true)
+  assert.equal(
+    boardPageSource.includes('scheduleBoardNavigate(boardMeta.id)') ||
+      boardPageSource.includes('onScheduleBoardNavigate(boardMeta.id)'),
+    true,
+  )
 })
 
 test('TS-013 / RQ-013: sticky palette is exactly five colors', () => {
@@ -231,7 +235,11 @@ test('TS-060 / UX: boards panel uses explicit open/rename actions instead of ope
   assert.equal(boardPageSource.includes('data-testid={`open-board-${boardMeta.id}`}'), true)
   assert.equal(boardPageSource.includes('data-testid={`rename-board-${boardMeta.id}`}'), true)
   assert.equal(boardPageSource.includes('title="Open board"'), true)
-  assert.equal(boardPageSource.includes('onClick={() => scheduleBoardNavigate(boardMeta.id)}'), true)
+  assert.equal(
+    boardPageSource.includes('onClick={() => scheduleBoardNavigate(boardMeta.id)}') ||
+      boardPageSource.includes('onClick={() => onScheduleBoardNavigate(boardMeta.id)}'),
+    true,
+  )
   assert.equal(boardPageSource.includes('className="board-list-link"\n          role="button"'), false)
 })
 
@@ -379,7 +387,11 @@ test('G4-A11Y-001: contrast-aware text colors are used for board objects', () =>
 test('G4-SHARE-001: share button is present in toolbar for board owners', () => {
   assert.equal(boardPageSource.includes('data-testid={`share-board-${boardMeta.id}`}'), true)
   assert.equal(boardPageSource.includes('title="Share board"'), true)
-  assert.equal(boardPageSource.includes('openShareDialog(boardMeta.id)'), true)
+  assert.equal(
+    boardPageSource.includes('openShareDialog(boardMeta.id)') ||
+      boardPageSource.includes('onOpenShareDialog(boardMeta.id)'),
+    true,
+  )
 })
 
 test('G4-SHARE-002: main board header exposes a direct share action for owners', () => {

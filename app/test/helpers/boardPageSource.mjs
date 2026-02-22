@@ -9,6 +9,7 @@ const supplementalPaths = [
   path.join(pagesDir, 'boardPageRuntimePrimitives.tsx'),
   path.join(pagesDir, 'boardPanels.tsx'),
   path.join(pagesDir, 'boardCommandOverlays.tsx'),
+  path.join(pagesDir, 'boardBoardsListPanel.tsx'),
   path.join(pagesDir, 'boardHeaderBar.tsx'),
   path.join(pagesDir, 'boardSidebarPanels.tsx'),
   path.join(pagesDir, 'boardFloatingToolbar.tsx'),

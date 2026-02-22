@@ -4,15 +4,9 @@ import { Circle, Group, Layer, Line, Rect, Stage, Text } from 'react-konva'
 import Konva from 'konva'
 import {
   Circle as CircleShapeIcon,
-  Copy,
   Diamond,
-  Eye,
-  Share2,
   Square,
-  Pencil,
-  Trash2,
   Triangle,
-  X,
 } from 'lucide-react'
 import {
   collection,
@@ -100,6 +94,7 @@ import {
   BoardTemplateChooserModal,
 } from './boardCommandOverlays'
 import { BoardHeaderBar } from './boardHeaderBar'
+import { BoardBoardsListPanel } from './boardBoardsListPanel'
 import { useConnectionStatus } from '../hooks/useConnectionStatus'
 import { usePresence } from '../hooks/usePresence'
 import { useBoardSelection } from '../hooks/useBoardSelection'
@@ -4254,144 +4249,6 @@ export const BoardPageRuntime = () => {
 
     return payload?.result || { message: 'Command executed and synced to the board.' }
   }
-  const renderBoardListItem = (boardMeta: BoardMeta) => {
-    const isOwner = boardMeta.ownerId === userId
-    const canDuplicateBoard = userId ? canEditBoardMeta(boardMeta, userId) : false
-    const collaboratorsCount = boardMeta.sharedWith.length
-    return (
-      <article
-        key={boardMeta.id}
-        className={`board-list-item ${boardMeta.id === boardId ? 'active' : ''}`}
-        data-testid={`board-list-item-${boardMeta.id}`}
-      >
-        <div className="board-list-link">
-          {renamingBoardId === boardMeta.id ? (
-            <input
-              className="board-list-rename-input"
-              value={renameBoardName}
-              onChange={(event) => {
-                setRenameBoardName(event.target.value)
-                if (renameBoardError) {
-                  setRenameBoardError(null)
-                }
-              }}
-              onMouseDown={(event) => {
-                event.stopPropagation()
-              }}
-              onClick={(event) => {
-                event.stopPropagation()
-              }}
-              onBlur={() => {
-                void submitBoardRename(boardMeta.id)
-              }}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  event.preventDefault()
-                  void submitBoardRename(boardMeta.id)
-                  return
-                }
-                if (event.key === 'Escape') {
-                  event.preventDefault()
-                  cancelBoardRename()
-                }
-              }}
-              autoFocus
-              maxLength={80}
-              data-testid={`rename-board-input-${boardMeta.id}`}
-            />
-          ) : (
-            <span
-              className={`board-list-name ${isOwner ? 'board-list-name-editable' : ''}`}
-              onDoubleClick={(event) => {
-                if (!isOwner) {
-                  return
-                }
-                event.preventDefault()
-                event.stopPropagation()
-                beginBoardRename(boardMeta)
-              }}
-              data-testid={`board-name-${boardMeta.id}`}
-            >
-              {boardMeta.name}
-            </span>
-          )}
-          {boardMeta.description ? <span className="board-list-description">{boardMeta.description}</span> : null}
-          <span className="board-list-meta">
-            {isOwner ? 'Owner' : 'Shared with you'}
-            {isOwner && collaboratorsCount > 0
-              ? ` · ${collaboratorsCount} collaborator${collaboratorsCount === 1 ? '' : 's'}`
-              : ''}
-          </span>
-        </div>
-        <div className="board-list-actions">
-          <button
-            type="button"
-            className="button-icon with-tooltip tooltip-bottom board-list-action-button"
-            onClick={() => scheduleBoardNavigate(boardMeta.id)}
-            title="Open board"
-            data-tooltip="Open board"
-            aria-label={`Open board ${boardMeta.name}`}
-            disabled={renamingBoardId === boardMeta.id}
-            data-testid={`open-board-${boardMeta.id}`}
-          >
-            <Eye size={14} />
-          </button>
-          {isOwner ? (
-            <button
-              type="button"
-              className="button-icon with-tooltip tooltip-bottom board-list-action-button"
-              onClick={() => beginBoardRename(boardMeta)}
-              title="Rename board"
-              data-tooltip="Rename board"
-              aria-label={`Rename board ${boardMeta.name}`}
-              data-testid={`rename-board-${boardMeta.id}`}
-            >
-              <Pencil size={14} />
-            </button>
-          ) : null}
-          <button
-            type="button"
-            className="button-icon with-tooltip tooltip-bottom board-list-action-button"
-            onClick={() => void duplicateBoardMeta(boardMeta.id)}
-            title="Duplicate board"
-            data-tooltip="Duplicate board"
-            aria-label={`Duplicate board ${boardMeta.name}`}
-            disabled={!canDuplicateBoard}
-            data-testid={`duplicate-board-${boardMeta.id}`}
-          >
-            <Copy size={14} />
-          </button>
-          {isOwner ? (
-            <button
-              type="button"
-              className="button-icon with-tooltip tooltip-bottom board-list-action-button"
-              onClick={() => openShareDialog(boardMeta.id)}
-              title="Share board"
-              data-tooltip="Share board"
-              aria-label={`Share board ${boardMeta.name}`}
-              data-testid={`share-board-${boardMeta.id}`}
-            >
-              <Share2 size={14} />
-            </button>
-          ) : null}
-          <button
-            type="button"
-            className="button-icon with-tooltip tooltip-bottom board-list-action-button"
-            onClick={() => void deleteBoardMeta(boardMeta.id)}
-            title="Delete board"
-            data-tooltip="Delete board"
-            aria-label={`Delete board ${boardMeta.name}`}
-            disabled={!isOwner || boards.length <= 1}
-            data-testid={`delete-board-${boardMeta.id}`}
-          >
-            <Trash2 size={14} />
-          </button>
-        </div>
-        {renamingBoardId === boardMeta.id && renameBoardError ? <p className="error-text">{renameBoardError}</p> : null}
-      </article>
-    )
-  }
-
   if (!user) {
     return <Navigate to="/login" replace />
   }
@@ -4533,98 +4390,85 @@ export const BoardPageRuntime = () => {
         timerRunning={timerState.running}
         onTimerDraftChange={setTimerDraft}
       />
-      {showBoardsPanel ? (
-        <div
-          className="boards-panel-backdrop"
-          onClick={() => {
-            closeShareDialog()
-            cancelBoardRename()
-            setShowBoardsPanel(false)
-          }}
-          data-testid="boards-panel-backdrop"
-        >
-          <section
-            className="boards-panel"
-            onClick={(event) => event.stopPropagation()}
-            data-testid="boards-panel"
-          >
-            <div className="boards-panel-header">
-              <h3>Boards</h3>
-              <button
-                type="button"
-                className="button-icon"
-                onClick={() => {
-                  closeShareDialog()
-                  cancelBoardRename()
-                  setShowBoardsPanel(false)
+      <BoardBoardsListPanel
+        boards={boards}
+        currentBoardId={boardId}
+        onBeginBoardRename={beginBoardRename}
+        onCancelBoardRename={cancelBoardRename}
+        onClose={() => {
+          closeShareDialog()
+          cancelBoardRename()
+          setShowBoardsPanel(false)
+        }}
+        onDeleteBoard={(targetBoardId) => {
+          void deleteBoardMeta(targetBoardId)
+        }}
+        onDuplicateBoard={(targetBoardId) => {
+          void duplicateBoardMeta(targetBoardId)
+        }}
+        onOpenShareDialog={openShareDialog}
+        onRenameBoardNameChange={(value) => {
+          setRenameBoardName(value)
+          if (renameBoardError) {
+            setRenameBoardError(null)
+          }
+        }}
+        onScheduleBoardNavigate={scheduleBoardNavigate}
+        onSubmitBoardRename={(targetBoardId) => {
+          void submitBoardRename(targetBoardId)
+        }}
+        open={showBoardsPanel}
+        ownedBoards={ownedBoards}
+        renamingBoardId={renamingBoardId}
+        renameBoardError={renameBoardError}
+        renameBoardName={renameBoardName}
+        sharedBoards={sharedBoards}
+        sideContent={
+          <>
+            <BoardCreateForm
+              boardFormError={boardFormError}
+              newBoardDescription={newBoardDescription}
+              newBoardName={newBoardName}
+              onDescriptionChange={handleBoardDescriptionInputChange}
+              onNameChange={handleBoardNameInputChange}
+              onSubmit={() => {
+                void createBoard()
+              }}
+            />
+            {shareDialogBoardId && shareDialogBoardMeta ? (
+              <BoardSharingCard
+                boardMeta={shareDialogBoardMeta}
+                isShareSubmitting={isShareSubmitting}
+                onApproveAccessRequest={(targetBoardId, requesterId, role) => {
+                  void approveAccessRequest(targetBoardId, requesterId, role)
                 }}
-                aria-label="Close boards panel"
-              >
-                <X size={16} />
-              </button>
-            </div>
-            <div className="boards-panel-body">
-              <div className="boards-list" data-testid="board-list">
-                {boards.length === 0 ? <p className="panel-note">No boards yet.</p> : null}
-                {ownedBoards.length > 0 ? (
-                  <section className="board-list-section" data-testid="board-list-owned">
-                    <h4 className="board-list-section-title">My boards</h4>
-                    {ownedBoards.map((boardMeta) => renderBoardListItem(boardMeta))}
-                  </section>
-                ) : null}
-                {sharedBoards.length > 0 ? (
-                  <section className="board-list-section" data-testid="board-list-shared">
-                    <h4 className="board-list-section-title">Shared with me</h4>
-                    {sharedBoards.map((boardMeta) => renderBoardListItem(boardMeta))}
-                  </section>
-                ) : null}
-              </div>
-              <div className="boards-side">
-                <BoardCreateForm
-                  boardFormError={boardFormError}
-                  newBoardDescription={newBoardDescription}
-                  newBoardName={newBoardName}
-                  onDescriptionChange={handleBoardDescriptionInputChange}
-                  onNameChange={handleBoardNameInputChange}
-                  onSubmit={() => {
-                    void createBoard()
-                  }}
-                />
-                {shareDialogBoardId && shareDialogBoardMeta ? (
-                  <BoardSharingCard
-                    boardMeta={shareDialogBoardMeta}
-                    isShareSubmitting={isShareSubmitting}
-                    onApproveAccessRequest={(targetBoardId, requesterId, role) => {
-                      void approveAccessRequest(targetBoardId, requesterId, role)
-                    }}
-                    onClose={closeShareDialog}
-                    onCopyBoardUrl={handleShareLinkCopy}
-                    onLinkRoleChange={handleShareLinkRoleChange}
-                    onRevokeCollaborator={(targetBoardId, collaboratorId) => {
-                      void revokeSharedCollaborator(targetBoardId, collaboratorId)
-                    }}
-                    onShareEmailChange={handleShareEmailChange}
-                    onShareInvite={() => {
-                      void submitShareInvite()
-                    }}
-                    onShareRoleChange={handleShareRoleChange}
-                    onSubmitLinkSharingUpdate={() => {
-                      void submitLinkSharingUpdate()
-                    }}
-                    pendingAccessRequests={pendingAccessRequests}
-                    shareDialogBoardUrl={shareDialogBoardUrl}
-                    shareEmail={shareEmail}
-                    shareError={shareError}
-                    shareLinkRole={shareLinkRole}
-                    shareRole={shareRole}
-                    shareStatus={shareStatus}
-                  />
-                ) : null}
-              </div>
-            </div>
-          </section>
-        </div>
-      ) : null}
+                onClose={closeShareDialog}
+                onCopyBoardUrl={handleShareLinkCopy}
+                onLinkRoleChange={handleShareLinkRoleChange}
+                onRevokeCollaborator={(targetBoardId, collaboratorId) => {
+                  void revokeSharedCollaborator(targetBoardId, collaboratorId)
+                }}
+                onShareEmailChange={handleShareEmailChange}
+                onShareInvite={() => {
+                  void submitShareInvite()
+                }}
+                onShareRoleChange={handleShareRoleChange}
+                onSubmitLinkSharingUpdate={() => {
+                  void submitLinkSharingUpdate()
+                }}
+                pendingAccessRequests={pendingAccessRequests}
+                shareDialogBoardUrl={shareDialogBoardUrl}
+                shareEmail={shareEmail}
+                shareError={shareError}
+                shareLinkRole={shareLinkRole}
+                shareRole={shareRole}
+                shareStatus={shareStatus}
+              />
+            ) : null}
+          </>
+        }
+        userId={userId}
+      />
       <BoardCommandPaletteModal
         activeIndex={commandPaletteActiveIndex}
         filteredCommands={filteredCommandPaletteCommands}
