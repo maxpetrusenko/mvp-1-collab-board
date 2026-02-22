@@ -38,6 +38,7 @@ const COLOR_NAME_LIST = Object.keys(COLOR_MAP)
 const FRAME_TEMPLATE_COLOR_SEQUENCE = ['gray', 'blue', 'green', 'pink', 'orange', 'purple']
 const STICKY_TEMPLATE_COLOR_SEQUENCE = ['yellow', 'blue', 'green', 'pink', 'orange', 'purple', 'red', 'gray']
 const COLOR_NAME_ALTERNATION = 'yellow|blue|green|pink|red|orange|purple|gray'
+const COLOR_OR_HEX_PATTERN = `(?:${COLOR_NAME_ALTERNATION}|#(?:[0-9a-f]{3}|[0-9a-f]{6}))`
 const COLOR_NAME_PATTERN = `(?:${COLOR_NAME_ALTERNATION})`
 const CREATE_VERB_PATTERN = '(?:add(?:ed)?|create(?:d)?|make|generate|build|insert|put)'
 const BOARD_MUTATION_VERB_REGEX =
@@ -2149,7 +2150,7 @@ const createFrame = async (ctx, args) => {
     boardId: ctx.boardId,
     type: 'frame',
     title: sanitizeText(args.title || 'Frame'),
-    color: '#e2e8f0',
+    color: toColor(args.color, '#e2e8f0'),
     position: {
       x: parseNumber(args.x, fallbackX),
       y: parseNumber(args.y, fallbackY),
@@ -2884,6 +2885,7 @@ const executeLlmToolCall = async (ctx, toolName, rawArgs, options = {}) => {
       )
       await createFrame(ctx, {
         title: sanitizeText(positionedArgs.title || 'New Frame'),
+        color: positionedArgs.color,
         width: parseNumber(positionedArgs.width, 480),
         height: parseNumber(positionedArgs.height, 300),
         x: parseNumber(positionedArgs.x, 120),
