@@ -127,7 +127,11 @@ test('TS-025 / AI: submit path resolves auth token defensively for dev bypass se
 
 test('TS-050 / FR-22+FR-16 UX: AI panel submit is disabled when board is not editable', () => {
   assert.equal(boardPageSource.includes('history={aiCommandHistory}'), true)
-  assert.equal(boardPageSource.includes('disabled={!user || !canEditBoard || !hasLiveBoardAccess}'), true)
+  assert.equal(
+    boardPageSource.includes('disabled={!user || !canEditBoard || !hasLiveBoardAccess}') ||
+      boardPageSource.includes('aiDisabled={!user || !canEditBoard || !hasLiveBoardAccess}'),
+    true,
+  )
   assert.equal(aiPanelSource.includes('disabled={disabled || !command.trim()}'), true)
   assert.equal(boardPageSource.includes("throw new Error('Switch to edit mode to run AI commands.')"), true)
 })
@@ -145,8 +149,14 @@ test('TS-058 / AI UX: inline AI messages render only for warnings/errors while s
 test('TS-026 / UX: toolbar exposes explicit Select and Area selection modes', () => {
   assert.equal(boardPageSource.includes('data-testid="selection-mode-select"'), true)
   assert.equal(boardPageSource.includes('data-testid="selection-mode-area"'), true)
-  assert.equal(boardPageSource.includes("setSelectionMode('area')"), true)
-  assert.equal(boardPageSource.includes("setSelectionMode('select')"), true)
+  assert.equal(
+    boardPageSource.includes("setSelectionMode('area')") || boardPageSource.includes("onSetSelectionMode('area')"),
+    true,
+  )
+  assert.equal(
+    boardPageSource.includes("setSelectionMode('select')") || boardPageSource.includes("onSetSelectionMode('select')"),
+    true,
+  )
 })
 
 test('TS-027 / UX: bottom toolbar creation actions open feature-specific popovers', () => {

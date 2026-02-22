@@ -1,37 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { Navigate, useNavigate, useParams } from 'react-router-dom'
-import { Arrow, Circle, Group, Layer, Line, Rect, Stage, Text } from 'react-konva'
+import { Circle, Group, Layer, Line, Rect, Stage, Text } from 'react-konva'
 import Konva from 'konva'
 import {
   Circle as CircleShapeIcon,
   Copy,
   Diamond,
-  Download,
   Eye,
-  FileText,
-  Keyboard,
-  LayoutGrid,
-  LogOut,
-  Moon,
-  MousePointer2,
-  Pause,
-  Play,
-  Sun,
-  Redo2,
-  RotateCcw,
   Share2,
   Square,
-  SquareDashed,
-  SquareDashedMousePointer,
-  StickyNote,
   Pencil,
-  Timer,
   Trash2,
   Triangle,
-  Type,
-  Undo2,
-  Vote,
-  Waypoints,
   X,
 } from 'lucide-react'
 import {
@@ -95,7 +75,12 @@ import {
   exportStageSnapshot,
   resolveSnappedConnectorEndpoint,
 } from './boardActionHelpers'
-import { renderShapeObject, renderStickyObject, renderTextObject } from './boardObjectRenderers'
+import {
+  renderConnectorObject,
+  renderShapeObject,
+  renderStickyObject,
+  renderTextObject,
+} from './boardObjectRenderers'
 import {
   applyLinkAccessFallback as applyLinkAccessFallbackHelper,
   applyShareMutationFallback as applyShareMutationFallbackHelper,
@@ -108,7 +93,13 @@ import {
   submitShareInvite as submitShareInviteHelper,
 } from './boardSharingHelpers'
 import { BoardCreateForm, BoardSharingCard } from './boardPanels'
-import { AICommandPanel } from '../components/AICommandPanel'
+import { BoardRightSidebar, BoardShortcutsModal } from './boardSidebarPanels'
+import { BoardFloatingToolbar } from './boardFloatingToolbar'
+import {
+  BoardCommandPaletteModal,
+  BoardTemplateChooserModal,
+} from './boardCommandOverlays'
+import { BoardHeaderBar } from './boardHeaderBar'
 import { useConnectionStatus } from '../hooks/useConnectionStatus'
 import { usePresence } from '../hooks/usePresence'
 import { useBoardSelection } from '../hooks/useBoardSelection'
@@ -128,7 +119,6 @@ import {
   normalizeShapeKind,
   overlaps,
   toConnectorBounds,
-  toConnectorPatch,
   type ConnectorPatch,
 } from '../lib/boardGeometry'
 import { getContrastingTextColor } from '../lib/contrast'
@@ -868,14 +858,16 @@ export const BoardPageRuntime = () => {
     const unsubscribe = onSnapshot(commandsQuery, (snapshot) => {
       const nextHistory: AiCommandHistoryEntry[] = []
       snapshot.forEach((docSnap) => {
-        const data = docSnap.data() as Partial<AiCommandHistoryEntry>
+        const data = docSnap.data() as Partial<AiCommandHistoryEntry> & { result?: { level?: string } }
         if (!data.command || !data.status) {
           return
         }
+        const historyStatus: AiCommandHistoryEntry['status'] =
+          data.status === 'success' && data.result?.level === 'warning' ? 'warning' : data.status
         nextHistory.push({
           id: docSnap.id,
           command: data.command,
-          status: data.status,
+          status: historyStatus,
           queuedAt: data.queuedAt,
           completedAt: data.completedAt,
           error: data.error,
@@ -4468,225 +4460,79 @@ export const BoardPageRuntime = () => {
 
   return (
     <main className="board-shell">
-      <header className="board-header">
-        <div className="board-header-left">
-          <h1>CollabBoard</h1>
-          {isRenamingCurrentBoard && currentBoardMeta ? (
-            <input
-              className="board-name-pill-input"
-              value={renameBoardName}
-              onChange={(event) => {
-                setRenameBoardName(event.target.value)
-                if (renameBoardError) {
-                  setRenameBoardError(null)
-                }
-              }}
-              onBlur={() => {
-                void submitBoardRename(currentBoardMeta.id)
-              }}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  event.preventDefault()
-                  void submitBoardRename(currentBoardMeta.id)
-                  return
-                }
-                if (event.key === 'Escape') {
-                  event.preventDefault()
-                  cancelBoardRename()
-                }
-              }}
-              autoFocus
-              maxLength={80}
-              aria-label="Rename current board"
-              data-testid="current-board-name-input"
-            />
-          ) : (
-            <span
-              className={`board-name-pill ${canManageCurrentBoardSharing ? 'board-name-pill-editable' : ''}`}
-              onDoubleClick={(event) => {
-                if (!canManageCurrentBoardSharing || !currentBoardMeta) {
-                  return
-                }
-                event.preventDefault()
-                beginBoardRename(currentBoardMeta)
-              }}
-              title={canManageCurrentBoardSharing ? 'Double-click to rename board' : undefined}
-              data-testid="current-board-name"
-            >
-              {currentBoardMeta?.name || `Board ${boardId.slice(0, 8)}`}
-            </span>
-          )}
-          {isRenamingCurrentBoard && renameBoardError ? (
-            <span className="error-text board-name-rename-error" data-testid="current-board-name-error">
-              {renameBoardError}
-            </span>
-          ) : null}
-          {showConnectionStatusPill ? (
-            <span
-              className={`sync-state-pill ${
-                connectionStatus === 'reconnecting' ? 'sync-state-pill-warning' : 'sync-state-pill-syncing'
-              }`}
-              data-testid="connection-status-pill"
-            >
-              {connectionStatus === 'reconnecting' ? 'Reconnecting…' : 'Syncing…'}
-            </span>
-          ) : null}
-          <span
-            className={`sync-state-pill ${canEditBoard ? 'sync-state-pill-ok' : 'sync-state-pill-warning'}`}
-            data-testid="interaction-mode-pill"
-          >
-            {canEditBoard ? 'Edit mode' : 'View mode'}
-          </span>
-          <div className="timer-widget">
-            <span className="timer-icon" aria-hidden>
-              <Timer size={14} />
-            </span>
-            {isEditingTimer ? (
-              <input
-                className="timer-edit-input"
-                value={timerDraft}
-                onChange={(event) => setTimerDraft(event.target.value)}
-                onBlur={() => {
-                  void commitTimerEdit()
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
-                    event.preventDefault()
-                    void commitTimerEdit()
-                    return
-                  }
-                  if (event.key === 'Escape') {
-                    event.preventDefault()
-                    cancelTimerEdit()
-                  }
-                }}
-                autoFocus
-                aria-label="Edit timer"
-                data-testid="timer-edit-input"
-              />
-            ) : (
-              <button
-                type="button"
-                className="timer-display"
-                onClick={beginTimerEdit}
-                disabled={!canEditBoard}
-                title={canEditBoard ? 'Edit timer' : 'Timer is read-only in view mode'}
-                aria-label="Timer display"
-                data-testid="timer-display"
-              >
-                {formatTimerLabel(effectiveTimerMs)}
-              </button>
-            )}
-            {timerState.running ? (
-              <button
-                type="button"
-                className="button-icon with-tooltip tooltip-bottom"
-                onClick={() => void pauseTimer()}
-                title="Pause timer"
-                data-tooltip="Pause timer"
-                aria-label="Pause timer"
-                data-testid="timer-pause-button"
-              >
-                <Pause size={16} />
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="button-icon with-tooltip tooltip-bottom"
-                onClick={() => void startTimer()}
-                title="Start timer"
-                data-tooltip="Start timer"
-                aria-label="Start timer"
-                data-testid="timer-start-button"
-              >
-                <Play size={16} />
-              </button>
-            )}
-            <button
-              type="button"
-              className="button-icon with-tooltip tooltip-bottom"
-              onClick={() => void resetTimer()}
-              title="Reset timer"
-              data-tooltip="Reset timer"
-              aria-label="Reset timer"
-              data-testid="timer-reset-button"
-            >
-              <RotateCcw size={16} />
-            </button>
-          </div>
-        </div>
-        <div className="header-actions">
-          {canManageCurrentBoardSharing && currentBoardMeta ? (
-            <button
-              type="button"
-              className="button-icon with-tooltip tooltip-bottom"
-              onClick={() => {
-                setBoardFormError(null)
-                closeCommandPalette()
-                cancelBoardRename()
-                setShowBoardsPanel(true)
-                openShareDialog(currentBoardMeta.id)
-              }}
-              title="Share board"
-              data-tooltip="Share board"
-              aria-label="Share current board"
-              data-testid="share-current-board-button"
-            >
-              <Share2 size={16} />
-            </button>
-          ) : null}
-          <button
-            type="button"
-            className="button-icon with-tooltip tooltip-bottom"
-            onClick={() => {
-              setBoardFormError(null)
-              closeCommandPalette()
-              if (showBoardsPanel) {
-                closeShareDialog()
-                cancelBoardRename()
-              }
-              setShowBoardsPanel((prev) => !prev)
-            }}
-            title="Boards"
-            data-tooltip="Boards"
-            aria-label="Open boards panel"
-            data-testid="open-boards-panel"
-          >
-            <LayoutGrid size={16} />
-          </button>
-          <button
-            type="button"
-            className="button-icon with-tooltip tooltip-bottom"
-            onClick={toggleThemeMode}
-            title={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-            data-tooltip={themeMode === 'dark' ? 'Light mode' : 'Dark mode'}
-            aria-label={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-            data-testid="theme-toggle-button"
-          >
-            {themeMode === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
-          </button>
-          <button
-            type="button"
-            className="button-icon with-tooltip tooltip-bottom"
-            onClick={() => setShowShortcuts((prev) => !prev)}
-            title="Keyboard shortcuts (?)"
-            data-tooltip="Keyboard shortcuts"
-            aria-label={showShortcuts ? 'Close keyboard shortcuts' : 'Open keyboard shortcuts'}
-          >
-            <Keyboard size={16} />
-          </button>
-          <button
-            type="button"
-            className="button-icon with-tooltip tooltip-bottom"
-            onClick={() => void signOutUser()}
-            title="Sign out"
-            data-tooltip="Sign out"
-            aria-label="Sign out"
-          >
-            <LogOut size={16} />
-          </button>
-        </div>
-      </header>
+      <BoardHeaderBar
+        boardId={boardId}
+        canEditBoard={canEditBoard}
+        canManageCurrentBoardSharing={canManageCurrentBoardSharing}
+        closeCommandPalette={closeCommandPalette}
+        connectionStatus={connectionStatus}
+        currentBoardMeta={currentBoardMeta}
+        isEditingTimer={isEditingTimer}
+        isRenamingCurrentBoard={isRenamingCurrentBoard}
+        onBeginBoardRenameCurrent={() => {
+          if (currentBoardMeta) {
+            beginBoardRename(currentBoardMeta)
+          }
+        }}
+        onBeginTimerEdit={beginTimerEdit}
+        onCancelBoardRename={cancelBoardRename}
+        onCancelTimerEdit={cancelTimerEdit}
+        onPauseTimer={() => {
+          void pauseTimer()
+        }}
+        onRenameBoardNameChange={(value) => {
+          setRenameBoardName(value)
+          if (renameBoardError) {
+            setRenameBoardError(null)
+          }
+        }}
+        onResetTimer={() => {
+          void resetTimer()
+        }}
+        onShareCurrentBoard={() => {
+          if (!currentBoardMeta) {
+            return
+          }
+          setBoardFormError(null)
+          closeCommandPalette()
+          cancelBoardRename()
+          setShowBoardsPanel(true)
+          openShareDialog(currentBoardMeta.id)
+        }}
+        onSignOut={() => {
+          void signOutUser()
+        }}
+        onStartTimer={() => {
+          void startTimer()
+        }}
+        onSubmitBoardRenameCurrent={() => {
+          if (currentBoardMeta) {
+            void submitBoardRename(currentBoardMeta.id)
+          }
+        }}
+        onSubmitTimerEdit={() => {
+          void commitTimerEdit()
+        }}
+        onToggleBoardsPanel={() => {
+          setBoardFormError(null)
+          if (showBoardsPanel) {
+            closeShareDialog()
+            cancelBoardRename()
+          }
+          setShowBoardsPanel((prev) => !prev)
+        }}
+        onToggleShortcuts={() => setShowShortcuts((prev) => !prev)}
+        onToggleThemeMode={toggleThemeMode}
+        renameBoardError={renameBoardError}
+        renameBoardName={renameBoardName}
+        showConnectionStatusPill={showConnectionStatusPill}
+        showShortcuts={showShortcuts}
+        themeMode={themeMode}
+        timerDisplayLabel={formatTimerLabel(effectiveTimerMs)}
+        timerDraft={timerDraft}
+        timerRunning={timerState.running}
+        onTimerDraftChange={setTimerDraft}
+      />
       {showBoardsPanel ? (
         <div
           className="boards-panel-backdrop"
@@ -4779,579 +4625,88 @@ export const BoardPageRuntime = () => {
           </section>
         </div>
       ) : null}
-      {showCommandPalette ? (
-        <div
-          className="command-palette-backdrop"
-          onClick={closeCommandPalette}
-          data-testid="command-palette-backdrop"
-        >
-          <section
-            className="command-palette"
-            onClick={(event) => event.stopPropagation()}
-            data-testid="command-palette"
-          >
-            <input
-              ref={commandPaletteInputRef}
-              className="command-palette-input"
-              placeholder="Type a command…"
-              value={commandPaletteQuery}
-              onChange={(event) => {
-                setCommandPaletteQuery(event.target.value)
-                setCommandPaletteActiveIndex(0)
-              }}
-              onKeyDown={(event) => {
-                if (event.key === 'ArrowDown') {
-                  event.preventDefault()
-                  if (filteredCommandPaletteCommands.length > 0) {
-                    setCommandPaletteActiveIndex((previous) =>
-                      (previous + 1) % filteredCommandPaletteCommands.length,
-                    )
-                  }
-                  return
-                }
-                if (event.key === 'ArrowUp') {
-                  event.preventDefault()
-                  if (filteredCommandPaletteCommands.length > 0) {
-                    setCommandPaletteActiveIndex((previous) =>
-                      (previous - 1 + filteredCommandPaletteCommands.length) % filteredCommandPaletteCommands.length,
-                    )
-                  }
-                  return
-                }
-                if (event.key === 'Enter') {
-                  const activeEntry = filteredCommandPaletteCommands[commandPaletteActiveIndex]
-                  if (!activeEntry) {
-                    return
-                  }
-                  event.preventDefault()
-                  runCommandPaletteEntry(activeEntry)
-                  return
-                }
-                if (event.key === 'Escape') {
-                  event.preventDefault()
-                  closeCommandPalette()
-                }
-              }}
-              data-testid="command-palette-input"
-            />
-            <div className="command-palette-list" data-testid="command-palette-list">
-              {filteredCommandPaletteCommands.length === 0 ? (
-                <p className="panel-note" data-testid="command-palette-empty">
-                  No commands found.
-                </p>
-              ) : (
-                filteredCommandPaletteCommands.map((entry, index) => (
-                  <button
-                    key={entry.id}
-                    type="button"
-                    className={`command-palette-item ${index === commandPaletteActiveIndex ? 'active' : ''}`}
-                    onMouseEnter={() => setCommandPaletteActiveIndex(index)}
-                    onClick={() => runCommandPaletteEntry(entry)}
-                    data-testid={`command-palette-item-${entry.id}`}
-                  >
-                    <span className="command-palette-item-label">{entry.label}</span>
-                    <span className="command-palette-item-description">{entry.description}</span>
-                    {entry.shortcut ? (
-                      <span className="command-palette-item-shortcut">{entry.shortcut}</span>
-                    ) : null}
-                  </button>
-                ))
-              )}
-            </div>
-            <p className="command-palette-hint">Use ↑/↓ to navigate, Enter to run, Esc to close.</p>
-          </section>
-        </div>
-      ) : null}
-      {showTemplateChooser ? (
-        <div
-          className="template-chooser-backdrop"
-          onClick={() => setShowTemplateChooser(false)}
-          data-testid="template-chooser-backdrop"
-        >
-          <section
-            className="template-chooser-modal"
-            onClick={(event) => event.stopPropagation()}
-            data-testid="template-chooser"
-          >
-            <div className="template-chooser-header">
-              <h3>Start from a Template</h3>
-              <button
-                type="button"
-                className="button-icon"
-                onClick={() => setShowTemplateChooser(false)}
-                aria-label="Close template chooser"
-              >
-                <X size={14} />
-              </button>
-            </div>
-            <div className="template-chooser-grid">
-              <button
-                type="button"
-                className="template-card"
-                onClick={() => void applyTemplate('retro')}
-                disabled={!canEditBoard}
-                data-testid="template-option-retro"
-              >
-                <strong>Retro</strong>
-                <span>What went well, what didn&apos;t, and action items columns.</span>
-              </button>
-              <button
-                type="button"
-                className="template-card"
-                onClick={() => void applyTemplate('mindmap')}
-                disabled={!canEditBoard}
-                data-testid="template-option-mindmap"
-              >
-                <strong>Mindmap</strong>
-                <span>Central topic with connected branches for fast brainstorming.</span>
-              </button>
-              <button
-                type="button"
-                className="template-card"
-                onClick={() => void applyTemplate('kanban')}
-                disabled={!canEditBoard}
-                data-testid="template-option-kanban"
-              >
-                <strong>Kanban</strong>
-                <span>To Do, Doing, Done workflow scaffold with starter tasks.</span>
-              </button>
-            </div>
-            {!canEditBoard ? (
-              <p className="panel-note" data-testid="template-chooser-view-mode-note">
-                Switch to edit mode to apply templates.
-              </p>
-            ) : null}
-          </section>
-        </div>
-      ) : null}
+      <BoardCommandPaletteModal
+        activeIndex={commandPaletteActiveIndex}
+        filteredCommands={filteredCommandPaletteCommands}
+        inputRef={commandPaletteInputRef}
+        onActiveIndexChange={setCommandPaletteActiveIndex}
+        onClose={closeCommandPalette}
+        onQueryChange={setCommandPaletteQuery}
+        onRunCommand={runCommandPaletteEntry}
+        open={showCommandPalette}
+        query={commandPaletteQuery}
+      />
+      <BoardTemplateChooserModal
+        canEditBoard={canEditBoard}
+        onApplyTemplate={(templateKey) => {
+          void applyTemplate(templateKey)
+        }}
+        onClose={() => setShowTemplateChooser(false)}
+        open={showTemplateChooser}
+      />
 
-      {/* Floating Toolbar */}
-      <div className="floating-toolbar">
-        <div className="tool-group" ref={createPopoverContainerRef}>
-          <button
-            type="button"
-            className="button-icon with-tooltip"
-            onClick={() => setShowTemplateChooser(true)}
-            disabled={!canEditBoard}
-            title="Template chooser"
-            data-tooltip="Template chooser"
-            aria-label="Open template chooser"
-            data-testid="template-chooser-button"
-          >
-            <LayoutGrid size={16} />
-          </button>
-          <button
-            type="button"
-            className="button-icon button-primary with-tooltip"
-            onClick={() => void createObject('stickyNote')}
-            disabled={!canEditBoard}
-            title="Add sticky note (S)"
-            data-tooltip="Add sticky note (S)"
-          >
-            <StickyNote size={16} />
-          </button>
-          <div className="tool-launcher">
-            <button
-              type="button"
-              className={`button-icon with-tooltip ${activeCreatePopover === 'shape' ? 'button-primary' : ''}`}
-              onClick={() => toggleCreatePopover('shape')}
-              disabled={!canEditBoard}
-              title="Add shape"
-              data-tooltip="Add shape"
-              aria-label="Open shape options"
-              aria-expanded={activeCreatePopover === 'shape'}
-              data-testid="add-shape-button"
-            >
-              <Square size={16} />
-            </button>
-            {activeCreatePopover === 'shape' ? (
-              <div className="toolbar-popover" data-testid="shape-create-popover">
-                <div className="toolbar-popover-section" data-testid="shape-create-shape-picker">
-                  {SHAPE_TYPE_OPTIONS.map((shapeOption) => (
-                    <button
-                      key={`new-shape-${shapeOption.kind}`}
-                      type="button"
-                      className={`shape-option ${
-                        shapeCreateDraft.shapeType === shapeOption.kind ? 'active' : ''
-                      }`}
-                      onClick={() =>
-                        setShapeCreateDraft((prev) => ({
-                          ...prev,
-                          shapeType: shapeOption.kind,
-                        }))
-                      }
-                      title={`Set new shape type to ${shapeOption.label}`}
-                      aria-label={`Set new shape type to ${shapeOption.label}`}
-                    >
-                      <span className="shape-icon" aria-hidden>
-                        {shapeOption.kind === 'rectangle' ? <Square size={14} /> : null}
-                        {shapeOption.kind === 'circle' ? <CircleShapeIcon size={14} /> : null}
-                        {shapeOption.kind === 'diamond' ? <Diamond size={14} /> : null}
-                        {shapeOption.kind === 'triangle' ? <Triangle size={14} /> : null}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-                <div className="toolbar-popover-section toolbar-popover-swatches" data-testid="shape-create-color-picker">
-                  {SHAPE_COLOR_OPTIONS.map((color) => (
-                    <button
-                      key={`new-shape-color-${color}`}
-                      type="button"
-                      className={`swatch-button ${shapeCreateDraft.color === color ? 'active' : ''}`}
-                      style={{ backgroundColor: color }}
-                      onClick={() =>
-                        setShapeCreateDraft((prev) => ({
-                          ...prev,
-                          color,
-                        }))
-                      }
-                      title={`Set new shape color to ${getColorLabel(color)}`}
-                      aria-label={`Set new shape color to ${getColorLabel(color)}`}
-                    />
-                  ))}
-                </div>
-                <input
-                  className="toolbar-popover-input"
-                  value={shapeCreateDraft.text}
-                  onChange={(event) =>
-                    setShapeCreateDraft((prev) => ({
-                      ...prev,
-                      text: event.target.value,
-                    }))
-                  }
-                  maxLength={120}
-                  placeholder="Shape label"
-                  data-testid="shape-create-text-input"
-                />
-                <button
-                  type="button"
-                  className="primary-button toolbar-popover-submit"
-                  onClick={() => void createShapeFromPopover()}
-                  data-testid="shape-create-submit"
-                >
-                  Add shape
-                </button>
-              </div>
-            ) : null}
-          </div>
-          <div className="tool-launcher">
-            <button
-              type="button"
-              className={`button-icon with-tooltip ${activeCreatePopover === 'text' ? 'button-primary' : ''}`}
-              onClick={() => toggleCreatePopover('text')}
-              disabled={!canEditBoard}
-              title="Add text (T)"
-              data-tooltip="Add text (T)"
-              data-testid="add-text-button"
-              aria-label="Open text options"
-              aria-expanded={activeCreatePopover === 'text'}
-            >
-              <Type size={16} />
-            </button>
-            {activeCreatePopover === 'text' ? (
-              <div className="toolbar-popover" data-testid="text-create-popover">
-                <textarea
-                  className="toolbar-popover-input toolbar-popover-textarea"
-                  value={textCreateDraft.text}
-                  onChange={(event) =>
-                    setTextCreateDraft((prev) => ({
-                      ...prev,
-                      text: event.target.value,
-                    }))
-                  }
-                  maxLength={240}
-                  rows={3}
-                  placeholder="Write any text"
-                  data-testid="text-create-input"
-                />
-                <div className="toolbar-popover-section toolbar-popover-swatches" data-testid="text-create-color-picker">
-                  {TEXT_COLOR_OPTIONS.map((color) => (
-                    <button
-                      key={`new-text-color-${color}`}
-                      type="button"
-                      className={`swatch-button ${textCreateDraft.color === color ? 'active' : ''}`}
-                      style={{ backgroundColor: color }}
-                      onClick={() =>
-                        setTextCreateDraft((prev) => ({
-                          ...prev,
-                          color,
-                        }))
-                      }
-                      title={`Set new text color to ${getColorLabel(color)}`}
-                      aria-label={`Set new text color to ${getColorLabel(color)}`}
-                    />
-                  ))}
-                </div>
-                <label className="toolbar-popover-field">
-                  <span>Size</span>
-                  <input
-                    type="number"
-                    min={12}
-                    max={72}
-                    value={textCreateDraft.fontSize}
-                    onChange={(event) =>
-                      setTextCreateDraft((prev) => ({
-                        ...prev,
-                        fontSize: clamp(Number(event.target.value) || 24, 12, 72),
-                      }))
-                    }
-                    data-testid="text-create-font-size"
-                  />
-                </label>
-                <button
-                  type="button"
-                  className="primary-button toolbar-popover-submit"
-                  onClick={() => void createTextFromPopover()}
-                  data-testid="text-create-submit"
-                >
-                  Add text
-                </button>
-              </div>
-            ) : null}
-          </div>
-          <div className="selection-mode-toggle" role="group" aria-label="Selection mode">
-            <button
-              type="button"
-              className={`button-icon with-tooltip ${selectionMode === 'select' ? 'button-primary' : ''}`}
-              onClick={() => setSelectionMode('select')}
-              title="Pointer mode"
-              data-tooltip="Pointer mode"
-              aria-label="Pointer mode"
-              aria-pressed={selectionMode === 'select'}
-              data-testid="selection-mode-select"
-            >
-              <MousePointer2 size={16} />
-            </button>
-            <button
-              type="button"
-              className={`button-icon with-tooltip ${selectionMode === 'area' ? 'button-primary' : ''}`}
-              onClick={() => setSelectionMode('area')}
-              title="Box select mode"
-              data-tooltip="Box select mode"
-              aria-label="Box select mode"
-              aria-pressed={selectionMode === 'area'}
-              data-testid="selection-mode-area"
-            >
-              <SquareDashedMousePointer size={16} />
-            </button>
-          </div>
-          <div className="selection-mode-toggle" role="group" aria-label="Board interaction mode">
-            <button
-              type="button"
-              className={`button-icon with-tooltip ${canEditBoard ? 'button-primary' : ''}`}
-              onClick={() => {
-                if (!roleCanEditBoard) {
-                  return
-                }
-                setInteractionMode('edit')
-              }}
-              disabled={!roleCanEditBoard}
-              title="Edit mode"
-              data-tooltip="Edit mode"
-              aria-label="Enable edit mode"
-              aria-pressed={canEditBoard}
-              data-testid="interaction-mode-edit"
-            >
-              <Pencil size={16} />
-            </button>
-            <button
-              type="button"
-              className={`button-icon with-tooltip ${!canEditBoard ? 'button-primary' : ''}`}
-              onClick={() => setInteractionMode('view')}
-              title="View mode"
-              data-tooltip="View mode"
-              aria-label="Enable view mode"
-              aria-pressed={!canEditBoard}
-              data-testid="interaction-mode-view"
-            >
-              <Eye size={16} />
-            </button>
-          </div>
-          <button
-            type="button"
-            className="button-icon with-tooltip"
-            onClick={() => void createObject('frame')}
-            disabled={!canEditBoard}
-            title="Add frame (F)"
-            data-tooltip="Add frame (F)"
-          >
-            <SquareDashed size={16} />
-          </button>
-          <div className="tool-launcher">
-            <button
-              type="button"
-              className={`button-icon with-tooltip ${activeCreatePopover === 'connector' ? 'button-primary' : ''}`}
-              onClick={() => toggleCreatePopover('connector')}
-              disabled={!canEditBoard}
-              title="Add connector (C)"
-              data-tooltip="Add connector (C)"
-              aria-label="Open connector options"
-              aria-expanded={activeCreatePopover === 'connector'}
-              data-testid="add-connector-button"
-            >
-              <Waypoints size={16} />
-            </button>
-            {activeCreatePopover === 'connector' ? (
-              <div className="toolbar-popover" data-testid="connector-create-popover">
-                <div
-                  className="toolbar-popover-section"
-                  data-testid="new-connector-style-picker"
-                >
-                  {CONNECTOR_STYLE_OPTIONS.map((option) => (
-                    <button
-                      key={`new-connector-${option.value}`}
-                      type="button"
-                      className={`shape-option ${
-                        connectorCreateDraft.style === option.value ? 'active' : ''
-                      }`}
-                      onClick={() =>
-                        setConnectorCreateDraft((prev) => ({
-                          ...prev,
-                          style: option.value,
-                        }))
-                      }
-                      title={`Set new connector style to ${option.label}`}
-                      aria-label={`Set new connector style to ${option.label}`}
-                    >
-                      <span className="shape-icon" aria-hidden>
-                        {option.value === 'arrow' ? '→' : '—'}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-                <div
-                  className="toolbar-popover-section toolbar-popover-swatches"
-                  data-testid="connector-create-color-picker"
-                >
-                  {CONNECTOR_COLOR_OPTIONS.map((color) => (
-                    <button
-                      key={`new-connector-color-${color}`}
-                      type="button"
-                      className={`swatch-button ${connectorCreateDraft.color === color ? 'active' : ''}`}
-                      style={{ backgroundColor: color }}
-                      onClick={() =>
-                        setConnectorCreateDraft((prev) => ({
-                          ...prev,
-                          color,
-                        }))
-                      }
-                      title={`Set new connector color to ${getColorLabel(color)}`}
-                      aria-label={`Set new connector color to ${getColorLabel(color)}`}
-                    />
-                  ))}
-                </div>
-                <button
-                  type="button"
-                  className="primary-button toolbar-popover-submit"
-                  onClick={() => void createConnectorFromPopover()}
-                  data-testid="connector-create-submit"
-                >
-                  Add connector
-                </button>
-              </div>
-            ) : null}
-          </div>
-        </div>
-
-        <div className="toolbar-divider" />
-
-        <div className="tool-group">
-          <button
-            type="button"
-            className="button-icon with-tooltip"
-            onClick={() => void undo()}
-            disabled={!canEditBoard}
-            title="Undo (Cmd+Z)"
-            data-tooltip="Undo"
-          >
-            <Undo2 size={16} />
-          </button>
-          <button
-            type="button"
-            className="button-icon with-tooltip"
-            onClick={() => void redo()}
-            disabled={!canEditBoard}
-            title="Redo (Cmd+Shift+Z)"
-            data-tooltip="Redo"
-          >
-            <Redo2 size={16} />
-          </button>
-        </div>
-
-        <div className="toolbar-divider" />
-
-        <div className="tool-group">
-          <button
-            type="button"
-            className={`button-icon with-tooltip ${isVotingMode ? 'button-primary' : ''}`}
-            onClick={() => setIsVotingMode((prev) => !prev)}
-            disabled={!canEditBoard}
-            title="Toggle voting mode (V)"
-            data-tooltip={isVotingMode ? 'Disable voting mode' : 'Enable voting mode'}
-            aria-label="Toggle voting mode"
-          >
-            <Vote size={16} />
-          </button>
-          <button
-            type="button"
-            className="button-icon with-tooltip"
-            data-testid="export-viewport-png"
-            onClick={() => void exportBoard('png', 'selection')}
-            title="Export current viewport as PNG"
-            data-tooltip="Export current viewport as PNG"
-            aria-label="Export current viewport as PNG"
-          >
-            <Download size={16} />
-          </button>
-          <button
-            type="button"
-            className="button-icon with-tooltip"
-            data-testid="export-viewport-pdf"
-            onClick={() => void exportBoard('pdf', 'selection')}
-            title="Export current viewport as PDF"
-            data-tooltip="Export current viewport as PDF"
-            aria-label="Export current viewport as PDF"
-          >
-            <FileText size={16} />
-          </button>
-          <button
-            type="button"
-            className="button-icon with-tooltip"
-            onClick={() => {
-              if (selectedIds.length > 0) {
-                void duplicateSelected()
-                return
-              }
-              if (selectedObject) {
-                void duplicateObject(selectedObject)
-              }
-            }}
-            disabled={!canEditBoard || selectedIds.length === 0}
-            title="Duplicate selected (Cmd/Ctrl + D)"
-            data-tooltip="Duplicate selected object"
-            aria-label="Duplicate selected object"
-            data-testid="duplicate-selected-button"
-          >
-            <Copy size={16} />
-          </button>
-          <button
-            type="button"
-            className="button-icon with-tooltip"
-            onClick={() => {
-              if (selectedIds.length > 0) {
-                void deleteSelected()
-              }
-            }}
-            disabled={!canEditBoard || selectedIds.length === 0}
-            title="Delete selected (Del/Backspace)"
-            data-tooltip="Delete selected objects"
-            aria-label="Delete selected object"
-            data-testid="delete-selected-button"
-          >
-            <Trash2 size={16} />
-          </button>
-        </div>
-      </div>
+      <BoardFloatingToolbar
+        activeCreatePopover={activeCreatePopover}
+        canEditBoard={canEditBoard}
+        connectorCreateDraft={connectorCreateDraft}
+        createPopoverContainerRef={createPopoverContainerRef}
+        duplicateSelectionDisabled={!canEditBoard || selectedIds.length === 0}
+        interactionModeCanEdit={canEditBoard}
+        isVotingMode={isVotingMode}
+        onCreateConnector={() => {
+          void createConnectorFromPopover()
+        }}
+        onCreateFrame={() => {
+          void createObject('frame')
+        }}
+        onCreateShape={() => {
+          void createShapeFromPopover()
+        }}
+        onCreateSticky={() => {
+          void createObject('stickyNote')
+        }}
+        onCreateText={() => {
+          void createTextFromPopover()
+        }}
+        onDeleteSelection={() => {
+          if (selectedIds.length > 0) {
+            void deleteSelected()
+          }
+        }}
+        onDuplicateSelection={() => {
+          if (selectedIds.length > 0) {
+            void duplicateSelected()
+            return
+          }
+          if (selectedObject) {
+            void duplicateObject(selectedObject)
+          }
+        }}
+        onExportPdf={() => {
+          void exportBoard('pdf', 'selection')
+        }}
+        onExportPng={() => {
+          void exportBoard('png', 'selection')
+        }}
+        onRedo={() => {
+          void redo()
+        }}
+        onSetConnectorCreateDraft={setConnectorCreateDraft}
+        onSetInteractionMode={setInteractionMode}
+        onSetSelectionMode={setSelectionMode}
+        onSetShapeCreateDraft={setShapeCreateDraft}
+        onSetShowTemplateChooser={setShowTemplateChooser}
+        onSetTextCreateDraft={setTextCreateDraft}
+        onSetVotingMode={setIsVotingMode}
+        onToggleCreatePopover={toggleCreatePopover}
+        onUndo={() => {
+          void undo()
+        }}
+        roleCanEditBoard={roleCanEditBoard}
+        selectionMode={selectionMode}
+        shapeCreateDraft={shapeCreateDraft}
+        textCreateDraft={textCreateDraft}
+      />
 
       <section className="board-content">
         <section className="canvas-column">
@@ -5549,6 +4904,7 @@ export const BoardPageRuntime = () => {
                     getVoteBadgeWidth,
                     renderVoteBadge,
                     renderCommentBadge,
+                    themeMode,
                   })
                 }
 
@@ -5589,229 +4945,32 @@ export const BoardPageRuntime = () => {
                     getVoteBadgeWidth,
                     renderVoteBadge,
                     renderCommentBadge,
+                    themeMode,
                   })
                 }
 
                 if (boardObject.type === 'connector') {
-                  const connectorGeometry = localConnectorGeometry[boardObject.id] || {
-                    start: boardObject.start,
-                    end: boardObject.end,
-                    fromObjectId: boardObject.fromObjectId ?? null,
-                    toObjectId: boardObject.toObjectId ?? null,
-                    fromAnchor: boardObject.fromAnchor ?? null,
-                    toAnchor: boardObject.toAnchor ?? null,
-                  }
-                  const connectorStroke = selected ? '#1d4ed8' : hovered ? '#0f766e' : boardObject.color
-                  const connectorStyle = normalizeConnectorStyle(boardObject.style)
-                  const voteCount = Object.keys(boardObject.votesByUser || {}).length
-                  const commentCount = boardObject.comments?.length || 0
-                  const connectorMidpoint = {
-                    x: (connectorGeometry.start.x + connectorGeometry.end.x) / 2,
-                    y: (connectorGeometry.start.y + connectorGeometry.end.y) / 2,
-                  }
-
-                  return (
-                    <Group
-                      key={boardObject.id}
-                      onClick={(event) => handleObjectSelection(boardObject, Boolean(event.evt.shiftKey))}
-                      onTap={() => handleObjectSelection(boardObject)}
-                      onMouseEnter={() => {
-                        setHoveredObjectId(boardObject.id)
-                      }}
-                      onMouseLeave={() => {
-                        setHoveredObjectId((previous) => (previous === boardObject.id ? null : previous))
-                      }}
-                    >
-                      {connectorStyle === 'arrow' ? (
-                        <Arrow
-                          points={[
-                            connectorGeometry.start.x,
-                            connectorGeometry.start.y,
-                            connectorGeometry.end.x,
-                            connectorGeometry.end.y,
-                          ]}
-                          pointerLength={12}
-                          pointerWidth={11}
-                          fill={connectorStroke}
-                          stroke={connectorStroke}
-                          strokeWidth={selected ? 3 : hovered ? 2.6 : 2}
-                          lineCap="round"
-                          lineJoin="round"
-                          hitStrokeWidth={16}
-                        />
-                      ) : (
-                        <Line
-                          points={[
-                            connectorGeometry.start.x,
-                            connectorGeometry.start.y,
-                            connectorGeometry.end.x,
-                            connectorGeometry.end.y,
-                          ]}
-                          stroke={connectorStroke}
-                          strokeWidth={selected ? 3 : hovered ? 2.6 : 2}
-                          lineCap="round"
-                          lineJoin="round"
-                          hitStrokeWidth={16}
-                        />
-                      )}
-                      {renderVoteBadge({
-                        voteCount,
-                        x: connectorMidpoint.x + 6,
-                        y: connectorMidpoint.y - 23,
-                      })}
-                      {renderCommentBadge({
-                        commentCount,
-                        x:
-                          connectorMidpoint.x +
-                          6 -
-                          (commentCount > 0 && voteCount > 0 ? 24 : 0) -
-                          (voteCount > 0 ? 0 : 12),
-                        y: connectorMidpoint.y - 23,
-                      })}
-                      {selected && canEditBoard ? (
-                        <>
-                          <Circle
-                            x={connectorGeometry.start.x}
-                            y={connectorGeometry.start.y}
-                            radius={CONNECTOR_HANDLE_RADIUS}
-                            fill="#ffffff"
-                            stroke="#1d4ed8"
-                            strokeWidth={2}
-                            draggable
-                            onDragStart={() => {
-                              setDraggingConnectorId(boardObject.id)
-                            }}
-                            onDragMove={(event) => {
-                              const snapped = resolveSnappedEndpoint({
-                                x: event.target.x(),
-                                y: event.target.y(),
-                              })
-                              const next = toConnectorPatch({
-                                start: snapped.point,
-                                end: connectorGeometry.end,
-                                fromObjectId: snapped.objectId,
-                                fromAnchor: snapped.anchor,
-                                toObjectId: connectorGeometry.toObjectId,
-                                toAnchor: connectorGeometry.toAnchor,
-                              })
-                              setLocalConnectorGeometry((prev) => ({
-                                ...prev,
-                                [boardObject.id]: {
-                                  start: next.start,
-                                  end: next.end,
-                                  fromObjectId: next.fromObjectId,
-                                  toObjectId: next.toObjectId,
-                                  fromAnchor: next.fromAnchor,
-                                  toAnchor: next.toAnchor,
-                                  mode: 'dragging',
-                                  updatedAt: nowMs(),
-                                },
-                              }))
-                              getConnectorPublisher(boardObject.id)(next)
-                            }}
-                            onDragEnd={(event) => {
-                              const snapped = resolveSnappedEndpoint({
-                                x: event.target.x(),
-                                y: event.target.y(),
-                              })
-                              const next = toConnectorPatch({
-                                start: snapped.point,
-                                end: connectorGeometry.end,
-                                fromObjectId: snapped.objectId,
-                                fromAnchor: snapped.anchor,
-                                toObjectId: connectorGeometry.toObjectId,
-                                toAnchor: connectorGeometry.toAnchor,
-                              })
-                              setLocalConnectorGeometry((prev) => ({
-                                ...prev,
-                                [boardObject.id]: {
-                                  start: next.start,
-                                  end: next.end,
-                                  fromObjectId: next.fromObjectId,
-                                  toObjectId: next.toObjectId,
-                                  fromAnchor: next.fromAnchor,
-                                  toAnchor: next.toAnchor,
-                                  mode: 'pending',
-                                  updatedAt: nowMs(),
-                                },
-                              }))
-                              setDraggingConnectorId(null)
-                              void patchObject(boardObject.id, next)
-                            }}
-                          />
-                          <Circle
-                            x={connectorGeometry.end.x}
-                            y={connectorGeometry.end.y}
-                            radius={CONNECTOR_HANDLE_RADIUS}
-                            fill="#ffffff"
-                            stroke="#1d4ed8"
-                            strokeWidth={2}
-                            draggable
-                            onDragStart={() => {
-                              setDraggingConnectorId(boardObject.id)
-                            }}
-                            onDragMove={(event) => {
-                              const snapped = resolveSnappedEndpoint({
-                                x: event.target.x(),
-                                y: event.target.y(),
-                              })
-                              const next = toConnectorPatch({
-                                start: connectorGeometry.start,
-                                end: snapped.point,
-                                fromObjectId: connectorGeometry.fromObjectId,
-                                fromAnchor: connectorGeometry.fromAnchor,
-                                toObjectId: snapped.objectId,
-                                toAnchor: snapped.anchor,
-                              })
-                              setLocalConnectorGeometry((prev) => ({
-                                ...prev,
-                                [boardObject.id]: {
-                                  start: next.start,
-                                  end: next.end,
-                                  fromObjectId: next.fromObjectId,
-                                  toObjectId: next.toObjectId,
-                                  fromAnchor: next.fromAnchor,
-                                  toAnchor: next.toAnchor,
-                                  mode: 'dragging',
-                                  updatedAt: nowMs(),
-                                },
-                              }))
-                              getConnectorPublisher(boardObject.id)(next)
-                            }}
-                            onDragEnd={(event) => {
-                              const snapped = resolveSnappedEndpoint({
-                                x: event.target.x(),
-                                y: event.target.y(),
-                              })
-                              const next = toConnectorPatch({
-                                start: connectorGeometry.start,
-                                end: snapped.point,
-                                fromObjectId: connectorGeometry.fromObjectId,
-                                fromAnchor: connectorGeometry.fromAnchor,
-                                toObjectId: snapped.objectId,
-                                toAnchor: snapped.anchor,
-                              })
-                              setLocalConnectorGeometry((prev) => ({
-                                ...prev,
-                                [boardObject.id]: {
-                                  start: next.start,
-                                  end: next.end,
-                                  fromObjectId: next.fromObjectId,
-                                  toObjectId: next.toObjectId,
-                                  fromAnchor: next.fromAnchor,
-                                  toAnchor: next.toAnchor,
-                                  mode: 'pending',
-                                  updatedAt: nowMs(),
-                                },
-                              }))
-                              setDraggingConnectorId(null)
-                              void patchObject(boardObject.id, next)
-                            }}
-                          />
-                        </>
-                      ) : null}
-                    </Group>
-                  )
+                  return renderConnectorObject({
+                    boardObject,
+                    selected,
+                    hovered,
+                    canEditBoard,
+                    themeMode,
+                    localConnectorGeometry,
+                    localObjectPositions,
+                    localObjectSizes,
+                    objectsById,
+                    connectorHandleRadius: CONNECTOR_HANDLE_RADIUS,
+                    handleObjectSelection,
+                    setHoveredObjectId,
+                    setDraggingConnectorId,
+                    setLocalConnectorGeometry,
+                    resolveSnappedEndpoint,
+                    getConnectorPublisher,
+                    patchObject,
+                    renderVoteBadge,
+                    renderCommentBadge,
+                  })
                 }
 
                 if (boardObject.type === 'frame') {
@@ -6119,6 +5278,7 @@ export const BoardPageRuntime = () => {
                     renderCommentBadge,
                     minTextWidth: 80,
                     minTextHeight: 28,
+                    themeMode,
                   })
                 }
               })}
@@ -6489,162 +5649,48 @@ export const BoardPageRuntime = () => {
 
         </section>
 
-        <aside className="right-column">
-          <div className="side-tabs">
-            <button
-              type="button"
-              className={`side-tab-button ${showCommentsPanel ? 'active' : ''}`}
-              onClick={() => {
-                setShowCommentsPanel(true)
-                setShowTimelinePanel(false)
-              }}
-              title="Show comments panel"
-              aria-pressed={showCommentsPanel}
-            >
-              Comments
-            </button>
-            <button
-              type="button"
-              className={`side-tab-button ${showTimelinePanel ? 'active' : ''}`}
-              onClick={() => {
-                setShowCommentsPanel(false)
-                setShowTimelinePanel(true)
-              }}
-              title="Show activity timeline"
-              aria-pressed={showTimelinePanel}
-            >
-              Timeline
-            </button>
-            <button
-              type="button"
-              className={`side-tab-button ${!showCommentsPanel && !showTimelinePanel ? 'active' : ''}`}
-              onClick={() => {
-                setShowCommentsPanel(false)
-                setShowTimelinePanel(false)
-              }}
-              title="Show AI assistant"
-              aria-pressed={!showCommentsPanel && !showTimelinePanel}
-            >
-              AI
-            </button>
-          </div>
-          {showCommentsPanel ? (
-            <section className="side-panel comments-panel">
-              <div className="side-panel-header">
-                <h3>Comments</h3>
-                {selectedObject ? <span className="value-badge">{selectedComments.length}</span> : null}
-              </div>
-              {selectedObject ? (
-                <div className="side-panel-content">
-                  <p className="panel-note">Online users: {onlineDisplayNames.join(', ') || 'none'}</p>
-                  <div className="comments-list">
-                    {selectedComments.length === 0 ? (
-                      <p className="panel-note">No comments yet.</p>
-                    ) : (
-                      selectedComments
-                        .slice()
-                        .sort((left, right) => left.createdAt - right.createdAt)
-                        .map((comment) => (
-                          <article key={comment.id} className="comment-item">
-                            <strong>{comment.createdByName}</strong>
-                            <p>{comment.text}</p>
-                          </article>
-                        ))
-                    )}
-                  </div>
-                  <textarea
-                    className="ai-input comment-input"
-                    placeholder="Add comment, mention teammates with @name"
-                    value={commentDraft}
-                    onChange={(event) => setCommentDraft(event.target.value)}
-                  />
-                  <button type="button" className="primary-button" onClick={() => void addComment()}>
-                    Add Comment
-                  </button>
-                </div>
-              ) : (
-                <p className="panel-note">Select an object to view and add comments.</p>
-              )}
-            </section>
-          ) : null}
-
-          {showTimelinePanel ? (
-            <section className="side-panel timeline-panel">
-              <div className="side-panel-header">
-                <h3>Activity Timeline</h3>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => void replayTimeline()}
-                >
-                  {isTimelineReplaying ? 'Stop' : 'Replay'}
-                </button>
-              </div>
-              <div className="side-panel-content">
-                <div className="timeline-list">
-                  {timelineEvents.map((event) => (
-                    <button
-                      key={event.id}
-                      type="button"
-                      className={`timeline-item ${replayingEventId === event.id ? 'active' : ''}`}
-                      onClick={() => {
-                        if (event.targetId) {
-                          setSelectedIds([event.targetId])
-                        }
-                      }}
-                    >
-                      <span className="timeline-item-actor">{event.actorName}</span>
-                      <span className="timeline-item-action">{event.action}</span>
-                      <span className="timeline-item-time">
-                        {new Date(event.createdAt).toLocaleTimeString([], {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
-                      </span>
-                    </button>
-                  ))}
-                  {timelineEvents.length === 0 ? <p className="panel-note">No activity yet.</p> : null}
-                </div>
-              </div>
-            </section>
-          ) : null}
-
-          {!showCommentsPanel && !showTimelinePanel ? (
-            <section className="side-panel ai-panel-sidebar">
-              <AICommandPanel
-                disabled={!user || !canEditBoard || !hasLiveBoardAccess}
-                onSubmit={handleAiCommandSubmit}
-                onIngestTextLines={ingestTextLinesAsStickies}
-                history={aiCommandHistory}
-              />
-            </section>
-          ) : null}
-        </aside>
+        <BoardRightSidebar
+          addComment={() => {
+            void addComment()
+          }}
+          aiCommandHistory={aiCommandHistory}
+          aiDisabled={!user || !canEditBoard || !hasLiveBoardAccess}
+          commentDraft={commentDraft}
+          isTimelineReplaying={isTimelineReplaying}
+          onCommentDraftChange={setCommentDraft}
+          onIngestTextLines={ingestTextLinesAsStickies}
+          onReplayTimeline={() => {
+            void replayTimeline()
+          }}
+          onSelectTimelineTarget={(targetId) => {
+            setSelectedIds([targetId])
+          }}
+          onShowAi={() => {
+            setShowCommentsPanel(false)
+            setShowTimelinePanel(false)
+          }}
+          onShowComments={() => {
+            setShowCommentsPanel(true)
+            setShowTimelinePanel(false)
+          }}
+          onShowTimeline={() => {
+            setShowCommentsPanel(false)
+            setShowTimelinePanel(true)
+          }}
+          onSubmitAiCommand={handleAiCommandSubmit}
+          onlineDisplayNames={onlineDisplayNames}
+          replayingEventId={replayingEventId}
+          selectedComments={selectedComments}
+          selectedObject={selectedObject}
+          showCommentsPanel={showCommentsPanel}
+          showTimelinePanel={showTimelinePanel}
+          timelineEvents={timelineEvents}
+        />
       </section>
-      {showShortcuts ? (
-        <div className="shortcut-modal-backdrop" onClick={() => setShowShortcuts(false)}>
-          <section className="shortcut-modal" onClick={(event) => event.stopPropagation()}>
-            <h3>Keyboard Shortcuts</h3>
-            <ul>
-              <li>`Delete` or `Backspace`: delete selected object</li>
-              <li>`Escape`: deselect all objects</li>
-              <li>`Escape` in Box select mode: switch back to Pointer mode</li>
-              <li>`Shift + Drag` (or Area tool): marquee multi-select</li>
-              <li>`Cmd/Ctrl + A`: select all objects</li>
-              <li>`Cmd/Ctrl + D`: duplicate selected object</li>
-              <li>`Cmd/Ctrl + C`, `Cmd/Ctrl + V`: copy/paste selected object(s)</li>
-              <li>`Cmd/Ctrl + Z`: undo</li>
-              <li>`Cmd/Ctrl + Shift + Z` or `Cmd/Ctrl + Y`: redo</li>
-              <li>`Shift + E`: toggle view/edit mode</li>
-              <li>`/`: open command palette</li>
-              <li>`?`: open/close shortcuts panel</li>
-            </ul>
-            <button type="button" className="secondary-button" onClick={() => setShowShortcuts(false)}>
-              Close
-            </button>
-          </section>
-        </div>
-      ) : null}
+      <BoardShortcutsModal
+        onClose={() => setShowShortcuts(false)}
+        open={showShortcuts}
+      />
     </main>
   )
 }

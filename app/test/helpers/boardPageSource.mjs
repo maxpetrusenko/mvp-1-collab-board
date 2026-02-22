@@ -8,8 +8,13 @@ const boardPageRuntimePath = path.join(pagesDir, 'BoardPageRuntime.tsx')
 const supplementalPaths = [
   path.join(pagesDir, 'boardPageRuntimePrimitives.tsx'),
   path.join(pagesDir, 'boardPanels.tsx'),
+  path.join(pagesDir, 'boardCommandOverlays.tsx'),
+  path.join(pagesDir, 'boardHeaderBar.tsx'),
+  path.join(pagesDir, 'boardSidebarPanels.tsx'),
+  path.join(pagesDir, 'boardFloatingToolbar.tsx'),
   path.join(pagesDir, 'boardStickyObjectRenderer.tsx'),
   path.join(pagesDir, 'boardShapeObjectRenderer.tsx'),
+  path.join(pagesDir, 'boardConnectorObjectRenderer.tsx'),
   path.join(pagesDir, 'boardTextObjectRenderer.tsx'),
   path.join(pagesDir, 'boardObjectRendererShared.ts'),
   path.join(hooksDir, 'useBoardSelection.ts'),
