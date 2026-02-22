@@ -465,6 +465,15 @@ Purpose: log system decisions, alternatives, rationale, and change history.
 - Consequences: Default create behavior stays in-view for sticky/shape/frame generation, while commands such as `at top right` and `at 640,360` preserve explicit intent.
 - Revisit Trigger: If advanced layout prompts require autonomous model coordinate planning without explicit user placement language.
 
+### D-050
+- Date: 2026-02-22
+- Status: Accepted
+- Decision: For AI commands without explicit placement intent, apply deterministic sequential offsets to repeated create operations (`createStickyNote`, `createShape`, `createFrame`) so generated objects render side-by-side instead of overlapping.
+- Alternatives Considered: Keep anchor-centered placement for every create call; add randomized jitter offsets.
+- Rationale: Repeated create calls in one command can be interpreted as a single object when items stack at identical coordinates.
+- Consequences: Multi-create AI outputs remain visually discoverable and editable without manual drag separation.
+- Revisit Trigger: If advanced layout commands require dense stacking behavior as a first-class mode.
+
 ## Change Log
 - 2026-02-16: Initial decision set created.
 - 2026-02-16: Added auth provider, deployment URL strategy, and error recovery UX decisions.
@@ -501,3 +510,4 @@ Purpose: log system decisions, alternatives, rationale, and change history.
 - 2026-02-22: Added provider-priority and cooldown suppression decision to reduce degraded-provider latency impact.
 - 2026-02-22: Added command-profiled compact prompt/tool-routing decision with required tool-call mode for fast compound AI execution.
 - 2026-02-22: Added explicit-user-placement-only preservation decision to keep AI-created objects anchored in active viewport by default.
+- 2026-02-22: Added deterministic sequential AI-create offset decision to prevent overlapping generated objects.

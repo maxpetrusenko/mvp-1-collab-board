@@ -34,6 +34,9 @@ const COLOR_MAP = {
   purple: '#c4b5fd',
   gray: '#e2e8f0',
 }
+const COLOR_NAME_LIST = Object.keys(COLOR_MAP)
+const FRAME_TEMPLATE_COLOR_SEQUENCE = ['gray', 'blue', 'green', 'pink', 'orange', 'purple']
+const STICKY_TEMPLATE_COLOR_SEQUENCE = ['yellow', 'blue', 'green', 'pink', 'orange', 'purple', 'red', 'gray']
 const COLOR_NAME_ALTERNATION = 'yellow|blue|green|pink|red|orange|purple|gray'
 const COLOR_NAME_PATTERN = `(?:${COLOR_NAME_ALTERNATION})`
 const CREATE_VERB_PATTERN = '(?:add(?:ed)?|create(?:d)?|make|generate|build|insert|put)'
@@ -743,6 +746,30 @@ const isPointInsideViewport = (point, viewport, padding = 0) => {
   )
 }
 
+const resolveSequentialCreatePlacement = ({ anchor, width, height, sequenceIndex = 0 }) => {
+  const safeAnchor = toFinitePoint(anchor) || { x: 220, y: 180 }
+  const safeWidth = Math.max(32, parseNumber(width, 180))
+  const safeHeight = Math.max(24, parseNumber(height, 110))
+  const index = Math.max(0, parseNumber(sequenceIndex, 0))
+  const baseX = safeAnchor.x - safeWidth / 2
+  const baseY = safeAnchor.y - safeHeight / 2
+
+  if (index === 0) {
+    return { x: Math.round(baseX), y: Math.round(baseY) }
+  }
+
+  const columns = 3
+  const col = index % columns
+  const row = Math.floor(index / columns)
+  const gapX = Math.max(24, Math.round(safeWidth * 0.22))
+  const gapY = Math.max(20, Math.round(safeHeight * 0.24))
+
+  return {
+    x: Math.round(baseX + col * (safeWidth + gapX)),
+    y: Math.round(baseY + row * (safeHeight + gapY)),
+  }
+}
+
 const normalizeAiPlacementHint = (candidate) => {
   console.log('[PLACEMENT] Raw input:', JSON.stringify(candidate))
   if (!candidate || typeof candidate !== 'object') {
@@ -793,8 +820,16 @@ const resolveLlmCreateArgsWithPlacement = (
   commandPlacement,
   batchContext = null,
   userPlacementIntent = false,
+  createSequenceIndex = 0,
 ) => {
-  console.log('[PLACEMENT_RESOLVE] toolName:', toolName, 'batchContext:', batchContext)
+  console.log(
+    '[PLACEMENT_RESOLVE] toolName:',
+    toolName,
+    'batchContext:',
+    batchContext,
+    'createSequenceIndex:',
+    createSequenceIndex,
+  )
   if (!args || typeof args !== 'object') {
     console.log('[PLACEMENT_RESOLVE] REJECTED: Invalid args')
     return args
@@ -849,8 +884,14 @@ const resolveLlmCreateArgsWithPlacement = (
       console.log('[PLACEMENT_RESOLVE] Batch layout for index', batchContext.index, ':', target)
       return resolved
     }
-    resolved.x = Math.round(anchor.x - stickySize.width / 2)
-    resolved.y = Math.round(anchor.y - stickySize.height / 2)
+    const sequentialPosition = resolveSequentialCreatePlacement({
+      anchor,
+      width: stickySize.width,
+      height: stickySize.height,
+      sequenceIndex: createSequenceIndex,
+    })
+    resolved.x = sequentialPosition.x
+    resolved.y = sequentialPosition.y
     console.log('[PLACEMENT_RESOLVE] Single sticky centered at anchor:', { x: resolved.x, y: resolved.y })
     return resolved
   }
@@ -860,16 +901,28 @@ const resolveLlmCreateArgsWithPlacement = (
     const defaultSize = STICKY_SHAPE_SIZES[shapeType] || STICKY_SHAPE_SIZES.rectangle
     const width = parseNumber(resolved.width, defaultSize.width)
     const height = parseNumber(resolved.height, defaultSize.height)
-    resolved.x = Math.round(anchor.x - width / 2)
-    resolved.y = Math.round(anchor.y - height / 2)
+    const sequentialPosition = resolveSequentialCreatePlacement({
+      anchor,
+      width,
+      height,
+      sequenceIndex: createSequenceIndex,
+    })
+    resolved.x = sequentialPosition.x
+    resolved.y = sequentialPosition.y
     return resolved
   }
 
   if (toolName === 'createFrame') {
     const width = parseNumber(resolved.width, 480)
     const height = parseNumber(resolved.height, 300)
-    resolved.x = Math.round(anchor.x - width / 2)
-    resolved.y = Math.round(anchor.y - height / 2)
+    const sequentialPosition = resolveSequentialCreatePlacement({
+      anchor,
+      width,
+      height,
+      sequenceIndex: createSequenceIndex,
+    })
+    resolved.x = sequentialPosition.x
+    resolved.y = sequentialPosition.y
     return resolved
   }
 
@@ -2771,6 +2824,11 @@ const executeLlmToolCall = async (ctx, toolName, rawArgs, options = {}) => {
   const args = rawArgs && typeof rawArgs === 'object' ? rawArgs : {}
   const batchContext = options.batchContext || null
   const userPlacementIntent = Boolean(options.userPlacementIntent || ctx.userPlacementIntent)
+  const isCreateTool = toolName === 'createStickyNote' || toolName === 'createShape' || toolName === 'createFrame'
+  const createSequenceIndex = isCreateTool ? Math.max(0, parseNumber(ctx.aiCreatePlacementIndex, 0)) : 0
+  if (isCreateTool) {
+    ctx.aiCreatePlacementIndex = createSequenceIndex + 1
+  }
 
   switch (toolName) {
     case 'createStickyNote': {
@@ -2780,6 +2838,7 @@ const executeLlmToolCall = async (ctx, toolName, rawArgs, options = {}) => {
         ctx.commandPlacement,
         batchContext,
         userPlacementIntent,
+        createSequenceIndex,
       )
       await createStickyNote(ctx, {
         text: positionedArgs.text || 'New sticky note',
@@ -2800,6 +2859,7 @@ const executeLlmToolCall = async (ctx, toolName, rawArgs, options = {}) => {
         ctx.commandPlacement,
         batchContext,
         userPlacementIntent,
+        createSequenceIndex,
       )
       await createShape(ctx, {
         type: positionedArgs.type || 'rectangle',
@@ -2820,6 +2880,7 @@ const executeLlmToolCall = async (ctx, toolName, rawArgs, options = {}) => {
         ctx.commandPlacement,
         batchContext,
         userPlacementIntent,
+        createSequenceIndex,
       )
       await createFrame(ctx, {
         title: sanitizeText(positionedArgs.title || 'New Frame'),
@@ -3294,6 +3355,7 @@ const executeViaLLM = async (ctx, command) => {
 
   const userPlacementIntent = hasUserPlacementIntent(command)
   ctx.userPlacementIntent = userPlacementIntent
+  ctx.aiCreatePlacementIndex = 0
   const boardContext = {
     state: ctx.state,
     boardId: ctx.boardId,
