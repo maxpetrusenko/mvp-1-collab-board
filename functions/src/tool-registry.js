@@ -5,6 +5,7 @@
 const COLOR_OPTIONS = ['yellow', 'blue', 'green', 'pink', 'red', 'orange', 'purple', 'gray']
 const SHAPE_TYPES = ['rectangle', 'circle', 'diamond', 'triangle']
 const POSITION_OPTIONS = ['top left', 'top right', 'bottom left', 'bottom right', 'center', 'top', 'bottom', 'left', 'right']
+const ANCHOR_OPTIONS = ['top', 'right', 'bottom', 'left', 'center']
 
 const TOOL_DEFINITIONS = [
   {
@@ -151,12 +152,22 @@ const TOOL_DEFINITIONS = [
           color: {
             type: 'string',
             enum: COLOR_OPTIONS,
-            description: 'Color of the connector line (optional, defaults to dark)'
+            description: 'Color of the connector line (optional, defaults to blue)'
           },
           style: {
             type: 'string',
             enum: ['arrow', 'line'],
             description: 'Connector style (optional, defaults to arrow)'
+          },
+          fromAnchor: {
+            type: 'string',
+            enum: ANCHOR_OPTIONS,
+            description: 'Optional source-side anchor (top/right/bottom/left/center)'
+          },
+          toAnchor: {
+            type: 'string',
+            enum: ANCHOR_OPTIONS,
+            description: 'Optional target-side anchor (top/right/bottom/left/center)'
           }
         },
         required: ['fromId', 'toId']
