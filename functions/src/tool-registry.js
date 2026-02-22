@@ -124,6 +124,11 @@ const TOOL_DEFINITIONS = [
             type: 'number',
             description: 'Height in pixels (optional, defaults to 300)'
           },
+          color: {
+            type: 'string',
+            enum: COLOR_OPTIONS,
+            description: 'Background color of the frame (optional, defaults to gray)'
+          },
           position: {
             type: 'string',
             enum: POSITION_OPTIONS,

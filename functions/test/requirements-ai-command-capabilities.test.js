@@ -997,6 +997,63 @@ test('AI-CMDS-004: placement helpers anchor single and batch create operations n
   assert.equal(stalePointerFallback.x, 550)
   assert.equal(stalePointerFallback.y, 305)
 
+  const stickySequentialFirst = __test.resolveLlmCreateArgsWithPlacement(
+    'createStickyNote',
+    { text: 'First' },
+    placement,
+    null,
+    false,
+    0,
+  )
+  const stickySequentialSecond = __test.resolveLlmCreateArgsWithPlacement(
+    'createStickyNote',
+    { text: 'Second' },
+    placement,
+    null,
+    false,
+    1,
+  )
+  assert.ok(stickySequentialSecond.x > stickySequentialFirst.x)
+  assert.equal(stickySequentialSecond.y, stickySequentialFirst.y)
+
+  const shapeSequentialFirst = __test.resolveLlmCreateArgsWithPlacement(
+    'createShape',
+    { type: 'rectangle' },
+    placement,
+    null,
+    false,
+    0,
+  )
+  const shapeSequentialSecond = __test.resolveLlmCreateArgsWithPlacement(
+    'createShape',
+    { type: 'rectangle' },
+    placement,
+    null,
+    false,
+    1,
+  )
+  assert.ok(shapeSequentialSecond.x > shapeSequentialFirst.x)
+  assert.equal(shapeSequentialSecond.y, shapeSequentialFirst.y)
+
+  const frameSequentialFirst = __test.resolveLlmCreateArgsWithPlacement(
+    'createFrame',
+    { title: 'One' },
+    placement,
+    null,
+    false,
+    0,
+  )
+  const frameSequentialSecond = __test.resolveLlmCreateArgsWithPlacement(
+    'createFrame',
+    { title: 'Two' },
+    placement,
+    null,
+    false,
+    1,
+  )
+  assert.ok(frameSequentialSecond.x > frameSequentialFirst.x)
+  assert.equal(frameSequentialSecond.y, frameSequentialFirst.y)
+
   const batch = Array.from({ length: 4 }, (_, index) =>
     __test.resolveLlmCreateArgsWithPlacement(
       'createStickyNote',

@@ -1,7 +1,7 @@
 # TASKS.md
 
 Date initialized: 2026-02-16
-Last updated: 2026-02-22 (AI viewport placement guardrail for LLM-inferred coordinates + command-profiled AI fast path + runtime/panels extraction + LLM error UX hardening + explicit latency indicator logging + Firebase dev/prod project split guardrails)
+Last updated: 2026-02-22 (AI viewport placement guardrail + sequential AI create offsets to prevent overlap + command-profiled AI fast path + runtime/panels extraction + LLM error UX hardening + Firebase dev/prod project split guardrails)
 Cadence: half-day sprint checkpoints
 Source: `AGENTS.md` + `G4 Week 1 - CollabBoard-requirements.pdf`
 
@@ -34,6 +34,7 @@ Source: `AGENTS.md` + `G4 Week 1 - CollabBoard-requirements.pdf`
 | T-156 | B | Add command-profiled AI planning fast path (compact system prompts, required tool-choice for mutation commands, and dedicated BMC/workflow tools) to cut compound-command latency while preserving LLM-first execution | Done | 2026-02-22 |
 | T-157 | B | Keep AI-created objects in the active viewport by applying client placement anchor unless user command explicitly requests coordinates or named board regions | Done | 2026-02-22 |
 | T-158 | D | Split Firebase project aliases into `dev` (local default) and `prod` (explicit deploy), add guarded deploy scripts to prevent accidental production updates | Done | 2026-02-22 |
+| T-159 | B | Apply deterministic side-by-side offsets for repeated AI create operations (`createStickyNote`, `createShape`, `createFrame`) to prevent same-position overlap when no explicit coordinates are requested | Done | 2026-02-22 |
 | T-130 | D | Split task tracking into `TASKS.md` (active/backlog) + `ARCHIVE.md` (history) | Done | 2026-02-20 |
 | T-131 | D | Add explicit Golden Rule: E2E-first (hot-fix exception documented) to `AGENTS.md` | Done | 2026-02-20 |
 | T-132 | D | Add GitHub Actions deploy workflow for `main` and CI quality gate | Done | 2026-02-20 |
@@ -100,3 +101,4 @@ Rule: implement only tasks that map to `docs/requirements.md` (MVP hard gate, bo
 - `T-156`: `functions/src/tool-registry.js` (`createBusinessModelCanvas`, `createWorkflowFlowchart` tool schema exposure + system-prompt guidance), `functions/src/glm-client.js` (grid/artifact tool-profile routing, required `tool_choice`, compact system prompt path), `functions/index.js` (LLM tool dispatcher handlers for `createBusinessModelCanvas` + `createWorkflowFlowchart`, tuned token tiers), `functions/test/glm-provider-fallback.test.js` (tool-profile and tool-choice assertions), `functions/test/requirements-ai-command-capabilities.test.js` (`AI-CMDS-016`, `AI-CMDS-029`), prod probe snapshot (`create one sticky` ~2.25s runtime, `create 6 boxes` ~3.10s runtime, BMC ~3.20s runtime), runtime tool-evidence snapshot (`create 6 boxes`: `executedTools=8`; `BMC`: `executedTools=11`)
 - `T-157`: `functions/index.js` (`resolveLlmCreateArgsWithPlacement` strips LLM-inferred `position/x/y` when the user command has no explicit placement intent), `functions/test/requirements-ai-command-capabilities.test.js` (`AI-CMDS-004` explicit-placement-preserve vs inferred-placement-fallback assertions)
 - `T-158`: `.firebaserc` + `.firebaserc.example` (alias split), `scripts/deploy-dev.sh`, `scripts/deploy-prod.sh`, `README.md` (local/prod test and deploy separation workflow)
+- `T-159`: `functions/index.js` (`resolveSequentialCreatePlacement`, `ctx.aiCreatePlacementIndex`, create-tool placement sequencing), `functions/test/requirements-ai-command-capabilities.test.js` (`AI-CMDS-004` sequential non-overlap assertions across sticky/shape/frame)
