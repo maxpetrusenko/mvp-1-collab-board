@@ -874,6 +874,59 @@ test('AI-CMDS-041: bulk recolor falls back to same-color objects when requested 
   assert.equal(greenFrames.length, 2)
 })
 
+test('AI-CMDS-048: legacy note rows recolor via sticky bulk fallback', async () => {
+  const now = Date.now()
+  const context = buildContext({
+    state: [
+      {
+        id: 'note-yellow-a',
+        boardId: 'test-board',
+        type: 'note',
+        text: 'Legacy note',
+        color: '#fde68a',
+        position: { x: 140, y: 150 },
+        size: { width: 180, height: 110 },
+        zIndex: 1,
+        createdBy: 'test-user',
+        createdAt: now,
+        updatedBy: 'test-user',
+        updatedAt: now,
+        version: 1,
+      },
+    ],
+  })
+
+  await withMockObjectWriter(
+    async () => {},
+    async () => {
+      await withMockGlmClient(
+        {
+          callGLM: async () => ({
+            choices: [
+              {
+                message: {
+                  content: '',
+                  tool_calls: [],
+                },
+              },
+            ],
+          }),
+          parseToolCalls: () => [],
+          getTextResponse: () => '',
+        },
+        async () => {
+          const result = await __test.runCommandPlan(context, 'change yellow collor stickies to green')
+          assert.equal(result.level, undefined)
+          assert.match(result.message, /changed 1 object from yellow to green/i)
+        },
+      )
+    },
+  )
+
+  const changed = context.state.filter((item) => item.type === 'note' && item.color === '#86efac')
+  assert.equal(changed.length, 1)
+})
+
 test('AI-CMDS-033: no-tool bulk color prompts update all matching sticky notes', async () => {
   const now = Date.now()
   const writeCalls = []

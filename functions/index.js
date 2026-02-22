@@ -234,7 +234,7 @@ const AI_PROVIDER_MAX_RETRIES = 0
 const AI_LOCK_WAIT_TIMEOUT_MS = 90_000
 const AI_LOCK_RETRY_INTERVAL_MS = 75
 const AI_LOCK_TTL_MS = 20_000
-const MAX_COMMAND_OBJECT_COUNT = 200
+const MAX_COMMAND_OBJECT_COUNT = 500
 const DELETE_VERB_TOKENS = new Set(['delete', 'remove', 'clear', 'erase', 'wipe', 'purge', 'trash'])
 const DELETE_SCOPE_TOKENS = new Set([
   'all',
@@ -546,7 +546,7 @@ const shouldLoadBoardStateForCommand = (command) => {
   return false
 }
 
-const COLOR_MUTABLE_OBJECT_TYPES = new Set(['stickyNote', 'shape', 'frame', 'text', 'connector'])
+const COLOR_MUTABLE_OBJECT_TYPES = new Set(['stickyNote', 'note', 'shape', 'frame', 'text', 'connector'])
 
 const normalizeSearchText = (value) =>
   String(value || '')
@@ -822,6 +822,24 @@ const parseBulkColorMutationIntent = (command) => {
       objectType,
       sourceColor: undefined,
       targetColor: verbTypeToMatch[2],
+    }
+  }
+
+  // Pattern: "change [color] [objects] to [color]" - e.g., "change yellow stickies to green"
+  const colorObjectTypeToPattern = new RegExp(
+    `\\b(?:change|changing|changed|set|update|recolor|edit|turn|make)\\s+(${COLOR_OR_HEX_PATTERN})\\s+${objectTypePattern}\\b(?:\\s+(?:to|into|as)\\s+|\\s+color\\s+to\\s+|\\s+to\\s+color\\s+)(?:the\\s+)?(${COLOR_OR_HEX_PATTERN})\\b`,
+    'i',
+  )
+  const colorObjectTypeToMatch = normalized.match(colorObjectTypeToPattern)
+  if (colorObjectTypeToMatch) {
+    const objectType = normalizeColorMutationObjectType(colorObjectTypeToMatch[2])
+    if (!objectType) {
+      return null
+    }
+    return {
+      objectType,
+      sourceColor: colorObjectTypeToMatch[1],
+      targetColor: colorObjectTypeToMatch[3],
     }
   }
 
