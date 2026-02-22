@@ -96,6 +96,7 @@ import {
   exportStageSnapshot,
   resolveSnappedConnectorEndpoint,
 } from './boardActionHelpers'
+import { renderShapeObject, renderStickyObject, renderTextObject } from './boardObjectRenderers'
 import {
   applyLinkAccessFallback as applyLinkAccessFallbackHelper,
   applyShareMutationFallback as applyShareMutationFallbackHelper,
@@ -110,6 +111,7 @@ import {
 import { AICommandPanel } from '../components/AICommandPanel'
 import { useConnectionStatus } from '../hooks/useConnectionStatus'
 import { usePresence } from '../hooks/usePresence'
+import { useBoardSelection } from '../hooks/useBoardSelection'
 import {
   useObjectSync,
   type LocalConnectorOverride,
@@ -130,6 +132,7 @@ import {
   type ConnectorPatch,
 } from '../lib/boardGeometry'
 import { getContrastingTextColor } from '../lib/contrast'
+import { nowMs, waitMs as wait } from '../lib/time'
 
 const BOARD_HEADER_HEIGHT = 64
 const CONNECTOR_SNAP_THRESHOLD_PX = 36
@@ -389,8 +392,6 @@ const parseTimerLabelToMs = (inputValue: string): number | null => {
 
   return (minutes * 60 + seconds) * 1000
 }
-const nowMs = () => Date.now()
-const wait = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms))
 const notifyExportComplete = (detail: { format: 'png' | 'pdf'; scope: 'full' | 'selection'; fileBase: string }) => {
   window.dispatchEvent(new CustomEvent('board-export-complete', { detail }))
 }
@@ -575,6 +576,16 @@ export const BoardPageRuntime = () => {
   const [showCommandPalette, setShowCommandPalette] = useState(false)
   const [commandPaletteQuery, setCommandPaletteQuery] = useState('')
   const [commandPaletteActiveIndex, setCommandPaletteActiveIndex] = useState(0)
+  const {
+    selectedId,
+    selectedIdSet,
+    selectedObjects,
+    selectionBox,
+    setSelectionBox,
+    beginSelectionBox: beginSelectionBoxFromHook,
+    updateSelectionBox: updateSelectionBoxFromHook,
+    completeSelectionBox: completeSelectionBoxFromHook,
+  } = useBoardSelection({ objects, selectedIds, setSelectedIds })
 
   useEffect(() => {
     selectedIdsRef.current = selectedIds
@@ -595,11 +606,6 @@ export const BoardPageRuntime = () => {
     color: TEXT_COLOR_OPTIONS[0],
     fontSize: 24,
   })
-  const [selectionBox, setSelectionBox] = useState<{
-    active: boolean
-    start: Point
-    end: Point
-  } | null>(null)
   const [voteConfettiParticles, setVoteConfettiParticles] = useState<VoteConfettiParticle[]>([])
   const objectsCreatedCountRef = useRef(0)
   const activeBoardMeta = useMemo(
@@ -735,7 +741,7 @@ export const BoardPageRuntime = () => {
     setResizingObjectId(null)
     setDraggingObjectId(null)
     setDraggingConnectorId(null)
-  }, [canEditBoard])
+  }, [canEditBoard, setSelectionBox])
   useEffect(() => {
     if (!hoveredObjectId) {
       return
@@ -1214,8 +1220,6 @@ export const BoardPageRuntime = () => {
     )
   }, [boardId, boards, hasLiveBoardAccess, user])
 
-  const selectedId = selectedIds[0] || null
-  const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds])
   const currentBoardMeta = useMemo(() => activeBoardMeta || null, [activeBoardMeta])
   const canManageCurrentBoardSharing = useMemo(
     () => Boolean(userId && currentBoardMeta && currentBoardMeta.ownerId === userId),
@@ -1417,10 +1421,6 @@ export const BoardPageRuntime = () => {
   const remotePresenceEntries = useMemo(
     () => presenceEntries.filter((cursor) => cursor.userId !== user?.uid),
     [presenceEntries, user?.uid],
-  )
-  const selectedObjects = useMemo(
-    () => selectedIds.map((id) => objects.find((boardObject) => boardObject.id === id)).filter(Boolean) as BoardObject[],
-    [objects, selectedIds],
   )
   const onlineDisplayNames = useMemo(
     () => [selfDisplayName, ...remotePresenceEntries.map((cursor) => cursor.displayName)],
@@ -1841,68 +1841,32 @@ export const BoardPageRuntime = () => {
   }, [objects, playStickyDropAnimation])
   const beginSelectionBox = useCallback(
     (start: Point) => {
-      setSelectionBox({
-        active: true,
-        start,
-        end: start,
-      })
+      beginSelectionBoxFromHook(start)
     },
-    [],
+    [beginSelectionBoxFromHook],
   )
   const updateSelectionBox = useCallback((nextPoint: Point) => {
-    setSelectionBox((prev) => (prev ? { ...prev, end: nextPoint } : prev))
-  }, [])
+    updateSelectionBoxFromHook(nextPoint)
+  }, [updateSelectionBoxFromHook])
   const completeSelectionBox = useCallback(
     (additive: boolean) => {
-      setSelectionBox((prev) => {
-        if (!prev) {
-          return prev
-        }
-
-        const bounds = {
-          x: Math.min(prev.start.x, prev.end.x),
-          y: Math.min(prev.start.y, prev.end.y),
-          width: Math.abs(prev.end.x - prev.start.x),
-          height: Math.abs(prev.end.y - prev.start.y),
-        }
-
-        if (bounds.width < 3 && bounds.height < 3) {
-          return null
-        }
-
-        const hitIds = objects
-          .filter((boardObject) => {
-            const position = resolveObjectPosition(boardObject)
-            const size = resolveObjectSize(boardObject)
-            const objectBounds =
-              boardObject.type === 'connector'
-                ? getObjectBounds(boardObject, objectsById)
-                : {
-                    x: position.x,
-                    y: position.y,
-                    width: size.width,
-                    height: size.height,
-                  }
-            return overlaps(bounds, objectBounds)
-          })
-          .map((boardObject) => boardObject.id)
-
-        if (hitIds.length > 0) {
-          setSelectedIds((current) => {
-            if (!additive) {
-              return hitIds
-            }
-            const merged = new Set([...current, ...hitIds])
-            return [...merged]
-          })
-        } else if (!additive) {
-          setSelectedIds([])
-        }
-
-        return null
+      completeSelectionBoxFromHook({
+        additive,
+        resolveObjectBounds: (boardObject) => {
+          const position = resolveObjectPosition(boardObject)
+          const size = resolveObjectSize(boardObject)
+          return boardObject.type === 'connector'
+            ? getObjectBounds(boardObject, objectsById)
+            : {
+                x: position.x,
+                y: position.y,
+                width: size.width,
+                height: size.height,
+              }
+        },
       })
     },
-    [objects, objectsById, resolveObjectPosition, resolveObjectSize],
+    [completeSelectionBoxFromHook, objectsById, resolveObjectPosition, resolveObjectSize],
   )
   const navigateToBoard = useCallback(
     (nextBoardId: string) => {
@@ -1927,7 +1891,7 @@ export const BoardPageRuntime = () => {
       setSelectedIds([])
       navigate(`/b/${nextBoardId}`)
     },
-    [navigate],
+    [navigate, setSelectionBox],
   )
   const clearBoardNavigateTimeout = useCallback(() => {
     if (boardNavigationTimeoutRef.current === null) {
@@ -4478,6 +4442,13 @@ export const BoardPageRuntime = () => {
     }
     const currentWorldPointer = stageRef.current ? resolveWorldPointer(stageRef.current) : null
     const placementAnchor = currentWorldPointer || lastWorldPointerRef.current || viewportCenter
+    console.info('[AI_UI_DEBUG] submit', {
+      boardId,
+      command,
+      placementAnchor,
+      pointer: currentWorldPointer || lastWorldPointerRef.current || null,
+      viewportCenter,
+    })
     const response = await fetch(aiCommandEndpoint, {
       method: 'POST',
       headers: {
@@ -4499,8 +4470,22 @@ export const BoardPageRuntime = () => {
     })
 
     const payload = (await response.json().catch(() => null)) as
-      | { error?: string; result?: { message?: string; aiResponse?: string; level?: 'warning' } }
+      | {
+          error?: string
+          result?: { message?: string; aiResponse?: string; level?: 'warning'; objectCount?: number }
+        }
       | null
+    console.info('[AI_UI_DEBUG] response', {
+      boardId,
+      command,
+      status: response.status,
+      ok: response.ok,
+      message: payload?.result?.message || null,
+      aiResponse: payload?.result?.aiResponse || null,
+      level: payload?.result?.level || 'info',
+      objectCount: payload?.result?.objectCount ?? null,
+      error: payload?.error || null,
+    })
 
     if (!response.ok) {
       throw new Error(payload?.error || 'AI command failed')
@@ -5970,495 +5955,83 @@ export const BoardPageRuntime = () => {
                 const size = resolveObjectSize(boardObject)
 
                 if (boardObject.type === 'stickyNote') {
-                  const shapeType = normalizeShapeKind(boardObject.shapeType)
-                  const isInlineStickyTextEditing =
-                    inlineEditor?.objectId === boardObject.id && inlineEditor.field === 'text'
-                  const rotation = localObjectRotations[boardObject.id] ?? boardObject.rotation ?? 0
-                  const strokeColor = selected ? '#1d4ed8' : hovered ? '#0f766e' : '#0f172a'
-                  const strokeWidth = selected ? 2 : hovered ? 2 : 1
-                  const voteCount = Object.keys(boardObject.votesByUser || {}).length
-                  const commentCount = boardObject.comments?.length || 0
-                  return (
-                    <Group
-                      key={boardObject.id}
-                      id={`sticky-${boardObject.id}`}
-                      x={position.x}
-                      y={position.y}
-                      rotation={rotation}
-                      draggable={canEditBoard && selectionMode === 'select' && resizingObjectId !== boardObject.id && rotatingObjectId !== boardObject.id}
-                      onClick={(event) => handleObjectSelection(boardObject, Boolean(event.evt.shiftKey), 'text')}
-                      onTap={() => handleObjectSelection(boardObject, false, 'text')}
-                      onDblClick={() => {
-                        if (!canEditBoard) {
-                          return
-                        }
-                        startInlineEdit(boardObject, 'text')
-                      }}
-                      onMouseEnter={() => {
-                        setHoveredObjectId(boardObject.id)
-                      }}
-                      onMouseLeave={() => {
-                        setHoveredObjectId((previous) => (previous === boardObject.id ? null : previous))
-                      }}
-                      onDragStart={(event) => {
-                        beginObjectDrag(boardObject, { x: event.target.x(), y: event.target.y() })
-                      }}
-                      onDragMove={(event) => {
-                        moveObjectDrag(boardObject, { x: event.target.x(), y: event.target.y() })
-                      }}
-                      onDragEnd={(event) => {
-                        void endObjectDrag(
-                          boardObject,
-                          { x: event.target.x(), y: event.target.y() },
-                          selectedIds.length > 1 ? 'moved selection' : 'moved sticky',
-                        )
-                      }}
-                    >
-                      {shapeType === 'circle' ? (
-                        <Circle
-                          x={size.width / 2}
-                          y={size.height / 2}
-                          radius={Math.min(size.width, size.height) / 2}
-                          fill={boardObject.color}
-                          stroke={strokeColor}
-                          strokeWidth={strokeWidth}
-                          shadowBlur={hovered ? 10 : 6}
-                          shadowOpacity={hovered ? 0.3 : 0.2}
-                        />
-                      ) : null}
-                      {shapeType === 'diamond' ? (
-                        <Line
-                          points={[
-                            size.width / 2,
-                            0,
-                            size.width,
-                            size.height / 2,
-                            size.width / 2,
-                            size.height,
-                            0,
-                            size.height / 2,
-                          ]}
-                          closed
-                          fill={boardObject.color}
-                          stroke={strokeColor}
-                          strokeWidth={strokeWidth}
-                          lineJoin="round"
-                          shadowBlur={hovered ? 10 : 6}
-                          shadowOpacity={hovered ? 0.3 : 0.2}
-                        />
-                      ) : null}
-                      {shapeType === 'triangle' ? (
-                        <Line
-                          points={[
-                            size.width / 2,
-                            0,
-                            size.width,
-                            size.height,
-                            0,
-                            size.height,
-                          ]}
-                          closed
-                          fill={boardObject.color}
-                          stroke={strokeColor}
-                          strokeWidth={strokeWidth}
-                          lineJoin="round"
-                          shadowBlur={hovered ? 10 : 6}
-                          shadowOpacity={hovered ? 0.3 : 0.2}
-                        />
-                      ) : null}
-                      {shapeType === 'rectangle' ? (
-                        <Rect
-                          width={size.width}
-                          height={size.height}
-                          fill={boardObject.color}
-                          cornerRadius={8}
-                          stroke={strokeColor}
-                          strokeWidth={strokeWidth}
-                          shadowBlur={hovered ? 10 : 6}
-                          shadowOpacity={hovered ? 0.3 : 0.2}
-                        />
-                      ) : null}
-                      {!isInlineStickyTextEditing ? (
-                        <Text
-                          text={boardObject.text}
-                          x={shapeType === 'rectangle' ? 8 : 12}
-                          y={shapeType === 'rectangle' ? 8 : 10}
-                          width={Math.max(40, size.width - (shapeType === 'rectangle' ? 16 : 24))}
-                          height={Math.max(24, size.height - (shapeType === 'rectangle' ? 16 : 20))}
-                          fontSize={shapeType === 'rectangle' ? 16 : 14}
-                          fill={getContrastingTextColor(boardObject.color)}
-                          wrap="word"
-                          align={shapeType === 'rectangle' ? 'left' : 'center'}
-                          verticalAlign={shapeType === 'rectangle' ? 'top' : 'middle'}
-                        />
-                      ) : null}
-                      {renderVoteBadge({
-                        voteCount,
-                        x: size.width - getVoteBadgeWidth(voteCount) - 8,
-                        y: 8,
-                      })}
-                      {renderCommentBadge({ commentCount, x: 8, y: 8 })}
-                      {selected ? (
-                        <Rect
-                          width={size.width}
-                          height={size.height}
-                          stroke="#1d4ed8"
-                          strokeWidth={1}
-                          dash={[6, 4]}
-                          listening={false}
-                        />
-                      ) : null}
-                      {selected && canEditBoard ? (
-                        <Rect
-                          x={size.width - RESIZE_HANDLE_SIZE}
-                          y={size.height - RESIZE_HANDLE_SIZE}
-                          width={RESIZE_HANDLE_SIZE}
-                          height={RESIZE_HANDLE_SIZE}
-                          fill="#ffffff"
-                          stroke="#1d4ed8"
-                          strokeWidth={2}
-                          cornerRadius={3}
-                          draggable
-                          onMouseDown={(event) => {
-                            event.cancelBubble = true
-                          }}
-                          onDragStart={(event) => {
-                            setResizingObjectId(boardObject.id)
-                            event.cancelBubble = true
-                          }}
-                          onDragMove={(event) => {
-                            const nextSize = {
-                              width: Math.max(MIN_OBJECT_WIDTH, event.target.x() + RESIZE_HANDLE_SIZE),
-                              height: Math.max(MIN_OBJECT_HEIGHT, event.target.y() + RESIZE_HANDLE_SIZE),
-                            }
-                            resizeObjectLocal(boardObject, nextSize)
-                            event.cancelBubble = true
-                          }}
-                          onDragEnd={(event) => {
-                            const nextSize = {
-                              width: Math.max(MIN_OBJECT_WIDTH, event.target.x() + RESIZE_HANDLE_SIZE),
-                              height: Math.max(MIN_OBJECT_HEIGHT, event.target.y() + RESIZE_HANDLE_SIZE),
-                            }
-                            void commitResizeObject(boardObject, nextSize)
-                            event.cancelBubble = true
-                          }}
-                          data-testid={`resize-handle-${boardObject.id}`}
-                        />
-                      ) : null}
-                      {selected && canEditBoard ? (
-                        <>
-                          <Line
-                            x1={size.width / 2}
-                            y1={0}
-                            x2={size.width / 2}
-                            y2={-ROTATION_HANDLE_OFFSET}
-                            stroke="#1d4ed8"
-                            strokeWidth={1.5}
-                            listening={false}
-                          />
-                          <Circle
-                            x={size.width / 2}
-                            y={-ROTATION_HANDLE_OFFSET}
-                            radius={ROTATION_HANDLE_SIZE / 2}
-                            fill="#ffffff"
-                            stroke="#1d4ed8"
-                            strokeWidth={2}
-                            cursor="grab"
-                            draggable
-                            onMouseDown={(event) => {
-                              event.cancelBubble = true
-                            }}
-                            onDragStart={(event) => {
-                              setRotatingObjectId(boardObject.id)
-                              event.cancelBubble = true
-                            }}
-                            onDragMove={(event) => {
-                              const newRotation = calculateRotationFromHandleTarget(
-                                event.target,
-                                size.width,
-                                size.height,
-                              )
-                              if (newRotation === null) {
-                                return
-                              }
-
-                              setLocalRotation(boardObject.id, newRotation)
-                              event.cancelBubble = true
-                            }}
-                            onDragEnd={(event) => {
-                              const resolvedRotation =
-                                calculateRotationFromHandleTarget(event.target, size.width, size.height) ??
-                                localObjectRotationsRef.current[boardObject.id] ??
-                                boardObject.rotation ??
-                                0
-                              void patchObject(
-                                boardObject.id,
-                                { rotation: resolvedRotation },
-                                { actionLabel: `rotated ${boardObject.type}` },
-                              )
-                              clearLocalRotation(boardObject.id)
-                              setRotatingObjectId(null)
-                              event.cancelBubble = true
-                            }}
-                            data-testid={`rotation-handle-${boardObject.id}`}
-                          />
-                        </>
-                      ) : null}
-                    </Group>
-                  )
+                  return renderStickyObject({
+                    boardObject,
+                    position,
+                    size,
+                    selected,
+                    hovered,
+                    canEditBoard,
+                    selectionMode,
+                    resizingObjectId,
+                    rotatingObjectId,
+                    inlineEditor,
+                    selectedIdsCount: selectedIds.length,
+                    handleObjectSelection,
+                    startInlineEdit,
+                    setHoveredObjectId,
+                    beginObjectDrag,
+                    moveObjectDrag,
+                    endObjectDrag,
+                    localObjectRotations,
+                    localObjectRotationsRef,
+                    setResizingObjectId,
+                    resizeObjectLocal,
+                    commitResizeObject,
+                    setRotatingObjectId,
+                    calculateRotationFromHandleTarget,
+                    setLocalRotation,
+                    patchObject,
+                    clearLocalRotation,
+                    minObjectWidth: MIN_OBJECT_WIDTH,
+                    minObjectHeight: MIN_OBJECT_HEIGHT,
+                    resizeHandleSize: RESIZE_HANDLE_SIZE,
+                    rotationHandleOffset: ROTATION_HANDLE_OFFSET,
+                    rotationHandleSize: ROTATION_HANDLE_SIZE,
+                    getVoteBadgeWidth,
+                    renderVoteBadge,
+                    renderCommentBadge,
+                  })
                 }
 
                 if (boardObject.type === 'shape') {
-                  const shapeType = normalizeShapeKind(boardObject.shapeType)
-                  const isInlineShapeTextEditing =
-                    inlineEditor?.objectId === boardObject.id && inlineEditor.field === 'text'
-                  const rotation = (localObjectRotations[boardObject.id] ?? boardObject.rotation ?? 0)
-                  const strokeColor = selected ? '#1d4ed8' : hovered ? '#0f766e' : '#0f172a'
-                  const strokeWidth = selected ? 2 : hovered ? 2 : 1
-                  const voteCount = Object.keys(boardObject.votesByUser || {}).length
-                  const commentCount = boardObject.comments?.length || 0
-                  return (
-                    <Group
-                      key={boardObject.id}
-                      id={`shape-${boardObject.id}`}
-                      x={position.x}
-                      y={position.y}
-                      rotation={rotation}
-                      draggable={canEditBoard && selectionMode === 'select' && resizingObjectId !== boardObject.id && rotatingObjectId !== boardObject.id}
-                      onClick={(event) => handleObjectSelection(boardObject, Boolean(event.evt.shiftKey))}
-                      onTap={() => handleObjectSelection(boardObject)}
-                      onDblClick={() => {
-                        if (!canEditBoard) {
-                          return
-                        }
-                        startInlineEdit(boardObject, 'text')
-                      }}
-                      onMouseEnter={() => {
-                        setHoveredObjectId(boardObject.id)
-                      }}
-                      onMouseLeave={() => {
-                        setHoveredObjectId((previous) => (previous === boardObject.id ? null : previous))
-                      }}
-                      onDragStart={(event) => {
-                        beginObjectDrag(boardObject, { x: event.target.x(), y: event.target.y() })
-                      }}
-                      onDragMove={(event) => {
-                        moveObjectDrag(boardObject, { x: event.target.x(), y: event.target.y() })
-                      }}
-                      onDragEnd={(event) => {
-                        void endObjectDrag(
-                          boardObject,
-                          { x: event.target.x(), y: event.target.y() },
-                          selectedIds.length > 1 ? 'moved selection' : 'moved shape',
-                        )
-                      }}
-                    >
-                      {shapeType === 'circle' ? (
-                        <Circle
-                          x={size.width / 2}
-                          y={size.height / 2}
-                          radius={Math.min(size.width, size.height) / 2}
-                          fill={boardObject.color}
-                          stroke={strokeColor}
-                          strokeWidth={strokeWidth}
-                          shadowBlur={hovered ? 10 : 6}
-                          shadowOpacity={hovered ? 0.3 : 0.2}
-                        />
-                      ) : null}
-                      {shapeType === 'diamond' ? (
-                        <Line
-                          points={[
-                            size.width / 2,
-                            0,
-                            size.width,
-                            size.height / 2,
-                            size.width / 2,
-                            size.height,
-                            0,
-                            size.height / 2,
-                          ]}
-                          closed
-                          fill={boardObject.color}
-                          stroke={strokeColor}
-                          strokeWidth={strokeWidth}
-                          lineJoin="round"
-                          shadowBlur={hovered ? 10 : 6}
-                          shadowOpacity={hovered ? 0.3 : 0.2}
-                        />
-                      ) : null}
-                      {shapeType === 'triangle' ? (
-                        <Line
-                          points={[
-                            size.width / 2,
-                            0,
-                            size.width,
-                            size.height,
-                            0,
-                            size.height,
-                          ]}
-                          closed
-                          fill={boardObject.color}
-                          stroke={strokeColor}
-                          strokeWidth={strokeWidth}
-                          lineJoin="round"
-                          shadowBlur={hovered ? 10 : 6}
-                          shadowOpacity={hovered ? 0.3 : 0.2}
-                        />
-                      ) : null}
-                      {shapeType === 'rectangle' ? (
-                        <Rect
-                          width={size.width}
-                          height={size.height}
-                          fill={boardObject.color}
-                          cornerRadius={8}
-                          stroke={strokeColor}
-                          strokeWidth={strokeWidth}
-                          shadowBlur={hovered ? 10 : 6}
-                          shadowOpacity={hovered ? 0.3 : 0.2}
-                        />
-                      ) : null}
-                      {!isInlineShapeTextEditing && boardObject.text ? (
-                        <Text
-                          text={boardObject.text}
-                          x={shapeType === 'rectangle' ? 8 : 12}
-                          y={shapeType === 'rectangle' ? 8 : 10}
-                          width={Math.max(40, size.width - (shapeType === 'rectangle' ? 16 : 24))}
-                          height={Math.max(24, size.height - (shapeType === 'rectangle' ? 16 : 20))}
-                          fontSize={shapeType === 'rectangle' ? 16 : 14}
-                          fill={getContrastingTextColor(boardObject.color)}
-                          wrap="word"
-                          align={shapeType === 'rectangle' ? 'left' : 'center'}
-                          verticalAlign={shapeType === 'rectangle' ? 'top' : 'middle'}
-                        />
-                      ) : null}
-                      {renderVoteBadge({
-                        voteCount,
-                        x: size.width - getVoteBadgeWidth(voteCount) - 8,
-                        y: 8,
-                      })}
-                      {renderCommentBadge({ commentCount, x: 8, y: 8 })}
-                      {!selected && hovered ? (
-                        <Rect
-                          width={size.width}
-                          height={size.height}
-                          stroke="#0f766e"
-                          strokeWidth={1}
-                          dash={[6, 4]}
-                          cornerRadius={shapeType === 'rectangle' ? 8 : 0}
-                          listening={false}
-                        />
-                      ) : null}
-                      {selected ? (
-                        <Rect
-                          width={size.width}
-                          height={size.height}
-                          stroke="#1d4ed8"
-                          strokeWidth={1}
-                          dash={[6, 4]}
-                          cornerRadius={shapeType === 'rectangle' ? 8 : 0}
-                          listening={false}
-                        />
-                      ) : null}
-                      {selected && canEditBoard ? (
-                        <Rect
-                          x={size.width - RESIZE_HANDLE_SIZE}
-                          y={size.height - RESIZE_HANDLE_SIZE}
-                          width={RESIZE_HANDLE_SIZE}
-                          height={RESIZE_HANDLE_SIZE}
-                          fill="#ffffff"
-                          stroke="#1d4ed8"
-                          strokeWidth={2}
-                          cornerRadius={3}
-                          draggable
-                          onMouseDown={(event) => {
-                            event.cancelBubble = true
-                          }}
-                          onDragStart={(event) => {
-                            setResizingObjectId(boardObject.id)
-                            event.cancelBubble = true
-                          }}
-                          onDragMove={(event) => {
-                            const nextSize = {
-                              width: Math.max(MIN_OBJECT_WIDTH, event.target.x() + RESIZE_HANDLE_SIZE),
-                              height: Math.max(MIN_OBJECT_HEIGHT, event.target.y() + RESIZE_HANDLE_SIZE),
-                            }
-                            resizeObjectLocal(boardObject, nextSize)
-                            event.cancelBubble = true
-                          }}
-                          onDragEnd={(event) => {
-                            const nextSize = {
-                              width: Math.max(MIN_OBJECT_WIDTH, event.target.x() + RESIZE_HANDLE_SIZE),
-                              height: Math.max(MIN_OBJECT_HEIGHT, event.target.y() + RESIZE_HANDLE_SIZE),
-                            }
-                            void commitResizeObject(boardObject, nextSize)
-                            event.cancelBubble = true
-                          }}
-                          data-testid={`resize-handle-${boardObject.id}`}
-                        />
-                      ) : null}
-                      {selected && canEditBoard ? (
-                        <>
-                          {/* Rotation handle line */}
-                          <Line
-                            x1={size.width / 2}
-                            y1={0}
-                            x2={size.width / 2}
-                            y2={-ROTATION_HANDLE_OFFSET}
-                            stroke="#1d4ed8"
-                            strokeWidth={1.5}
-                            listening={false}
-                          />
-                          {/* Rotation handle circle */}
-                          <Circle
-                            x={size.width / 2}
-                            y={-ROTATION_HANDLE_OFFSET}
-                            radius={ROTATION_HANDLE_SIZE / 2}
-                            fill="#ffffff"
-                            stroke="#1d4ed8"
-                            strokeWidth={2}
-                            cursor="grab"
-                            draggable
-                            onMouseDown={(event) => {
-                              event.cancelBubble = true
-                            }}
-                            onDragStart={(event) => {
-                              setRotatingObjectId(boardObject.id)
-                              event.cancelBubble = true
-                            }}
-                            onDragMove={(event) => {
-                              const newRotation = calculateRotationFromHandleTarget(
-                                event.target,
-                                size.width,
-                                size.height,
-                              )
-                              if (newRotation === null) {
-                                return
-                              }
-
-                              setLocalRotation(boardObject.id, newRotation)
-                              event.cancelBubble = true
-                            }}
-                            onDragEnd={(event) => {
-                              const finalRotation =
-                                calculateRotationFromHandleTarget(event.target, size.width, size.height) ??
-                                localObjectRotationsRef.current[boardObject.id] ??
-                                boardObject.rotation ??
-                                0
-                              void patchObject(
-                                boardObject.id,
-                                { rotation: finalRotation },
-                                { actionLabel: `rotated ${boardObject.type}` },
-                              )
-                              clearLocalRotation(boardObject.id)
-                              setRotatingObjectId(null)
-                              event.cancelBubble = true
-                            }}
-                            data-testid={`rotation-handle-${boardObject.id}`}
-                          />
-                        </>
-                      ) : null}
-                    </Group>
-                  )
+                  return renderShapeObject({
+                    boardObject,
+                    position,
+                    size,
+                    selected,
+                    hovered,
+                    canEditBoard,
+                    selectionMode,
+                    resizingObjectId,
+                    rotatingObjectId,
+                    inlineEditor,
+                    selectedIdsCount: selectedIds.length,
+                    handleObjectSelection,
+                    startInlineEdit,
+                    setHoveredObjectId,
+                    beginObjectDrag,
+                    moveObjectDrag,
+                    endObjectDrag,
+                    localObjectRotations,
+                    localObjectRotationsRef,
+                    setResizingObjectId,
+                    resizeObjectLocal,
+                    commitResizeObject,
+                    setRotatingObjectId,
+                    calculateRotationFromHandleTarget,
+                    setLocalRotation,
+                    patchObject,
+                    clearLocalRotation,
+                    minObjectWidth: MIN_OBJECT_WIDTH,
+                    minObjectHeight: MIN_OBJECT_HEIGHT,
+                    resizeHandleSize: RESIZE_HANDLE_SIZE,
+                    rotationHandleOffset: ROTATION_HANDLE_OFFSET,
+                    rotationHandleSize: ROTATION_HANDLE_SIZE,
+                    getVoteBadgeWidth,
+                    renderVoteBadge,
+                    renderCommentBadge,
+                  })
                 }
 
                 if (boardObject.type === 'connector') {
@@ -6952,194 +6525,43 @@ export const BoardPageRuntime = () => {
                 }
 
                 if (boardObject.type === 'text') {
-                  const isInlineTextObjectEditing =
-                    inlineEditor?.objectId === boardObject.id && inlineEditor.field === 'text'
-                  const fontSize = Math.max(12, boardObject.fontSize || 24)
-                  const rotation = localObjectRotations[boardObject.id] ?? boardObject.rotation ?? 0
-                  const voteCount = Object.keys(boardObject.votesByUser || {}).length
-                  const commentCount = boardObject.comments?.length || 0
-                  const textWidth = Math.max(80, size.width)
-                  const textHeight = Math.max(28, size.height)
-                  return (
-                    <Group
-                      key={boardObject.id}
-                      x={position.x}
-                      y={position.y}
-                      rotation={rotation}
-                      draggable={canEditBoard && selectionMode === 'select' && resizingObjectId !== boardObject.id && rotatingObjectId !== boardObject.id}
-                      onClick={(event) => handleObjectSelection(boardObject, Boolean(event.evt.shiftKey))}
-                      onTap={() => handleObjectSelection(boardObject)}
-                      onDblClick={() => {
-                        if (!canEditBoard) {
-                          return
-                        }
-                        startInlineEdit(boardObject, 'text')
-                      }}
-                      onMouseEnter={() => {
-                        setHoveredObjectId(boardObject.id)
-                      }}
-                      onMouseLeave={() => {
-                        setHoveredObjectId((previous) => (previous === boardObject.id ? null : previous))
-                      }}
-                      onDragStart={(event) => {
-                        beginObjectDrag(boardObject, { x: event.target.x(), y: event.target.y() })
-                      }}
-                      onDragMove={(event) => {
-                        moveObjectDrag(boardObject, { x: event.target.x(), y: event.target.y() })
-                      }}
-                      onDragEnd={(event) => {
-                        void endObjectDrag(
-                          boardObject,
-                          { x: event.target.x(), y: event.target.y() },
-                          selectedIds.length > 1 ? 'moved selection' : 'moved text',
-                        )
-                      }}
-                    >
-                      {!isInlineTextObjectEditing ? (
-                        <Text
-                          text={boardObject.text}
-                          x={0}
-                          y={0}
-                          width={textWidth}
-                          height={textHeight}
-                          fontSize={fontSize}
-                          fill={boardObject.color}
-                          wrap="word"
-                          shadowColor="#0f766e"
-                          shadowBlur={hovered ? 8 : 0}
-                          shadowOpacity={hovered ? 0.28 : 0}
-                        />
-                      ) : null}
-                      {renderVoteBadge({
-                        voteCount,
-                        x: textWidth - getVoteBadgeWidth(voteCount) - 8,
-                        y: 8,
-                      })}
-                      {renderCommentBadge({ commentCount, x: 8, y: 8 })}
-                      {!selected && hovered ? (
-                        <Rect
-                          width={textWidth}
-                          height={textHeight}
-                          stroke="#0f766e"
-                          strokeWidth={1}
-                          dash={[6, 4]}
-                          listening={false}
-                        />
-                      ) : null}
-                      {selected ? (
-                        <Rect
-                          width={textWidth}
-                          height={textHeight}
-                          stroke="#1d4ed8"
-                          strokeWidth={1}
-                          dash={[6, 4]}
-                          listening={false}
-                        />
-                      ) : null}
-                      {selected && canEditBoard ? (
-                        <Rect
-                          x={textWidth - RESIZE_HANDLE_SIZE}
-                          y={textHeight - RESIZE_HANDLE_SIZE}
-                          width={RESIZE_HANDLE_SIZE}
-                          height={RESIZE_HANDLE_SIZE}
-                          fill="#ffffff"
-                          stroke="#1d4ed8"
-                          strokeWidth={2}
-                          cornerRadius={3}
-                          draggable
-                          onMouseDown={(event) => {
-                            event.cancelBubble = true
-                          }}
-                          onDragStart={(event) => {
-                            setResizingObjectId(boardObject.id)
-                            event.cancelBubble = true
-                          }}
-                          onDragMove={(event) => {
-                            const nextSize = {
-                              width: Math.max(80, event.target.x() + RESIZE_HANDLE_SIZE),
-                              height: Math.max(28, event.target.y() + RESIZE_HANDLE_SIZE),
-                            }
-                            resizeObjectLocal(boardObject, nextSize)
-                            event.cancelBubble = true
-                          }}
-                          onDragEnd={(event) => {
-                            const nextSize = {
-                              width: Math.max(80, event.target.x() + RESIZE_HANDLE_SIZE),
-                              height: Math.max(28, event.target.y() + RESIZE_HANDLE_SIZE),
-                            }
-                            void commitResizeObject(boardObject, nextSize)
-                            event.cancelBubble = true
-                          }}
-                          data-testid={`resize-handle-${boardObject.id}`}
-                        />
-                      ) : null}
-                      {selected && canEditBoard ? (
-                        <>
-                          {/* Rotation handle line */}
-                          <Line
-                            x1={textWidth / 2}
-                            y1={0}
-                            x2={textWidth / 2}
-                            y2={-ROTATION_HANDLE_OFFSET}
-                            stroke="#1d4ed8"
-                            strokeWidth={1.5}
-                            listening={false}
-                          />
-                          {/* Rotation handle circle */}
-                          <Circle
-                            x={textWidth / 2}
-                            y={-ROTATION_HANDLE_OFFSET}
-                            radius={ROTATION_HANDLE_SIZE / 2}
-                            fill="#ffffff"
-                            stroke="#1d4ed8"
-                            strokeWidth={2}
-                            cursor="grab"
-                            draggable
-                            onMouseDown={(event) => {
-                              event.cancelBubble = true
-                            }}
-                            onDragStart={(event) => {
-                              setRotatingObjectId(boardObject.id)
-                              event.cancelBubble = true
-                            }}
-                            onDragMove={(event) => {
-                              const objectWidth = Math.max(80, size.width)
-                              const objectHeight = Math.max(28, size.height)
-                              const newRotation = calculateRotationFromHandleTarget(
-                                event.target,
-                                objectWidth,
-                                objectHeight,
-                              )
-                              if (newRotation === null) {
-                                return
-                              }
-
-                              setLocalRotation(boardObject.id, newRotation)
-                              event.cancelBubble = true
-                            }}
-                            onDragEnd={(event) => {
-                              const objectWidth = Math.max(80, size.width)
-                              const objectHeight = Math.max(28, size.height)
-                              const finalRotation =
-                                calculateRotationFromHandleTarget(event.target, objectWidth, objectHeight) ??
-                                localObjectRotationsRef.current[boardObject.id] ??
-                                boardObject.rotation ??
-                                0
-                              void patchObject(
-                                boardObject.id,
-                                { rotation: finalRotation },
-                                { actionLabel: `rotated ${boardObject.type}` },
-                              )
-                              clearLocalRotation(boardObject.id)
-                              setRotatingObjectId(null)
-                              event.cancelBubble = true
-                            }}
-                            data-testid={`rotation-handle-${boardObject.id}`}
-                          />
-                        </>
-                      ) : null}
-                    </Group>
-                  )
+                  return renderTextObject({
+                    boardObject,
+                    position,
+                    size,
+                    selected,
+                    hovered,
+                    canEditBoard,
+                    selectionMode,
+                    resizingObjectId,
+                    rotatingObjectId,
+                    inlineEditor,
+                    selectedIdsCount: selectedIds.length,
+                    handleObjectSelection,
+                    startInlineEdit,
+                    setHoveredObjectId,
+                    beginObjectDrag,
+                    moveObjectDrag,
+                    endObjectDrag,
+                    localObjectRotations,
+                    localObjectRotationsRef,
+                    setResizingObjectId,
+                    resizeObjectLocal,
+                    commitResizeObject,
+                    setRotatingObjectId,
+                    calculateRotationFromHandleTarget,
+                    setLocalRotation,
+                    patchObject,
+                    clearLocalRotation,
+                    resizeHandleSize: RESIZE_HANDLE_SIZE,
+                    rotationHandleOffset: ROTATION_HANDLE_OFFSET,
+                    rotationHandleSize: ROTATION_HANDLE_SIZE,
+                    getVoteBadgeWidth,
+                    renderVoteBadge,
+                    renderCommentBadge,
+                    minTextWidth: 80,
+                    minTextHeight: 28,
+                  })
                 }
               })}
             </Layer>
