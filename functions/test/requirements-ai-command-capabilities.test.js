@@ -82,6 +82,10 @@ test('AI-CMDS-001 / T-102 / T-103: tool schema supports command breadth, frame p
   assert.equal(frameTool?.function?.parameters?.properties?.position?.type, 'string')
   assert.ok(frameTool?.function?.parameters?.properties?.position?.enum?.includes('top left'))
   assert.ok(frameTool?.function?.parameters?.properties?.position?.enum?.includes('center'))
+
+  const shapeTool = toolRegistry.TOOL_DEFINITIONS.find((tool) => tool?.function?.name === 'createShape')
+  assert.ok(shapeTool, 'Expected createShape tool schema')
+  assert.equal(shapeTool?.function?.parameters?.properties?.text?.type, 'string')
 })
 
 test('AI-CMDS-002: planner routes open-ended prompts through LLM-first flow', async () => {
@@ -222,6 +226,42 @@ test('AI-CMDS-017: business model canvas command creates 9 board objects with ch
   assert.equal(stickies.some((item) => item.text?.includes('Channels')), true)
   assert.equal(stickies.some((item) => item.text?.includes('Revenue Streams')), true)
   assert.equal(stickies.some((item) => item.text?.includes('Examples:')), true)
+})
+
+test('AI-CMDS-020: workflow flowchart commands create labeled shapes and connector arrows', async () => {
+  const llmCalls = []
+  const context = buildContext()
+  const command = 'Create a password reset flowchart for an email account with arrows between every step.'
+
+  await withMockObjectWriter(
+    async () => {},
+    async () => {
+      await withMockGlmClient(
+        {
+          callGLM: async (issuedCommand) => {
+            llmCalls.push(issuedCommand)
+            throw new Error('Workflow deterministic path should bypass LLM')
+          },
+          parseToolCalls: () => [],
+          getTextResponse: () => '',
+        },
+        async () => {
+          const result = await __test.runCommandPlan(context, command)
+          assert.equal(result.level, undefined)
+          assert.equal(result.message, 'Created workflow flowchart on the board.')
+        },
+      )
+    },
+  )
+
+  assert.equal(llmCalls.length, 0)
+  const shapes = context.state.filter((item) => item.type === 'shape')
+  const connectors = context.state.filter((item) => item.type === 'connector')
+
+  assert.ok(shapes.length >= 7)
+  assert.equal(connectors.length, Math.max(0, shapes.length - 1))
+  assert.equal(shapes.every((item) => typeof item.text === 'string' && item.text.trim().length > 0), true)
+  assert.equal(shapes.some((item) => item.shapeType === 'diamond'), true)
 })
 
 test('AI-CMDS-011: board-mutation prompts trigger a compound-tools retry when first pass is text-only', async () => {

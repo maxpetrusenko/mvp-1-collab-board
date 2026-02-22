@@ -38,11 +38,11 @@ const COLOR_NAME_ALTERNATION = 'yellow|blue|green|pink|red|orange|purple|gray'
 const COLOR_NAME_PATTERN = `(?:${COLOR_NAME_ALTERNATION})`
 const CREATE_VERB_PATTERN = '(?:add(?:ed)?|create(?:d)?|make|generate|build|insert|put)'
 const BOARD_MUTATION_VERB_REGEX =
-  /\b(?:add|create|make|generate|build|insert|put|arrange|organize|organise|move|resize|rotate|delete|duplicate|connect|group|cluster|layout|map|draft|brainstorm)\b/i
+  /\b(?:add|create|make|generate|build|insert|put|arrange|organize|organise|move|resize|rotate|delete|duplicate|connect|group|cluster|layout|map|draft|brainstorm|draw|outline)\b/i
 const BOARD_ARTIFACT_REGEX =
-  /\b(?:board|whiteboard|sticky(?:\s*note)?s?|sticker(?:s)?|notes?|frame(?:s)?|shape(?:s)?|connector(?:s)?|canvas|matrix|map|roadmap|retrospective|swot|journey(?:\s+map)?|mind\s*map|business\s+model\s+canvas)\b/i
+  /\b(?:board|whiteboard|sticky(?:\s*note)?s?|sticker(?:s)?|notes?|frame(?:s)?|shape(?:s)?|connector(?:s)?|canvas|matrix|map|roadmap|retrospective|swot|journey(?:\s+map)?|mind\s*map|business\s+model\s+canvas|flow\s*chart|workflow|process\s+flow)\b/i
 const STRUCTURED_BOARD_ARTIFACT_REGEX =
-  /\b(?:business\s+model\s+canvas|swot|retrospective|journey\s+map|mind\s*map|kanban|value\s+proposition\s+canvas)\b/i
+  /\b(?:business\s+model\s+canvas|swot|retrospective|journey\s+map|mind\s*map|kanban|value\s+proposition\s+canvas|flow\s*chart|workflow)\b/i
 const COLOR_PHRASE_REGEX = new RegExp(`\\b(${COLOR_NAME_ALTERNATION})\\s+color\\b`, 'i')
 const COLOR_AND_TEXT_CUE_REGEX = new RegExp(
   `\\b(?:that\\s+says|saying|with\\s+text|with\\s+(?:a\\s+)?${COLOR_NAME_PATTERN}\\s+color\\s+and\\s+text|text\\s*[:=-])\\b\\s*(.+)$`,
@@ -141,6 +141,17 @@ const BMC_IDEA_POOLS = {
     'Partner revenue share programs',
   ],
 }
+const PASSWORD_RESET_FLOWCHART_NODES = [
+  { shapeType: 'circle', text: 'Start', color: '#86efac' },
+  { shapeType: 'rectangle', text: 'Open sign-in page', color: '#dbeafe' },
+  { shapeType: 'rectangle', text: 'Click "Forgot password"', color: '#dbeafe' },
+  { shapeType: 'rectangle', text: 'Enter registered email', color: '#dbeafe' },
+  { shapeType: 'diamond', text: 'Email exists?', color: '#fef3c7' },
+  { shapeType: 'rectangle', text: 'Send password reset email', color: '#dbeafe' },
+  { shapeType: 'rectangle', text: 'Open reset link from email', color: '#dbeafe' },
+  { shapeType: 'rectangle', text: 'Set new password', color: '#dbeafe' },
+  { shapeType: 'circle', text: 'End: Sign in successful', color: '#86efac' },
+]
 const FIRESTORE_BATCH_WRITE_LIMIT = 450
 const AI_RESPONSE_TARGET_MS = 2_000
 const AI_MIN_PROVIDER_TIMEOUT_MS = 400
@@ -856,6 +867,52 @@ const parseBusinessModelCanvasCommand = (command) => {
   return result
 }
 
+const parseWorkflowFlowchartCommand = (command) => {
+  const normalized = normalizeCommandForPlan(command)
+  const hasWorkflowKeyword = /\b(?:flow\s*chart|workflow|process\s+flow)\b/i.test(normalized)
+  if (!hasWorkflowKeyword) {
+    return null
+  }
+
+  const looksQuestion =
+    /\?\s*$/.test(normalized) &&
+    /^(?:can|could|would|should|is|are|do|does|did|what|why|how)\b/i.test(normalized)
+  if (looksQuestion) {
+    return null
+  }
+
+  const hasActionIntent =
+    new RegExp(CREATE_VERB_PATTERN, 'i').test(normalized) || /\b(?:draw|show|outline|map)\b/i.test(normalized)
+  if (!hasActionIntent) {
+    return null
+  }
+
+  const topicMatch = normalized.match(/\bfor\s+(.+?)(?:[.,]|$)/i)
+  const topicCandidate = sanitizeText(stripWrappingQuotes(topicMatch?.[1] || ''))
+
+  return {
+    topic: topicCandidate || 'workflow process',
+    isPasswordReset: /\bpassword\s+reset\b/i.test(normalized),
+  }
+}
+
+const buildWorkflowFlowchartNodes = (spec = {}) => {
+  if (spec.isPasswordReset) {
+    return PASSWORD_RESET_FLOWCHART_NODES
+  }
+
+  const topic = sanitizeText(spec.topic || 'workflow process')
+  return [
+    { shapeType: 'circle', text: `Start: ${topic}`, color: '#86efac' },
+    { shapeType: 'rectangle', text: `Capture request for ${topic}`, color: '#dbeafe' },
+    { shapeType: 'rectangle', text: 'Validate required input', color: '#dbeafe' },
+    { shapeType: 'diamond', text: 'Validation passed?', color: '#fef3c7' },
+    { shapeType: 'rectangle', text: `Execute ${topic}`, color: '#dbeafe' },
+    { shapeType: 'rectangle', text: 'Notify stakeholders', color: '#dbeafe' },
+    { shapeType: 'circle', text: `End: ${topic} complete`, color: '#86efac' },
+  ]
+}
+
 const selectIdeasForTopic = (topic, key, count = 3) => {
   const pool = Array.isArray(BMC_IDEA_POOLS[key]) ? BMC_IDEA_POOLS[key] : []
   if (pool.length === 0) {
@@ -1452,6 +1509,7 @@ const buildShapePayload = (ctx, args = {}) => {
   const now = nowMs()
   const shapeType = normalizeShapeType(args.type || args.shapeType, 'rectangle')
   const defaultSize = STICKY_SHAPE_SIZES[shapeType] || { width: 220, height: 140 }
+  const shapeText = sanitizeText(args.text || args.label || args.title || '')
   const pos = args.position
     ? parsePosition(args.position, 200, 200)
     : { x: parseNumber(args.x, 200), y: parseNumber(args.y, 200) }
@@ -1468,6 +1526,7 @@ const buildShapePayload = (ctx, args = {}) => {
       height: parseNumber(args.height, defaultSize.height),
     },
     zIndex,
+    ...(shapeText ? { text: shapeText } : {}),
     color: toColor(args.color, '#93c5fd'),
     createdBy: ctx.userId,
     createdAt: now,
@@ -2176,6 +2235,7 @@ const executeLlmToolCall = async (ctx, toolName, rawArgs, options = {}) => {
       )
       await createShape(ctx, {
         type: positionedArgs.type || 'rectangle',
+        text: sanitizeText(positionedArgs.text || positionedArgs.label || positionedArgs.title || ''),
         color: toColor(positionedArgs.color, '#93c5fd'),
         position: positionedArgs.position,
         x: positionedArgs.x,
@@ -2365,6 +2425,67 @@ const createBusinessModelCanvas = async (ctx, spec = {}) => {
   return { count: stagedObjects.length }
 }
 
+const createWorkflowFlowchart = async (ctx, spec = {}) => {
+  const anchor = resolvePlacementAnchor(ctx.commandPlacement) || { x: 640, y: 360 }
+  const nodes = buildWorkflowFlowchartNodes(spec)
+  if (nodes.length === 0) {
+    return { nodeCount: 0, connectorCount: 0 }
+  }
+
+  const columns = 3
+  const rows = Math.ceil(nodes.length / columns)
+  const gapX = 280
+  const gapY = 200
+  const createdShapes = []
+
+  for (let index = 0; index < nodes.length; index += 1) {
+    const node = nodes[index]
+    const shapeType = normalizeShapeType(node.shapeType || 'rectangle', 'rectangle')
+    const size = STICKY_SHAPE_SIZES[shapeType] || STICKY_SHAPE_SIZES.rectangle
+    const row = Math.floor(index / columns)
+    const col = index % columns
+    const remainingInRow = nodes.length - row * columns
+    const rowItemCount = Math.min(columns, Math.max(1, remainingInRow))
+    const colOffset = col - (rowItemCount - 1) / 2
+    const rowOffset = row - (rows - 1) / 2
+    const x = Math.round(anchor.x + colOffset * gapX - size.width / 2)
+    const y = Math.round(anchor.y + rowOffset * gapY - size.height / 2)
+
+    const createdShape = await createShape(ctx, {
+      type: shapeType,
+      text: node.text,
+      color: node.color || (shapeType === 'diamond' ? '#fef3c7' : '#dbeafe'),
+      x,
+      y,
+      width: size.width,
+      height: size.height,
+    })
+
+    createdShapes.push(createdShape)
+  }
+
+  for (let index = 0; index < createdShapes.length - 1; index += 1) {
+    await createConnector(ctx, {
+      fromId: createdShapes[index].id,
+      toId: createdShapes[index + 1].id,
+      style: 'arrow',
+      color: '#0f172a',
+    })
+  }
+
+  ctx.executedTools.push({
+    tool: 'createWorkflowFlowchart',
+    topic: spec.topic || 'workflow process',
+    nodeCount: createdShapes.length,
+    connectorCount: Math.max(0, createdShapes.length - 1),
+  })
+
+  return {
+    nodeCount: createdShapes.length,
+    connectorCount: Math.max(0, createdShapes.length - 1),
+  }
+}
+
 const executeParsedToolCalls = async (ctx, toolCalls = []) => {
   for (const toolCall of toolCalls) {
     if (toolCall.parseError) {
@@ -2434,6 +2555,18 @@ const runCommandPlan = async (ctx, command) => {
     const bmcResult = await createBusinessModelCanvas(ctx, bmcCommand)
     if (bmcResult.count > 0) {
       const successMessage = 'Created Business Model Canvas on the board.'
+      return {
+        message: successMessage,
+        aiResponse: successMessage,
+      }
+    }
+  }
+
+  const workflowCommand = parseWorkflowFlowchartCommand(normalizedCommand)
+  if (workflowCommand) {
+    const workflowResult = await createWorkflowFlowchart(ctx, workflowCommand)
+    if (workflowResult.nodeCount > 0) {
+      const successMessage = 'Created workflow flowchart on the board.'
       return {
         message: successMessage,
         aiResponse: successMessage,
@@ -3176,6 +3309,7 @@ exports.__test = {
   isOrganizeByColorCommand,
   isLikelyBoardMutationCommand,
   parseBusinessModelCanvasCommand,
+  parseWorkflowFlowchartCommand,
   parseStickyCommand,
   parseCompoundStickyCreateOperations,
   parseReasonListCommand,

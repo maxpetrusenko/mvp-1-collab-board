@@ -22,6 +22,67 @@ test('isOrganizeByColorCommand ignores non-color organize commands', () => {
   }
 })
 
+test('isLikelyBoardMutationCommand treats board-framework prompts as board mutation intent', () => {
+  const command =
+    'Generate a Business Model Canvas for ai chat bot, including example channels and revenue streams.'
+  assert.equal(__test.isLikelyBoardMutationCommand(command), true)
+})
+
+test('isLikelyBoardMutationCommand treats workflow flowchart prompts as board mutation intent', () => {
+  const command = 'Create a password reset flowchart for an email account'
+  assert.equal(__test.isLikelyBoardMutationCommand(command), true)
+})
+
+test('isLikelyBoardMutationCommand keeps conversational prompts out of board mutation intent', () => {
+  assert.equal(__test.isLikelyBoardMutationCommand('what is product-market fit?'), false)
+})
+
+test('parseBusinessModelCanvasCommand extracts topic and example flags', () => {
+  const parsed = __test.parseBusinessModelCanvasCommand(
+    'Generate a Business Model Canvas for ai chat bot, including example channels and revenue streams.',
+  )
+
+  assert.ok(parsed)
+  assert.equal(parsed.topic, 'ai chat bot')
+  assert.equal(parsed.includeExamples, true)
+  assert.equal(parsed.includeChannelExamples, true)
+  assert.equal(parsed.includeRevenueExamples, true)
+})
+
+test('parseWorkflowFlowchartCommand extracts flowchart topic and password reset intent', () => {
+  const parsed = __test.parseWorkflowFlowchartCommand(
+    'Create a password reset flowchart for an email account with connectors and labels.',
+  )
+
+  assert.ok(parsed)
+  assert.equal(parsed.topic, 'an email account with connectors and labels')
+  assert.equal(parsed.isPasswordReset, true)
+})
+
+test('parseCompoundStickyCreateOperations supports mixed sticky shape segments in one command', () => {
+  const operations = __test.parseCompoundStickyCreateOperations(
+    'add 1 red round sticky and 1 green triangle with words boo',
+  )
+
+  assert.equal(operations.length, 2)
+  assert.equal(operations[0].shapeType, 'circle')
+  assert.equal(operations[0].color, 'red')
+  assert.equal(operations[1].shapeType, 'triangle')
+  assert.equal(operations[1].color, 'green')
+  assert.equal(operations[1].text, 'boo')
+})
+
+test('parseCompoundStickyCreateOperations supports plural geometric segments with counts', () => {
+  const operations = __test.parseCompoundStickyCreateOperations(
+    'create 3 green circles and 2 red triangles with text wow',
+  )
+
+  assert.equal(operations.length, 5)
+  assert.equal(operations.filter((entry) => entry.shapeType === 'circle' && entry.color === 'green').length, 3)
+  assert.equal(operations.filter((entry) => entry.shapeType === 'triangle' && entry.color === 'red').length, 2)
+  assert.equal(operations.slice(3).every((entry) => entry.text === 'wow'), true)
+})
+
 test('parseStickyCommand supports multi-sticky circle requests with explicit labels', () => {
   const parsed = __test.parseStickyCommand(
     'create two stickers with circle form one say 1 another says 2',
@@ -106,6 +167,43 @@ test('parseStickyCommand keeps position with numbered color requests', () => {
   assert.equal(parsed.count, 2)
   assert.equal(parsed.color, 'red')
   assert.equal(parsed.position, 'top right')
+})
+
+test('parseStickyCommand keeps explicit coordinate placement', () => {
+  const parsed = __test.parseStickyCommand('create 2 red sticky notes at 640,360')
+
+  assert.ok(parsed)
+  assert.equal(parsed.count, 2)
+  assert.equal(parsed.color, 'red')
+  assert.equal(parsed.x, 640)
+  assert.equal(parsed.y, 360)
+})
+
+test('parseStickyCommand keeps explicit x/y coordinate placement', () => {
+  const parsed = __test.parseStickyCommand('add blue sticky note at x=512 y=288 saying planning')
+
+  assert.ok(parsed)
+  assert.equal(parsed.count, 1)
+  assert.equal(parsed.color, 'blue')
+  assert.equal(parsed.x, 512)
+  assert.equal(parsed.y, 288)
+})
+
+test('parseReasonListCommand keeps explicit coordinate placement', () => {
+  const parsed = __test.parseReasonListCommand('add 3 reasons why my team is strong at 720,420')
+
+  assert.ok(parsed)
+  assert.equal(parsed.count, 3)
+  assert.equal(parsed.x, 720)
+  assert.equal(parsed.y, 420)
+})
+
+test('extractCoordinatePosition supports y then x ordering', () => {
+  const parsed = __test.extractCoordinatePosition('move this to y=450 x=320')
+
+  assert.ok(parsed.point)
+  assert.equal(parsed.point.x, 320)
+  assert.equal(parsed.point.y, 450)
 })
 
 test('parseStickyCommand supports color+text instruction phrasing for circle sticky commands', () => {

@@ -81,6 +81,10 @@ const TOOL_DEFINITIONS = [
             enum: COLOR_OPTIONS,
             description: 'Fill color of the shape (optional, defaults to blue)'
           },
+          text: {
+            type: 'string',
+            description: 'Optional text label to render inside the shape'
+          },
           position: {
             type: 'string',
             enum: POSITION_OPTIONS,
@@ -628,7 +632,8 @@ GUIDELINES:
 7. Keep sticky text concise, concrete, and varied. Generate distinct high-quality ideas, reasons, or action items.
 8. Requests for board artifacts/frameworks (for example canvas, matrix, map, SWOT, retrospective, journey map) are board-mutation intents: create content on the board with tools, not text-only replies.
 9. Only return plain text with no tool calls when the user clearly asks for chat-only output and does not ask for a board artifact.
-10. For uncertain intent, make the best reasonable assumption and execute useful board actions.`
+10. For workflow/flowchart requests, create labeled shapes and connect steps using createConnector arrows.
+11. For uncertain intent, make the best reasonable assumption and execute useful board actions.`
 }
 
 module.exports = { TOOL_DEFINITIONS, buildSystemPrompt, COLOR_OPTIONS, SHAPE_TYPES, POSITION_OPTIONS }
