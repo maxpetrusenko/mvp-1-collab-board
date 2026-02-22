@@ -163,7 +163,7 @@ const shareBoardEndpoint = `${aiApiBaseUrl}/api/boards/share`
 const STICKY_COLOR_OPTIONS = ['#fde68a', '#fdba74', '#fca5a5', '#86efac', '#93c5fd']
 const SHAPE_COLOR_OPTIONS = ['#93c5fd', '#67e8f9', '#86efac', '#fcd34d', '#fca5a5', '#c4b5fd']
 const FRAME_COLOR_OPTIONS = ['#e2e8f0', '#dbeafe', '#dcfce7', '#fee2e2', '#fef3c7']
-const CONNECTOR_COLOR_OPTIONS = ['#1d4ed8', '#0f172a', '#dc2626', '#0f766e', '#6d28d9']
+const CONNECTOR_COLOR_OPTIONS = ['#0f172a', '#1d4ed8', '#dc2626', '#0f766e', '#6d28d9']
 const TEXT_COLOR_OPTIONS = ['#0f172a', '#1d4ed8', '#dc2626', '#0f766e', '#6d28d9']
 const CONNECTOR_STYLE_OPTIONS: Array<{ value: ConnectorStyle; label: string }> = [
   { value: 'arrow', label: 'Arrow' },
