@@ -492,6 +492,33 @@ Purpose: log system decisions, alternatives, rationale, and change history.
 - Consequences: Single-sticky commands recover faster from text-only first passes, typo variants route through the same fast path, and `...and...` mixed object commands keep existing LLM-driven retry semantics.
 - Revisit Trigger: If first-pass tool-call reliability for single-sticky prompts reaches stable high confidence and fallback logic no longer improves latency.
 
+### D-053
+- Date: 2026-02-22
+- Status: Accepted
+- Decision: Introduce a generalized relation parser for frame/sticky structural recovery using `count + object + relation` extraction (`extractCountedObjectMentions`, `parsePerParentChildCount`) so command phrasing variants map to a single deterministic fallback path.
+- Alternatives Considered: Continue adding one-off regex branches for each new user phrase; rely on LLM-only fulfillment for nested quantity relationships.
+- Rationale: Repeated user phrasing changes (for example, `with`, `each containing`, `in each frame`) can drift beyond narrow pattern matching and produce partial object creation.
+- Consequences: Structural fallback now interprets multiple relation phrasings through shared parsing primitives, reducing patch-per-phrase churn and increasing recovery consistency when model tool output is partial.
+- Revisit Trigger: If broader multi-object grammar requirements emerge beyond frame/sticky relationships, extract this relation parser into a generic multi-entity planner module.
+
+### D-054
+- Date: 2026-02-22
+- Status: Accepted
+- Decision: Add tokenized broad-scope delete intent recovery (`delete/remove/clear all ...`) and execute deterministic bulk deletion when LLM tool output is missing or non-actionable.
+- Alternatives Considered: Depend only on model-generated `deleteObject` calls; continue regex-only delete command handling.
+- Rationale: Users reported commands such as `delete all items from the board` returning no board mutation due to planner/tool-call gaps, while current parser paths were optimized for create/color flows.
+- Consequences: Board-wide cleanup commands now complete reliably via token/slot intent recovery, with explicit deletion counts and regression coverage (`AI-CMDS-039`).
+- Revisit Trigger: If richer scoped-delete semantics (for example nested group selection, proximity delete, semantic object tagging) require a dedicated intent planner module beyond token slots.
+
+### D-055
+- Date: 2026-02-22
+- Status: Accepted
+- Decision: Enforce bulk recolor completion after model tool execution and match source-color intents by color family (for example yellow shade variants) to complete typo-tolerant commands such as `change yellow collor stickies to green`.
+- Alternatives Considered: Depend only on exact-hex source-color matching; run bulk recolor fallback only in no-tool and no-mutation branches.
+- Rationale: Users reported warning responses and partial recolor outcomes when model output changed only one sticky or when local yellow variants differed from canonical palette hex values.
+- Consequences: Bulk color commands now complete deterministically across remaining matching objects, including near-shade variants, with dedicated regression coverage (`AI-CMDS-040`).
+- Revisit Trigger: If board themes introduce advanced color semantics that require explicit palette IDs instead of heuristic color-family matching.
+
 ## Change Log
 - 2026-02-16: Initial decision set created.
 - 2026-02-16: Added auth provider, deployment URL strategy, and error recovery UX decisions.
@@ -531,3 +558,6 @@ Purpose: log system decisions, alternatives, rationale, and change history.
 - 2026-02-22: Added deterministic sequential AI-create offset decision to prevent overlapping generated objects.
 - 2026-02-22: Added frame-plus-sticky structural recovery, frame color schema/runtime parity, and bulk color mutation fallback decision.
 - 2026-02-22: Added single-sticky text-only fallback decision with typo normalization and mixed-command guard for lower latency.
+- 2026-02-22: Added generalized frame/sticky relation parser decision for phrasing-variant structural recovery.
+- 2026-02-22: Added tokenized broad-delete fallback decision for reliable board-wide cleanup commands when LLM tool output is absent or malformed.
+- 2026-02-22: Added bulk recolor completion and color-family matching decision for partial tool-output and shade-variant resilience.

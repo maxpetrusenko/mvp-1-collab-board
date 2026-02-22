@@ -221,8 +221,9 @@ test('callGLM uses grid-focused toolset and required tool choice for repetitive 
 
   assert.ok(requestedToolNames.includes('executeBatch'))
   assert.ok(requestedToolNames.includes('createStickyGridTemplate'))
-  assert.equal(requestedToolNames.includes('createShape'), false)
+  assert.equal(requestedToolNames.includes('createObjects'), true)
   assert.equal(requestedToolNames.includes('deleteObject'), false)
+  assert.equal(requestedToolNames.includes('deleteObjects'), true)
   assert.equal(requestedToolChoice, 'required')
 })
 
@@ -251,7 +252,8 @@ test('callGLM treats stickie typo as single-sticky command and requests only cre
   const client = loadFreshClient()
   await client.callGLM('add 1 red stikie saying launch risk', { state: [], boardId: 'board-1' })
 
-  assert.deepEqual(requestedToolNames, ['createStickyNote'])
+  assert.ok(requestedToolNames.includes('createStickyNote'))
+  assert.ok(requestedToolNames.includes('createObjects'))
   assert.equal(requestedToolChoice, 'required')
 })
 

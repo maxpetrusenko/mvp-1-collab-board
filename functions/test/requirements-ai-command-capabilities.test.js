@@ -4,6 +4,9 @@ const path = require('node:path')
 const test = require('node:test')
 
 const toolRegistry = require('../src/tool-registry.js')
+const bulkColorOperations = require('../src/bulk-color-operations')
+const bulkOperations = require('../src/bulk-operations')
+const shapeComposition = require('../src/shape-composition')
 const { __test } = require('../index')
 const functionsSource = readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8')
 
@@ -32,10 +35,33 @@ const withMockGlmClient = async (mockClient, run) => {
 
 const withMockObjectWriter = async (writer, run) => {
   __test.__setObjectWriterForTests(writer)
+  // Also mock commitObjectBatchWrites for tests that use bulk operations
+  __test.__setCommitBatchWritesForTests(async ({ objects }) => {
+    for (const object of objects || []) {
+      await writer({ boardId: object.boardId, objectId: object.id, payload: object, merge: false })
+    }
+  })
   try {
     await run()
   } finally {
     __test.__setObjectWriterForTests(null)
+    __test.__setCommitBatchWritesForTests(null)
+  }
+}
+
+const withMockModuleMethods = async (moduleRef, replacements, run) => {
+  const originalMethods = {}
+  for (const [name, method] of Object.entries(replacements)) {
+    originalMethods[name] = moduleRef[name]
+    moduleRef[name] = method
+  }
+
+  try {
+    await run()
+  } finally {
+    for (const [name, method] of Object.entries(originalMethods)) {
+      moduleRef[name] = method
+    }
   }
 }
 
@@ -82,6 +108,7 @@ test('AI-CMDS-001 / T-102 / T-103: tool schema supports command breadth, frame p
   assert.equal(frameTool?.function?.parameters?.properties?.color?.type, 'string')
   assert.ok(frameTool?.function?.parameters?.properties?.color?.enum?.includes('gray'))
   assert.ok(frameTool?.function?.parameters?.properties?.color?.enum?.includes('red'))
+  assert.ok(frameTool?.function?.parameters?.properties?.color?.enum?.includes('brown'))
   assert.equal(frameTool?.function?.parameters?.properties?.position?.type, 'string')
   assert.ok(frameTool?.function?.parameters?.properties?.position?.enum?.includes('top left'))
   assert.ok(frameTool?.function?.parameters?.properties?.position?.enum?.includes('center'))
@@ -343,6 +370,508 @@ test('AI-CMDS-032: frame-plus-sticky prompts recover from partial tool output by
     }).length,
   )
   assert.equal(stickyCountPerFrame.every((count) => count >= 2), true)
+})
+
+test('AI-CMDS-035: frame-plus-sticky shorthand prompts infer per-frame sticky quantities', async () => {
+  const context = buildContext()
+  const command = 'add 2 frames with 2 stickies'
+
+  await withMockObjectWriter(
+    async () => {},
+    async () => {
+      await withMockGlmClient(
+        {
+          callGLM: async () => ({
+            choices: [
+              {
+                message: {
+                  content: 'Created sticky notes.',
+                  tool_calls: [
+                    {
+                      id: 'partial-frame-layout-shorthand-1',
+                      function: {
+                        name: 'executeBatch',
+                        arguments: JSON.stringify({
+                          operations: Array.from({ length: 2 }, (_, index) => ({
+                            tool: 'createStickyNote',
+                            args: { text: `Idea ${index + 1}` },
+                          })),
+                        }),
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          parseToolCalls: parseToolCallsFromResponse,
+          getTextResponse: (response) => response?.choices?.[0]?.message?.content || '',
+        },
+        async () => {
+          const result = await __test.runCommandPlan(context, command)
+          assert.equal(result.level, undefined)
+        },
+      )
+    },
+  )
+
+  const frames = context.state.filter((item) => item.type === 'frame')
+  const stickies = context.state.filter((item) => item.type === 'stickyNote')
+
+  assert.equal(frames.length, 2)
+  assert.equal(stickies.length, 4)
+})
+
+test('AI-CMDS-036: relation parser handles frame-plus-sticky quantity phrasing variants through one generalized fallback', async () => {
+  const variants = [
+    'create 2 frames with 2 stickies',
+    'create 2 frames, each with 2 stickies',
+    'create 2 frames each containing 2 sticky notes',
+    'create 2 frames and place 2 stickies in each frame',
+    'create two frames with two notes each',
+  ]
+
+  for (const command of variants) {
+    const context = buildContext()
+
+    await withMockObjectWriter(
+      async () => {},
+      async () => {
+        await withMockGlmClient(
+          {
+            callGLM: async () => ({
+              choices: [
+                {
+                  message: {
+                    content: 'Created board layout.',
+                    tool_calls: [],
+                  },
+                },
+              ],
+            }),
+            parseToolCalls: () => [],
+            getTextResponse: (response) => response?.choices?.[0]?.message?.content || '',
+          },
+          async () => {
+            const result = await __test.runCommandPlan(context, command)
+            assert.equal(result.level, undefined)
+          },
+        )
+      },
+    )
+
+    const frames = context.state.filter((item) => item.type === 'frame')
+    const stickies = context.state.filter((item) => item.type === 'stickyNote')
+
+    assert.equal(frames.length, 2, `Expected 2 frames for "${command}"`)
+    assert.equal(stickies.length, 4, `Expected 4 stickies for "${command}"`)
+  }
+})
+
+test('AI-CMDS-037: parse-error executeBatch responses fall back to bulk recolor intent for typo-tolerant commands', async () => {
+  const now = Date.now()
+  const context = buildContext({
+    state: [
+      {
+        id: 'sticky-yellow-1',
+        boardId: 'test-board',
+        type: 'stickyNote',
+        text: 'Alpha',
+        color: '#fde68a',
+        position: { x: 120, y: 120 },
+        size: { width: 180, height: 110 },
+        zIndex: 1,
+        createdBy: 'test-user',
+        createdAt: now,
+        updatedBy: 'test-user',
+        updatedAt: now,
+        version: 1,
+      },
+      {
+        id: 'sticky-yellow-2',
+        boardId: 'test-board',
+        type: 'stickyNote',
+        text: 'Beta',
+        color: '#fde68a',
+        position: { x: 360, y: 120 },
+        size: { width: 180, height: 110 },
+        zIndex: 2,
+        createdBy: 'test-user',
+        createdAt: now,
+        updatedBy: 'test-user',
+        updatedAt: now,
+        version: 1,
+      },
+      {
+        id: 'sticky-green-1',
+        boardId: 'test-board',
+        type: 'stickyNote',
+        text: 'Gamma',
+        color: '#86efac',
+        position: { x: 600, y: 120 },
+        size: { width: 180, height: 110 },
+        zIndex: 3,
+        createdBy: 'test-user',
+        createdAt: now,
+        updatedBy: 'test-user',
+        updatedAt: now,
+        version: 1,
+      },
+    ],
+  })
+
+  await withMockObjectWriter(
+    async () => {},
+    async () => {
+      await withMockGlmClient(
+        {
+          callGLM: async () => ({
+            choices: [
+              {
+                message: {
+                  content: '',
+                  tool_calls: [],
+                },
+              },
+            ],
+          }),
+          parseToolCalls: () => [
+            {
+              id: 'broken-batch-1',
+              name: 'executeBatch',
+              arguments: {},
+              parseError: true,
+            },
+          ],
+          getTextResponse: () => '',
+        },
+        async () => {
+          const result = await __test.runCommandPlan(context, 'change yellow collor stickies to brown')
+          assert.equal(result.level, undefined)
+          assert.match(result.message, /changed 2 sticky notes from yellow to brown/i)
+        },
+      )
+    },
+  )
+
+  const yellowStickies = context.state.filter((item) => item.id.startsWith('sticky-yellow-'))
+  const greenSticky = context.state.find((item) => item.id === 'sticky-green-1')
+  assert.equal(yellowStickies.every((item) => item.color === '#a16207'), true)
+  assert.equal(greenSticky?.color, '#86efac')
+})
+
+test('AI-CMDS-038: quantity shortfall fallback fills requested create count when model returns partial output', async () => {
+  const context = buildContext()
+  const requestedCount = 100
+  const partialCount = 36
+
+  await withMockObjectWriter(
+    async () => {},
+    async () => {
+      await withMockGlmClient(
+        {
+          callGLM: async () => ({
+            choices: [
+              {
+                message: {
+                  content: '',
+                  tool_calls: [
+                    {
+                      id: 'partial-bulk-create-1',
+                      function: {
+                        name: 'executeBatch',
+                        arguments: JSON.stringify({
+                          operations: Array.from({ length: partialCount }, (_, index) => ({
+                            tool: 'createStickyNote',
+                            args: { text: `Item ${index + 1}` },
+                          })),
+                        }),
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          parseToolCalls: parseToolCallsFromResponse,
+          getTextResponse: () => '',
+        },
+        async () => {
+          const result = await __test.runCommandPlan(context, `add ${requestedCount} items`)
+          assert.equal(result.level, undefined)
+          assert.match(result.message, /created 100 sticky notes/i)
+        },
+      )
+    },
+  )
+
+  const stickies = context.state.filter((item) => item.type === 'stickyNote')
+  assert.equal(stickies.length, requestedCount)
+})
+
+test('AI-CMDS-039: broad delete commands recover when model emits no actionable tool calls', async () => {
+  const now = Date.now()
+  const context = buildContext({
+    state: [
+      {
+        id: 'sticky-delete-1',
+        boardId: 'test-board',
+        type: 'stickyNote',
+        text: 'Alpha',
+        color: '#fde68a',
+        position: { x: 120, y: 120 },
+        size: { width: 180, height: 110 },
+        zIndex: 1,
+        createdBy: 'test-user',
+        createdAt: now,
+        updatedBy: 'test-user',
+        updatedAt: now,
+        version: 1,
+      },
+      {
+        id: 'shape-delete-1',
+        boardId: 'test-board',
+        type: 'shape',
+        shapeType: 'circle',
+        color: '#93c5fd',
+        text: 'Node',
+        position: { x: 360, y: 120 },
+        size: { width: 130, height: 130 },
+        zIndex: 2,
+        createdBy: 'test-user',
+        createdAt: now,
+        updatedBy: 'test-user',
+        updatedAt: now,
+        version: 1,
+      },
+      {
+        id: 'frame-delete-1',
+        boardId: 'test-board',
+        type: 'frame',
+        title: 'Frame 1',
+        color: '#e2e8f0',
+        position: { x: 560, y: 120 },
+        size: { width: 420, height: 300 },
+        zIndex: 3,
+        createdBy: 'test-user',
+        createdAt: now,
+        updatedBy: 'test-user',
+        updatedAt: now,
+        version: 1,
+      },
+      {
+        id: 'connector-delete-1',
+        boardId: 'test-board',
+        type: 'connector',
+        color: '#1d4ed8',
+        style: 'arrow',
+        start: { x: 160, y: 200 },
+        end: { x: 430, y: 180 },
+        x: 160,
+        y: 180,
+        width: 270,
+        height: 20,
+        zIndex: 4,
+        createdBy: 'test-user',
+        createdAt: now,
+        updatedBy: 'test-user',
+        updatedAt: now,
+        version: 1,
+      },
+    ],
+  })
+
+  await withMockObjectWriter(
+    async () => {},
+    async () => {
+      await withMockGlmClient(
+        {
+          callGLM: async () => ({
+            choices: [
+              {
+                message: {
+                  content: '',
+                  tool_calls: [],
+                },
+              },
+            ],
+          }),
+          parseToolCalls: () => [],
+          getTextResponse: () => '',
+        },
+        async () => {
+          const result = await __test.runCommandPlan(context, 'delete all items from the board')
+          assert.equal(result.level, undefined)
+          assert.match(result.message, /deleted 4 objects/i)
+        },
+      )
+    },
+  )
+
+  assert.equal(context.state.length, 0)
+  const deletedToolCalls = context.executedTools.filter((entry) => entry.tool === 'deleteObject')
+  assert.equal(deletedToolCalls.length, 4)
+})
+
+test('AI-CMDS-040: bulk recolor commands top up remaining matching stickies after partial model mutation output', async () => {
+  const now = Date.now()
+  const context = buildContext({
+    state: [
+      {
+        id: 'sticky-yellow-a',
+        boardId: 'test-board',
+        type: 'stickyNote',
+        text: 'Alpha',
+        color: '#fde68a',
+        position: { x: 120, y: 120 },
+        size: { width: 180, height: 110 },
+        zIndex: 1,
+        createdBy: 'test-user',
+        createdAt: now,
+        updatedBy: 'test-user',
+        updatedAt: now,
+        version: 1,
+      },
+      {
+        id: 'sticky-yellow-b',
+        boardId: 'test-board',
+        type: 'stickyNote',
+        text: 'Beta',
+        color: '#e8d98b',
+        position: { x: 340, y: 120 },
+        size: { width: 180, height: 110 },
+        zIndex: 2,
+        createdBy: 'test-user',
+        createdAt: now,
+        updatedBy: 'test-user',
+        updatedAt: now,
+        version: 1,
+      },
+      {
+        id: 'sticky-green-c',
+        boardId: 'test-board',
+        type: 'stickyNote',
+        text: 'Gamma',
+        color: '#86efac',
+        position: { x: 560, y: 120 },
+        size: { width: 180, height: 110 },
+        zIndex: 3,
+        createdBy: 'test-user',
+        createdAt: now,
+        updatedBy: 'test-user',
+        updatedAt: now,
+        version: 1,
+      },
+    ],
+  })
+
+  await withMockObjectWriter(
+    async () => {},
+    async () => {
+      await withMockGlmClient(
+        {
+          callGLM: async () => ({
+            choices: [
+              {
+                message: {
+                  content: 'Updated one sticky.',
+                  tool_calls: [
+                    {
+                      id: 'partial-color-change-1',
+                      function: {
+                        name: 'changeColor',
+                        arguments: JSON.stringify({
+                          objectId: 'sticky-yellow-a',
+                          color: 'green',
+                        }),
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          parseToolCalls: parseToolCallsFromResponse,
+          getTextResponse: (response) => response?.choices?.[0]?.message?.content || '',
+        },
+        async () => {
+          const result = await __test.runCommandPlan(context, 'change yellow collor stickies to green')
+          assert.equal(result.level, undefined)
+        },
+      )
+    },
+  )
+
+  const changedToGreen = context.state.filter((item) => item.type === 'stickyNote' && item.color === '#86efac')
+  assert.equal(changedToGreen.length, 3)
+})
+
+test('AI-CMDS-041: bulk recolor falls back to same-color objects when requested type is absent', async () => {
+  const now = Date.now()
+  const context = buildContext({
+    state: [
+      {
+        id: 'frame-yellow-a',
+        boardId: 'test-board',
+        type: 'frame',
+        title: 'Frame A',
+        color: '#fde68a',
+        position: { x: 120, y: 120 },
+        size: { width: 420, height: 300 },
+        zIndex: 1,
+        createdBy: 'test-user',
+        createdAt: now,
+        updatedBy: 'test-user',
+        updatedAt: now,
+        version: 1,
+      },
+      {
+        id: 'frame-yellow-b',
+        boardId: 'test-board',
+        type: 'frame',
+        title: 'Frame B',
+        color: '#e8d98b',
+        position: { x: 580, y: 120 },
+        size: { width: 420, height: 300 },
+        zIndex: 2,
+        createdBy: 'test-user',
+        createdAt: now,
+        updatedBy: 'test-user',
+        updatedAt: now,
+        version: 1,
+      },
+    ],
+  })
+
+  await withMockObjectWriter(
+    async () => {},
+    async () => {
+      await withMockGlmClient(
+        {
+          callGLM: async () => ({
+            choices: [
+              {
+                message: {
+                  content: '',
+                  tool_calls: [],
+                },
+              },
+            ],
+          }),
+          parseToolCalls: () => [],
+          getTextResponse: () => '',
+        },
+        async () => {
+          const result = await __test.runCommandPlan(context, 'change yellow collor stickies to green')
+          assert.equal(result.level, undefined)
+          assert.match(result.message, /changed 2 objects from yellow to green/i)
+        },
+      )
+    },
+  )
+
+  const greenFrames = context.state.filter((item) => item.type === 'frame' && item.color === '#86efac')
+  assert.equal(greenFrames.length, 2)
 })
 
 test('AI-CMDS-033: no-tool bulk color prompts update all matching sticky notes', async () => {
@@ -1116,6 +1645,36 @@ test('AI-CMDS-015 / FR-16: tool schema includes layout and complex-template acti
   }
 })
 
+test('AI-CMDS-045: MAX-45 bulk operation schema includes create/change/delete/group/template tools', () => {
+  const toolNames = new Set(toolRegistry.TOOL_DEFINITIONS.map((tool) => tool?.function?.name).filter(Boolean))
+  const requiredTools = [
+    'createObjects',
+    'changeColors',
+    'deleteObjects',
+    'groupObjects',
+    'ungroupObjects',
+    'createShapeTemplate',
+  ]
+
+  for (const toolName of requiredTools) {
+    assert.ok(toolNames.has(toolName), `Missing bulk/composition tool: ${toolName}`)
+  }
+
+  const createObjectsTool = toolRegistry.TOOL_DEFINITIONS.find((tool) => tool?.function?.name === 'createObjects')
+  assert.equal(createObjectsTool?.function?.parameters?.properties?.objects?.type, 'array')
+  assert.equal(createObjectsTool?.function?.parameters?.properties?.objects?.minItems, 1)
+
+  const changeColorsTool = toolRegistry.TOOL_DEFINITIONS.find((tool) => tool?.function?.name === 'changeColors')
+  assert.equal(changeColorsTool?.function?.parameters?.required?.join(','), 'objectIds,color')
+
+  const deleteObjectsTool = toolRegistry.TOOL_DEFINITIONS.find((tool) => tool?.function?.name === 'deleteObjects')
+  assert.equal(deleteObjectsTool?.function?.parameters?.properties?.objectIds?.type, 'array')
+
+  const templateTool = toolRegistry.TOOL_DEFINITIONS.find((tool) => tool?.function?.name === 'createShapeTemplate')
+  assert.equal(templateTool?.function?.parameters?.required?.[0], 'templateType')
+  assert.equal(templateTool?.function?.parameters?.properties?.templateType?.enum?.length >= 6, true)
+})
+
 test('AI-CMDS-016 / FR-16: runtime dispatcher routes grid, spacing, and journey-map tool calls', () => {
   const executeBlock = extractTopLevelBlock(functionsSource, 'const executeLlmToolCall = async (ctx, toolName, rawArgs, options = {}) => {')
   assert.match(executeBlock, /case 'createStickyGridTemplate'/)
@@ -1124,6 +1683,377 @@ test('AI-CMDS-016 / FR-16: runtime dispatcher routes grid, spacing, and journey-
   assert.match(executeBlock, /case 'createBusinessModelCanvas'/)
   assert.match(executeBlock, /case 'createWorkflowFlowchart'/)
 })
+
+test('AI-CMDS-046: runtime dispatcher executes MAX-45 bulk tools directly', async () => {
+  const context = buildContext({
+    state: [
+      {
+        id: 'sh1',
+        boardId: 'test-board',
+        type: 'shape',
+        shapeType: 'rectangle',
+        text: 'Node 1',
+        color: '#93c5fd',
+        position: { x: 120, y: 120 },
+        size: { width: 180, height: 110 },
+        zIndex: 1,
+        createdBy: 'test-user',
+        createdAt: Date.now(),
+        updatedBy: 'test-user',
+        updatedAt: Date.now(),
+        version: 1,
+      },
+      {
+        id: 'sh2',
+        boardId: 'test-board',
+        type: 'shape',
+        shapeType: 'rectangle',
+        text: 'Node 2',
+        color: '#93c5fd',
+        position: { x: 340, y: 120 },
+        size: { width: 180, height: 110 },
+        zIndex: 2,
+        createdBy: 'test-user',
+        createdAt: Date.now(),
+        updatedBy: 'test-user',
+        updatedAt: Date.now(),
+        version: 1,
+      },
+    ],
+  })
+  let templateGroupId = ''
+
+  await withMockObjectWriter(async () => {}, async () => {
+    await withMockModuleMethods(
+      bulkOperations,
+      {
+        createObjects: async (ctx, args = {}) => {
+          const created = (Array.isArray(args.objects) ? args.objects : []).map((objectSpec = {}, index) => {
+            const rawType = String(objectSpec.type || 'stickyNote').trim().toLowerCase()
+            const isShape = ['rectangle', 'circle', 'diamond', 'triangle'].includes(rawType)
+            const type = isShape ? 'shape' : rawType === 'frame' ? 'frame' : 'stickyNote'
+            const color = objectSpec.color || (isShape ? '#93c5fd' : '#fde68a')
+            return {
+              id: `bulk-${index + 1}`,
+              boardId: ctx.boardId,
+              type,
+              ...(type === 'shape' ? { shapeType: rawType === 'rectangle' ? 'rectangle' : rawType } : {}),
+              ...(type === 'frame' ? { title: objectSpec.text || `Frame ${index + 1}` } : { text: objectSpec.text || `Note ${index + 1}` }),
+              color,
+              position: { x: 400 + index * 22, y: 300 + index * 22 },
+              size: isShape ? { width: 160, height: 110 } : { width: 180, height: 110 },
+              zIndex: index + 3,
+              createdBy: ctx.userId,
+              createdAt: Date.now(),
+              updatedBy: ctx.userId,
+              updatedAt: Date.now(),
+              version: 1,
+            }
+          })
+          ctx.state.push(...created)
+          ctx.executedTools.push({
+            tool: 'createObjects',
+            count: created.length,
+          })
+          return { count: created.length, objects: created }
+        },
+        applyBatchColorMutation: async (ctx, objectIds, color) => {
+          const colorMap = { purple: '#c4b5fd' }
+          const resolvedColor = colorMap[String(color || '').toLowerCase()] || color
+          const ids = Array.isArray(objectIds) ? objectIds : []
+          const validIds = [...new Set(ids.map((entry) => String(entry || '').trim()).filter(Boolean))]
+          for (const objectId of validIds) {
+            const object = ctx.state.find((item) => item?.id === objectId)
+            if (object) {
+              object.color = resolvedColor
+            }
+          }
+          ctx.executedTools.push({
+            tool: 'changeColors',
+            count: validIds.length,
+          })
+          return { count: validIds.length }
+        },
+      },
+      async () => {
+        await withMockModuleMethods(
+          shapeComposition,
+          {
+            groupObjects: async (ctx, args = {}) => {
+              const memberIds = Array.isArray(args.objectIds)
+                ? [...new Set(args.objectIds.map((entry) => String(entry || '').trim()).filter(Boolean))]
+                : []
+              const members = memberIds
+                .map((id) => ctx.state.find((item) => item?.id === id))
+                .filter(Boolean)
+              const groupId = 'group-mock-1'
+              const groupPayload = {
+                id: groupId,
+                boardId: ctx.boardId,
+                type: 'group',
+                memberIds,
+                position: { x: 120, y: 120 },
+                size: { width: 1, height: 1 },
+                zIndex: 10,
+                createdBy: ctx.userId,
+                createdAt: Date.now(),
+                updatedBy: ctx.userId,
+                updatedAt: Date.now(),
+                version: 1,
+              }
+              for (const member of members) {
+                member.groupId = groupId
+              }
+              ctx.state.push(groupPayload)
+              ctx.executedTools.push({ tool: 'groupObjects', groupId, count: members.length })
+              return { groupId, count: members.length }
+            },
+            createShapeTemplate: async (ctx, args = {}) => {
+              const parts = [
+                { id: 'tree-part-1', type: 'shape', shapeType: 'rectangle', position: { x: 800, y: 300 } },
+                { id: 'tree-part-2', type: 'shape', shapeType: 'circle', position: { x: 846, y: 300 } },
+              ].map((part, index) => ({
+                id: part.id,
+                boardId: ctx.boardId,
+                type: part.type,
+                shapeType: part.shapeType,
+                text: '',
+                color: '#86efac',
+                position: part.position,
+                size: { width: 80, height: 80 },
+                zIndex: 11 + index,
+                createdBy: ctx.userId,
+                createdAt: Date.now(),
+                updatedBy: ctx.userId,
+                updatedAt: Date.now(),
+                version: 1,
+              }))
+              ctx.state.push(...parts)
+              ctx.executedTools.push({ tool: 'createShapeTemplate', templateType: String(args.templateType || ''), count: parts.length })
+              return { templateType: args.templateType, count: parts.length }
+            },
+          },
+          async () => {
+            await withMockGlmClient(
+              {
+                callGLM: async () => ({
+                  choices: [
+                    {
+                      message: {
+                        content: 'Created grouped objects.',
+                        tool_calls: [
+                          {
+                            id: 'bulk-create-1',
+                            function: {
+                              name: 'createObjects',
+                              arguments: JSON.stringify({
+                                objects: [
+                                  { type: 'stickyNote', text: 'Node A', color: '#fde68a' },
+                                  { type: 'stickyNote', text: 'Node B', color: '#fde68a' },
+                                  { type: 'rectangle', text: 'Node C', color: '#93c5fd' },
+                                ],
+                              }),
+                            },
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                }),
+                parseToolCalls: parseToolCallsFromResponse,
+                getTextResponse: (response) => response?.choices?.[0]?.message?.content || '',
+              },
+              async () => {
+                const result = await __test.runCommandPlan(context, 'run bulk tool call test')
+                assert.equal(result.level, undefined)
+              },
+            )
+          },
+        )
+      },
+    )
+  })
+
+  assert.equal(context.state.filter((item) => item.type === 'stickyNote').length, 3)
+  assert.equal(context.state.filter((item) => item.type === 'shape').length, 5)
+  assert.equal(context.state.filter((item) => item.type === 'group').length, 1)
+  assert.equal(context.state.find((item) => item.id === 'sh1')?.groupId, context.state.find((item) => item.type === 'group')?.id)
+  assert.equal(context.state.find((item) => item.id === 'sh2')?.groupId, context.state.find((item) => item.type === 'group')?.id)
+  const group = context.state.find((item) => item.type === 'group')
+  assert.equal(group?.memberIds?.length >= 2, true)
+  templateGroupId = group?.id || ''
+  assert.match(group?.id || '', /^.{8}/)
+  const purpleShapes = context.state.filter((item) => item.type === 'shape' && item.color === '#c4b5fd')
+  assert.ok(purpleShapes.length >= 2, `Expected recolored shapes, got ${purpleShapes.length}`)
+  assert.ok(context.executedTools.some((entry) => entry.tool === 'groupObjects'), true)
+  assert.ok(context.executedTools.some((entry) => entry.tool === 'createObjects'), true)
+  assert.ok(context.executedTools.some((entry) => entry.tool === 'createShapeTemplate'), true)
+  assert.ok(templateGroupId)
+
+  await withMockObjectWriter(async () => {}, async () => {
+    await withMockModuleMethods(
+      shapeComposition,
+      {
+        ungroupObjects: async (ctx, args = {}) => {
+          const groupId = String(args.groupId || '').trim()
+          const group = ctx.state.find((item) => item?.id === groupId && item?.type === 'group')
+          if (!group) {
+            return { count: 0 }
+          }
+
+          const memberIds = Array.isArray(group?.memberIds) ? group.memberIds : []
+          for (const memberId of memberIds) {
+            const member = ctx.state.find((item) => item.id === memberId)
+            if (member) {
+              delete member.groupId
+            }
+          }
+          const index = ctx.state.findIndex((item) => item?.id === groupId)
+          if (index !== -1) {
+            ctx.state.splice(index, 1)
+          }
+          ctx.executedTools.push({ tool: 'ungroupObjects', groupId, count: memberIds.length })
+          return { groupId, count: memberIds.length }
+        },
+      },
+      async () => {
+        await withMockGlmClient(
+          {
+            callGLM: async () => ({
+              choices: [
+                {
+                  message: {
+                    content: '',
+                    tool_calls: [
+                      {
+                        id: 'ungroup-1',
+                        function: {
+                          name: 'ungroupObjects',
+                          arguments: JSON.stringify({
+                            groupId: templateGroupId,
+                          }),
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            }),
+            parseToolCalls: parseToolCallsFromResponse,
+            getTextResponse: (response) => response?.choices?.[0]?.message?.content || '',
+          },
+          async () => {
+            const result = await __test.runCommandPlan(context, `ungroup ${templateGroupId}`)
+            assert.equal(result.level, undefined)
+          },
+        )
+      },
+    )
+  })
+
+  const removedGroup = context.state.find((item) => item.id === templateGroupId)
+  assert.equal(removedGroup, undefined)
+  assert.equal(context.state.filter((item) => item.type === 'shape' && item.id === 'sh1').length, 1)
+  assert.equal(context.state.filter((item) => item.type === 'shape' && item.id === 'sh2').length, 1)
+})
+
+test('AI-CMDS-047: runtime dispatcher executes bulk deleteObject command', async () => {
+  const context = buildContext({
+    state: [
+      {
+        id: 'd1',
+        boardId: 'test-board',
+        type: 'stickyNote',
+        text: 'A',
+        color: '#fde68a',
+        position: { x: 120, y: 120 },
+        size: { width: 180, height: 110 },
+        zIndex: 1,
+        createdBy: 'test-user',
+        createdAt: Date.now(),
+        updatedBy: 'test-user',
+        updatedAt: Date.now(),
+        version: 1,
+      },
+      {
+        id: 'd2',
+        boardId: 'test-board',
+        type: 'stickyNote',
+        text: 'B',
+        color: '#fde68a',
+        position: { x: 320, y: 120 },
+        size: { width: 180, height: 110 },
+        zIndex: 2,
+        createdBy: 'test-user',
+        createdAt: Date.now(),
+        updatedBy: 'test-user',
+        updatedAt: Date.now(),
+        version: 1,
+      },
+    ],
+  })
+
+  await withMockObjectWriter(async () => {}, async () => {
+    await withMockModuleMethods(
+      bulkOperations,
+      {
+        applyBatchDelete: async (ctx, objectIds) => {
+          const validIds = [...new Set((Array.isArray(objectIds) ? objectIds : []).map((entry) => String(entry || '').trim()).filter(Boolean))]
+          const removed = []
+          for (const objectId of validIds) {
+            const index = ctx.state.findIndex((item) => item?.id === objectId)
+            if (index >= 0) {
+              removed.push(objectId)
+              ctx.state.splice(index, 1)
+            }
+          }
+
+          ctx.executedTools.push({
+            tool: 'deleteObjects',
+            count: removed.length,
+          })
+          return { count: removed.length }
+        },
+          },
+          async () => {
+            await withMockGlmClient(
+              {
+                callGLM: async () => ({
+                  choices: [
+                    {
+                      message: {
+                        content: 'Deleted requested items.',
+                        tool_calls: [
+                          {
+                            id: 'bulk-delete-1',
+                            function: {
+                              name: 'deleteObjects',
+                          arguments: JSON.stringify({
+                            objectIds: ['d1', 'd2'],
+                          }),
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            }),
+            parseToolCalls: parseToolCallsFromResponse,
+            getTextResponse: (response) => response?.choices?.[0]?.message?.content || '',
+              },
+              async () => {
+                const result = await __test.runCommandPlan(context, 'delete bulk items')
+                assert.equal(result.level, undefined)
+              },
+            )
+          },
+        )
+      })
+
+  assert.equal(context.state.length, 0)
+  assert.equal(context.executedTools.some((entry) => entry.tool === 'deleteObject'), false)
+})
+
 
 test('AI-CMDS-018 / T-103: runtime enforces latency/queue budgets for command execution', () => {
   assert.equal(__test.AI_RESPONSE_TARGET_MS, 2_000)
@@ -1460,4 +2390,552 @@ test('AI-CMDS-006 / T-102 / T-103 / T-142: system prompt includes placement, bat
   assert.match(prompt, /chat-only output/i)
   assert.match(prompt, /Sticky notes: 1/)
   assert.match(prompt, /Frames: 1/)
+})
+
+// ============================================================================
+// BULK OPERATION TESTS (MAX-45)
+// ============================================================================
+
+test('AI-BULK-001: bulk create fallback creates multiple stickies without overlap', async () => {
+  const writeCalls = []
+  const context = buildContext()
+
+  await withMockObjectWriter(
+    async (payload) => {
+      writeCalls.push(payload)
+    },
+    async () => {
+      await withMockGlmClient(
+        {
+          callGLM: async () => ({
+            choices: [
+              {
+                message: {
+                  content: '',
+                  tool_calls: [],
+                },
+              },
+            ],
+          }),
+          parseToolCalls: () => [],
+          getTextResponse: (response) => response?.choices?.[0]?.message?.content || '',
+        },
+        async () => {
+          const result = await __test.runCommandPlan(context, 'create 10 stickies')
+          // Should succeed via fallback, not return warning
+          assert.equal(result.level, undefined)
+          assert.match(result.message, /created 10 sticky notes/i)
+        },
+      )
+    },
+  )
+
+  assert.equal(context.state.length, 10)
+  assert.equal(context.state.filter(o => o.type === 'stickyNote').length, 10)
+
+  // Verify no overlaps (check positions are distinct)
+  const positions = new Set(context.state.map(o => `${o.position.x},${o.position.y}`))
+  assert.equal(positions.size, 10, 'All positions should be unique (no overlap)')
+
+  // Verify write calls were chunked properly
+  assert.ok(writeCalls.length > 0, 'Expected write calls')
+})
+
+test('AI-BULK-002: bulk create creates colored shapes', async () => {
+  const writeCalls = []
+  const context = buildContext()
+
+  await withMockObjectWriter(
+    async (payload) => {
+      writeCalls.push(payload)
+    },
+    async () => {
+      await withMockGlmClient(
+        {
+          callGLM: async () => ({
+            choices: [
+              {
+                message: {
+                  content: '',
+                  tool_calls: [],
+                },
+              },
+            ],
+          }),
+          parseToolCalls: () => [],
+          getTextResponse: (response) => response?.choices?.[0]?.message?.content || '',
+        },
+        async () => {
+          const result = await __test.runCommandPlan(context, 'add 5 blue shapes')
+          assert.equal(result.level, undefined)
+          assert.match(result.message, /created 5 shapes/i)
+        },
+      )
+    },
+  )
+
+  assert.equal(context.state.length, 5)
+  assert.equal(context.state.filter(o => o.type === 'shape').length, 5)
+
+  // Verify all shapes have the blue color
+  for (const obj of context.state) {
+    if (obj.type === 'shape') {
+      assert.equal(obj.color, '#93c5fd', `Expected blue color, got ${obj.color}`)
+    }
+  }
+})
+
+test('AI-BULK-003: bulk create handles >400 objects with chunking', async () => {
+  const writeCalls = []
+  const context = buildContext()
+
+  await withMockObjectWriter(
+    async (payload) => {
+      writeCalls.push(payload)
+    },
+    async () => {
+      await withMockGlmClient(
+        {
+          callGLM: async () => ({
+            choices: [
+              {
+                message: {
+                  content: 'Creating 500 sticky notes...',
+                  tool_calls: [],
+                },
+              },
+            ],
+          }),
+          parseToolCalls: () => [],
+          getTextResponse: (response) => response?.choices?.[0]?.message?.content || '',
+        },
+        async () => {
+          const result = await __test.runCommandPlan(context, 'create 500 stickies')
+          assert.equal(result.level, undefined)
+          assert.match(result.message, /created 500 sticky notes/i)
+        },
+      )
+    },
+  )
+
+  assert.equal(context.state.length, 500)
+  // With 500 items and chunk size of 400, we should have at least 2 write calls
+  assert.ok(writeCalls.length >= 2, `Expected at least 2 write calls for chunking, got ${writeCalls.length}`)
+})
+
+test('AI-BULK-004: bulk color mutation changes multiple items', async () => {
+  const now = Date.now()
+  const context = buildContext({
+    state: [
+      { id: 's1', boardId: 'test-board', type: 'stickyNote', text: 'Note 1', color: '#fde68a', position: { x: 100, y: 100 }, size: { width: 180, height: 110 }, zIndex: 1, createdBy: 'test-user', createdAt: now, updatedBy: 'test-user', updatedAt: now, version: 1 },
+      { id: 's2', boardId: 'test-board', type: 'stickyNote', text: 'Note 2', color: '#fde68a', position: { x: 300, y: 100 }, size: { width: 180, height: 110 }, zIndex: 2, createdBy: 'test-user', createdAt: now, updatedBy: 'test-user', updatedAt: now, version: 1 },
+      { id: 's3', boardId: 'test-board', type: 'stickyNote', text: 'Note 3', color: '#93c5fd', position: { x: 500, y: 100 }, size: { width: 180, height: 110 }, zIndex: 3, createdBy: 'test-user', createdAt: now, updatedBy: 'test-user', updatedAt: now, version: 1 },
+    ],
+  })
+
+  await withMockModuleMethods(
+    bulkColorOperations,
+    {
+      changeColors: async (ctx, args = {}) => {
+        const ids = [...new Set((Array.isArray(args.objectIds) ? args.objectIds : []).map((value) => String(value || '').trim()).filter(Boolean))]
+        const normalized = bulkColorOperations
+          ? bulkColorOperations
+          : null
+        const targetColor = args.color === 'red' ? '#fca5a5' : args.color
+        const changed = []
+
+        for (const id of ids) {
+          const object = ctx.state.find((entry) => entry?.id === id)
+          if (object) {
+            object.color = targetColor
+            changed.push(id)
+          }
+        }
+
+        ctx.executedTools.push({
+          tool: 'changeColors',
+          count: changed.length,
+          color: targetColor,
+          objectIds: changed,
+        })
+
+        return { count: changed.length, normalizedColor: targetColor, ...(normalized || {}) }
+      },
+    },
+    async () => {
+      await withMockGlmClient(
+        {
+          callGLM: async () => ({
+            choices: [
+              {
+                message: {
+                  content: 'Changed 2 sticky notes to red.',
+                  tool_calls: [
+                    {
+                      id: 'bulk-color-004',
+                      function: {
+                        name: 'changeColors',
+                        arguments: JSON.stringify({
+                          objectIds: ['s1', 's2'],
+                          color: 'red',
+                        }),
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          parseToolCalls: parseToolCallsFromResponse,
+          getTextResponse: (response) => response?.choices?.[0]?.message?.content || '',
+        },
+        async () => {
+          const result = await __test.runCommandPlan(context, 'make all yellow stickies red')
+          assert.equal(result.level, undefined)
+          assert.match(result.message, /changed 2 sticky notes/i)
+        },
+      )
+    },
+  )
+
+  // Verify the yellow stickies changed to red
+  const s1 = context.state.find(o => o.id === 's1')
+  const s2 = context.state.find(o => o.id === 's2')
+  const s3 = context.state.find(o => o.id === 's3')
+
+  assert.equal(s1.color, '#fca5a5', 'Expected red color')
+  assert.equal(s2.color, '#fca5a5', 'Expected red color')
+  assert.equal(s3.color, '#93c5fd', 'Blue sticky should remain unchanged')
+})
+
+test('AI-BULK-005: bulk delete removes multiple items', async () => {
+  const now = Date.now()
+  const context = buildContext({
+    state: [
+      { id: 's1', boardId: 'test-board', type: 'stickyNote', text: 'Note 1', color: '#fde68a', position: { x: 100, y: 100 }, size: { width: 180, height: 110 }, zIndex: 1, createdBy: 'test-user', createdAt: now, updatedBy: 'test-user', updatedAt: now, version: 1 },
+      { id: 's2', boardId: 'test-board', type: 'stickyNote', text: 'Note 2', color: '#fde68a', position: { x: 300, y: 100 }, size: { width: 180, height: 110 }, zIndex: 2, createdBy: 'test-user', createdAt: now, updatedBy: 'test-user', updatedAt: now, version: 1 },
+      { id: 's3', boardId: 'test-board', type: 'stickyNote', text: 'Note 3', color: '#93c5fd', position: { x: 500, y: 100 }, size: { width: 180, height: 110 }, zIndex: 3, createdBy: 'test-user', createdAt: now, updatedBy: 'test-user', updatedAt: now, version: 1 },
+    ],
+  })
+
+  await withMockGlmClient(
+    {
+      callGLM: async () => ({
+        choices: [
+          {
+            message: {
+              content: 'Deleted 2 sticky notes.',
+              tool_calls: [
+                {
+                  id: 'bulk-delete-005',
+                  function: {
+                    name: 'deleteObjects',
+                    arguments: JSON.stringify({
+                      objectIds: ['s1', 's2'],
+                    }),
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      }),
+      parseToolCalls: parseToolCallsFromResponse,
+      getTextResponse: (response) => response?.choices?.[0]?.message?.content || '',
+    },
+    async () => {
+      const result = await __test.runCommandPlan(context, 'delete all yellow stickies')
+      assert.equal(result.level, undefined)
+      assert.match(result.message, /deleted 2 sticky notes/i)
+    },
+  )
+
+  // Verify the yellow stickies are deleted (marked as deleted)
+  const s1 = context.state.find(o => o.id === 's1')
+  const s2 = context.state.find(o => o.id === 's2')
+  const s3 = context.state.find(o => o.id === 's3')
+
+  // After chunked delete, items should be removed from state
+  assert.equal(s1, undefined, 's1 should be removed from state')
+  assert.equal(s2, undefined, 's2 should be removed from state')
+  assert.notEqual(s3, undefined, 's3 should still exist')
+})
+
+test('AI-BULK-006: bulk operations at scale (>400 items)', async () => {
+  const now = Date.now()
+  const items = []
+  for (let i = 0; i < 450; i++) {
+    items.push({
+      id: `s${i}`,
+      boardId: 'test-board',
+      type: 'stickyNote',
+      text: `Note ${i}`,
+      color: '#fde68a',
+      position: { x: 100 + (i % 10) * 200, y: 100 + Math.floor(i / 10) * 150 },
+      size: { width: 180, height: 110 },
+      zIndex: i + 1,
+      createdBy: 'test-user',
+      createdAt: now,
+      updatedBy: 'test-user',
+      updatedAt: now,
+      version: 1,
+    })
+  }
+
+  const context = buildContext({ state: items })
+
+  const objectIds = items.map((item) => item.id)
+  await withMockModuleMethods(
+    bulkColorOperations,
+    {
+      changeColors: async (ctx, args = {}) => {
+        const ids = [...new Set((Array.isArray(args.objectIds) ? args.objectIds : []).map((value) => String(value || '').trim()).filter(Boolean))]
+        let changed = 0
+
+        for (const objectId of ids) {
+          const object = ctx.state.find((entry) => entry?.id === objectId)
+          if (object) {
+            object.color = '#93c5fd'
+            changed += 1
+          }
+        }
+
+        ctx.executedTools.push({
+          tool: 'changeColors',
+          count: changed,
+          color: '#93c5fd',
+          objectIds: ids,
+        })
+
+        return { count: changed }
+      },
+    },
+    async () => {
+      await withMockGlmClient(
+        {
+          callGLM: async () => ({
+            choices: [
+              {
+                message: {
+                  content: 'Changed 450 sticky notes to blue.',
+                  tool_calls: [
+                    {
+                      id: 'bulk-color-006',
+                      function: {
+                        name: 'changeColors',
+                        arguments: JSON.stringify({
+                          objectIds,
+                          color: 'blue',
+                        }),
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          parseToolCalls: parseToolCallsFromResponse,
+          getTextResponse: (response) => response?.choices?.[0]?.message?.content || '',
+        },
+        async () => {
+          const result = await __test.runCommandPlan(context, 'make all stickies blue')
+          assert.equal(result.level, undefined)
+          assert.match(result.message, /changed 450 sticky notes/i)
+        },
+      )
+    },
+  )
+
+  // Verify all items changed color
+  const blueCount = context.state.filter(o => o.color === '#93c5fd').length
+  assert.equal(blueCount, 450, 'All 450 items should be blue')
+})
+
+test('AI-BULK-007: bulk create creates frames', async () => {
+  const writeCalls = []
+  const context = buildContext()
+
+  await withMockObjectWriter(
+    async (payload) => {
+      writeCalls.push(payload)
+    },
+    async () => {
+      await withMockGlmClient(
+        {
+          callGLM: async () => ({
+            choices: [
+              {
+                message: {
+                  content: 'Created 3 frames.',
+                  tool_calls: [
+                    {
+                      id: 'bulk-create-007',
+                      function: {
+                        name: 'createObjects',
+                        arguments: JSON.stringify({
+                          objects: [
+                            { type: 'frame', title: 'Frame 1' },
+                            { type: 'frame', title: 'Frame 2' },
+                            { type: 'frame', title: 'Frame 3' },
+                          ],
+                        }),
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          parseToolCalls: parseToolCallsFromResponse,
+          getTextResponse: (response) => response?.choices?.[0]?.message?.content || '',
+        },
+        async () => {
+          const result = await __test.runCommandPlan(context, 'create 3 frames')
+          assert.equal(result.level, undefined)
+          assert.match(result.message, /created 3 frames/i)
+        },
+      )
+    },
+  )
+
+  assert.equal(context.state.length, 3)
+  assert.equal(context.state.filter(o => o.type === 'frame').length, 3)
+})
+
+test('AI-BULK-008: changing shape, content, and color on multiple items', async () => {
+  const now = Date.now()
+  const context = buildContext({
+    state: [
+      { id: 's1', boardId: 'test-board', type: 'stickyNote', text: 'Note 1', color: '#fde68a', position: { x: 100, y: 100 }, size: { width: 180, height: 110 }, zIndex: 1, createdBy: 'test-user', createdAt: now, updatedBy: 'test-user', updatedAt: now, version: 1 },
+      { id: 's2', boardId: 'test-board', type: 'stickyNote', text: 'Note 2', color: '#fde68a', position: { x: 300, y: 100 }, size: { width: 180, height: 110 }, zIndex: 2, createdBy: 'test-user', createdAt: now, updatedBy: 'test-user', updatedAt: now, version: 1 },
+      { id: 'sh1', boardId: 'test-board', type: 'shape', shapeType: 'rectangle', color: '#93c5fd', position: { x: 500, y: 100 }, size: { width: 100, height: 100 }, zIndex: 3, createdBy: 'test-user', createdAt: now, updatedBy: 'test-user', updatedAt: now, version: 1 },
+    ],
+  })
+
+  await withMockModuleMethods(
+    bulkColorOperations,
+    {
+      changeColors: async (ctx, args = {}) => {
+        const ids = [...new Set((Array.isArray(args.objectIds) ? args.objectIds : []).map((value) => String(value || '').trim()).filter(Boolean))]
+        let changed = 0
+
+        for (const objectId of ids) {
+          const object = ctx.state.find((entry) => entry?.id === objectId)
+          if (object) {
+            object.color = '#86efac'
+            changed += 1
+          }
+        }
+
+        ctx.executedTools.push({
+          tool: 'changeColors',
+          count: changed,
+          color: '#86efac',
+          objectIds: ids,
+        })
+
+        return { count: changed }
+      },
+    },
+    async () => {
+      await withMockGlmClient(
+        {
+          callGLM: async () => ({
+            choices: [
+              {
+                message: {
+                  content: 'Changed 3 objects to green.',
+                  tool_calls: [
+                    {
+                      id: 'bulk-color-008',
+                      function: {
+                        name: 'changeColors',
+                        arguments: JSON.stringify({
+                          objectIds: ['s1', 's2', 'sh1'],
+                          color: 'green',
+                        }),
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          parseToolCalls: parseToolCallsFromResponse,
+          getTextResponse: (response) => response?.choices?.[0]?.message?.content || '',
+        },
+        async () => {
+          // Change all items to green
+          const result = await __test.runCommandPlan(context, 'make everything green')
+          assert.equal(result.level, undefined)
+          assert.match(result.message, /changed 3 objects/i)
+        },
+      )
+    },
+  )
+
+  // Verify all items changed to green
+  for (const obj of context.state) {
+    assert.equal(obj.color, '#86efac', `Expected green color for ${obj.id}, got ${obj.color}`)
+  }
+})
+
+test('AI-BULK-009: positions avoid existing objects', async () => {
+  const now = Date.now()
+  const context = buildContext({
+    state: [
+      { id: 'existing', boardId: 'test-board', type: 'stickyNote', text: 'Existing', color: '#fde68a', position: { x: 640, y: 360 }, size: { width: 180, height: 110 }, zIndex: 1, createdBy: 'test-user', createdAt: now, updatedBy: 'test-user', updatedAt: now, version: 1 },
+    ],
+  })
+
+  await withMockGlmClient(
+    {
+      callGLM: async () => ({
+        choices: [
+          {
+            message: {
+              content: 'Created 5 sticky notes.',
+              tool_calls: [
+                {
+                  id: 'bulk-create-009',
+                  function: {
+                    name: 'createObjects',
+                    arguments: JSON.stringify({
+                      objects: [
+                        { type: 'stickyNote', text: 'Frame note 1' },
+                        { type: 'stickyNote', text: 'Frame note 2' },
+                        { type: 'stickyNote', text: 'Frame note 3' },
+                        { type: 'stickyNote', text: 'Frame note 4' },
+                        { type: 'stickyNote', text: 'Frame note 5' },
+                      ],
+                    }),
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      }),
+      parseToolCalls: parseToolCallsFromResponse,
+      getTextResponse: (response) => response?.choices?.[0]?.message?.content || '',
+    },
+    async () => {
+      const result = await __test.runCommandPlan(context, 'create 5 stickies')
+      assert.equal(result.level, undefined)
+      assert.match(result.message, /created 5 sticky notes/i)
+    },
+  )
+
+  // Verify new stickies don't overlap with existing one
+  const existing = context.state.find(o => o.id === 'existing')
+  const newStickies = context.state.filter(o => o.id !== 'existing')
+
+  assert.equal(newStickies.length, 5)
+
+  for (const sticky of newStickies) {
+    // Simple bounding box check - should not overlap
+    const overlapsX = Math.abs(sticky.position.x - existing.position.x) < 180
+    const overlapsY = Math.abs(sticky.position.y - existing.position.y) < 110
+    assert.ok(!(overlapsX && overlapsY), `Sticky at (${sticky.position.x}, ${sticky.position.y}) overlaps with existing at (${existing.position.x}, ${existing.position.y})`)
+  }
 })

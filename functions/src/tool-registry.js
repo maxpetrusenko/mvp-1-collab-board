@@ -2,10 +2,11 @@
 // Tool definitions for GLM-5 function calling
 // Maps LLM tools to existing handler functions in index.js
 
-const COLOR_OPTIONS = ['yellow', 'blue', 'green', 'pink', 'red', 'orange', 'purple', 'gray']
+const COLOR_OPTIONS = ['yellow', 'blue', 'green', 'pink', 'red', 'orange', 'purple', 'brown', 'gray']
 const SHAPE_TYPES = ['rectangle', 'circle', 'diamond', 'triangle']
 const POSITION_OPTIONS = ['top left', 'top right', 'bottom left', 'bottom right', 'center', 'top', 'bottom', 'left', 'right']
 const ANCHOR_OPTIONS = ['top', 'right', 'bottom', 'left', 'center']
+const TEMPLATE_TYPES = ['bus', 'house', 'tree', 'person', 'car', 'building']
 
 const TOOL_DEFINITIONS = [
   {
@@ -55,6 +56,74 @@ const TOOL_DEFINITIONS = [
         required: ['text']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'createObjects',
+      description:
+        'Create many board objects in one call with a single anchor and explicit object specs.',
+      parameters: {
+        type: 'object',
+        properties: {
+          objects: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 500,
+            description: 'Objects to create in this batch.',
+            items: {
+              type: 'object',
+              properties: {
+                type: {
+                  type: 'string',
+                  enum: ['sticky', 'note', 'stickyNote', 'shape', 'frame', 'rectangle', 'circle', 'diamond', 'triangle'],
+                  description: 'Object kind or shape variant.',
+                },
+                text: {
+                  type: 'string',
+                  description: 'Text content for sticky notes and shape labels.',
+                },
+                title: {
+                  type: 'string',
+                  description: 'Optional title for frames.',
+                },
+                shapeType: {
+                  type: 'string',
+                  enum: SHAPE_TYPES,
+                  description: 'Shape variant for shape objects.',
+                },
+                color: {
+                  type: 'string',
+                  enum: COLOR_OPTIONS,
+                  description: 'Color for all objects in this batch.',
+                },
+                width: {
+                  type: 'number',
+                  description: 'Optional width override.',
+                },
+                height: {
+                  type: 'number',
+                  description: 'Optional height override.',
+                },
+              },
+            },
+          },
+          anchor: {
+            type: 'object',
+            description: 'Optional starting anchor; ignored when explicit x/y are supplied.',
+            properties: {
+              x: { type: 'number', description: 'Anchor x coordinate.' },
+              y: { type: 'number', description: 'Anchor y coordinate.' },
+            },
+          },
+          startZIndex: {
+            type: 'number',
+            description: 'Optional starting z-index for created objects.',
+          },
+        },
+        required: ['objects'],
+      },
+    },
   },
   {
     type: 'function',
@@ -280,6 +349,33 @@ const TOOL_DEFINITIONS = [
         required: ['objectId', 'color']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'changeColors',
+      description: 'Change the color of multiple existing objects by IDs.',
+      parameters: {
+        type: 'object',
+        properties: {
+          objectIds: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 500,
+            description: 'IDs of objects to recolor.',
+            items: {
+              type: 'string',
+            },
+          },
+          color: {
+            type: 'string',
+            enum: COLOR_OPTIONS,
+            description: 'Target color.',
+          },
+        },
+        required: ['objectIds', 'color'],
+      },
+    },
   },
   {
     type: 'function',
@@ -514,6 +610,29 @@ const TOOL_DEFINITIONS = [
   {
     type: 'function',
     function: {
+      name: 'deleteObjects',
+      description: 'Delete multiple objects from the board.',
+      parameters: {
+        type: 'object',
+        properties: {
+          objectIds: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 500,
+            description: 'IDs of objects to delete.',
+            items: {
+              type: 'string',
+              description: 'Board object id.',
+            },
+          },
+        },
+        required: ['objectIds'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'duplicateObject',
       description: 'Create a duplicate of an existing object on the board',
       parameters: {
@@ -535,6 +654,78 @@ const TOOL_DEFINITIONS = [
         required: ['objectId']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'groupObjects',
+      description: 'Create one group object around multiple existing objects.',
+      parameters: {
+        type: 'object',
+        properties: {
+          objectIds: {
+            type: 'array',
+            minItems: 2,
+            description: 'At least two object ids to combine as a group.',
+            items: {
+              type: 'string',
+            },
+          },
+          groupLabel: {
+            type: 'string',
+            description: 'Optional group label (stored as title when supported).',
+          },
+        },
+        required: ['objectIds'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'ungroupObjects',
+      description: 'Remove a group container and keep its members ungrouped.',
+      parameters: {
+        type: 'object',
+        properties: {
+          groupId: {
+            type: 'string',
+            description: 'ID of the group object to remove.',
+          },
+        },
+        required: ['groupId'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'createShapeTemplate',
+      description: 'Create a composed shape template from parts (bus, house, tree, person, car, building).',
+      parameters: {
+        type: 'object',
+        properties: {
+          templateType: {
+            type: 'string',
+            enum: TEMPLATE_TYPES,
+            description: 'Template family to materialize.',
+          },
+          anchor: {
+            type: 'object',
+            description: 'Optional starting anchor for the template.',
+            properties: {
+              x: {
+                type: 'number',
+              },
+              y: {
+                type: 'number',
+              },
+            },
+          },
+        },
+        required: ['templateType'],
+      },
+    },
   },
   {
     type: 'function',
@@ -698,10 +889,12 @@ POSITION OPTIONS: ${POSITION_OPTIONS.join(', ')}
 
 GUIDELINES:
 1. Treat the raw user message as authoritative intent and infer board actions from it.
-2. For board changes, call tools directly. Prefer executeBatch for mixed multi-step requests, and prefer dedicated bulk tools for repetitive layouts.
+2. For board changes, call tools directly. Prefer createObjects, changeColors, deleteObjects for repetitive creation/color/delete work.
+3. For mixed multi-step requests, prefer one executeBatch call that includes dependent tool calls in sequence.
 3. Convert placement language into tool args: use "position" for named regions and x/y for coordinates like "at 640,360" or "x=640 y=360".
 4. Use dedicated layout/template tools when they match intent: arrangeGrid, createStickyGridTemplate (for 2x3-style requests and "N boxes/stickies" layouts), spaceElementsEvenly, createBusinessModelCanvas, createWorkflowFlowchart, createSwotTemplate, createRetrospectiveTemplate, createJourneyMap.
-5. If placement is missing, use client placement hints first, then sensible defaults.
+5. Use groupObjects and ungroupObjects for grouping operations. Use createShapeTemplate for bus/house/tree/person/car/building motifs.
+6. If placement is missing, use client placement hints first, then sensible defaults.
 6. Use existing object IDs from board context. Never invent IDs for existing objects.
 7. Keep sticky text concise, concrete, and varied. Generate distinct high-quality ideas, reasons, or action items.
 8. Requests for board artifacts/frameworks (for example canvas, matrix, map, SWOT, retrospective, journey map) are board-mutation intents: create content on the board with tools, not text-only replies.

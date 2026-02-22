@@ -53,6 +53,7 @@ describe('GLM Tool Registry', () => {
     assert(Array.isArray(toolRegistry.COLOR_OPTIONS))
     assert.ok(toolRegistry.COLOR_OPTIONS.includes('yellow'))
     assert.ok(toolRegistry.COLOR_OPTIONS.includes('blue'))
+    assert.ok(toolRegistry.COLOR_OPTIONS.includes('brown'))
   })
 
   it('exports SHAPE_TYPES array', () => {

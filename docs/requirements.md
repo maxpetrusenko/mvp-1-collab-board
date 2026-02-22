@@ -267,17 +267,6 @@ Throttle network
 
 Test simultaneous AI commands
 
-Submission Requirements
-
-Deadline: Sunday 10:59 PM CT
-
-Deliver:
-
-GitHub repo + setup guide
-
-Demo video (3–5 min)
-
-Pre-Search document
 
 AI Dev Log
 

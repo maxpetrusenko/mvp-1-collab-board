@@ -8,6 +8,21 @@ test('normalizeCommandForPlan normalizes UK spellings for planner matching', () 
   assert.equal(normalized, 'organize by color')
 })
 
+test('normalizeCommandForPlan normalizes common color typos for planner matching', () => {
+  const normalized = __test.normalizeCommandForPlan('change yellow collor stickies to brown')
+  assert.equal(normalized, 'change yellow color sticky notes to brown')
+})
+
+test('parseBulkDeleteIntent captures broad delete scope with optional color filters', () => {
+  const parsed = __test.parseBulkDeleteIntent('delete all red stickies from the board')
+
+  assert.ok(parsed)
+  assert.equal(parsed.color, 'red')
+  assert.equal(parsed.count, null)
+  assert.ok(parsed.targetTypes instanceof Set)
+  assert.equal(parsed.targetTypes.has('stickyNote'), true)
+})
+
 test('isOrganizeByColorCommand recognizes color-grouping intents', () => {
   const variants = ['organize by color', 'group notes by color', 'sort everything by color']
   for (const command of variants) {

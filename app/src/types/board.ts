@@ -1,4 +1,4 @@
-export type BoardObjectKind = 'stickyNote' | 'shape' | 'frame' | 'connector' | 'text'
+export type BoardObjectKind = 'stickyNote' | 'shape' | 'frame' | 'connector' | 'text' | 'group'
 export type ShapeKind = 'rectangle' | 'circle' | 'diamond' | 'triangle'
 export type AnchorKind = 'top' | 'right' | 'bottom' | 'left' | 'center'
 export type ConnectorStyle = 'arrow' | 'line'
@@ -81,7 +81,12 @@ export type ConnectorObject = BoardObjectBase & {
   toAnchor?: AnchorKind | null
 }
 
-export type BoardObject = StickyNoteObject | ShapeObject | FrameObject | ConnectorObject | TextObject
+export type CompositeGroupObject = BoardObjectBase & {
+  type: 'group'
+  memberIds: string[]
+}
+
+export type BoardObject = StickyNoteObject | ShapeObject | FrameObject | ConnectorObject | TextObject | CompositeGroupObject
 
 export type BoardActivityEvent = {
   id: string

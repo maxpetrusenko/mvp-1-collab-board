@@ -5,6 +5,7 @@ const { TOOL_DEFINITIONS, buildSystemPrompt } = require('./tool-registry')
 const GLM_API_URL = 'https://open.bigmodel.cn/api/paas/v4/chat/completions'
 const MODEL = 'glm-5'
 const TIMEOUT_MS = 30000 // 30 seconds
+const BULK_OPERATION_TIMEOUT_MS = 45000 // 45 seconds
 const MAX_RETRIES = 1
 const MAX_TOKENS_DEFAULT = 1000
 const PROVIDER_AUTH_COOLDOWN_MS = 60 * 60 * 1000
@@ -18,6 +19,12 @@ const providerCooldowns = new Map()
 const CREATION_FOCUSED_TOOL_NAMES = new Set([
   'executeBatch',
   'getBoardState',
+  'createObjects',
+  'changeColors',
+  'deleteObjects',
+  'createShapeTemplate',
+  'groupObjects',
+  'ungroupObjects',
   'createStickyNote',
   'createShape',
   'createFrame',
@@ -35,6 +42,7 @@ const CREATION_FOCUSED_TOOL_NAMES = new Set([
 ])
 const GRID_FOCUSED_TOOL_NAMES = new Set([
   'executeBatch',
+  'createObjects',
   'createStickyGridTemplate',
   'createStickyNote',
 ])
@@ -43,6 +51,7 @@ const SIMPLE_SINGLE_STICKY_TOOL_NAMES = new Set([
 ])
 const STRUCTURED_ARTIFACT_TOOL_NAMES = new Set([
   'executeBatch',
+  'createShapeTemplate',
   'createBusinessModelCanvas',
   'createWorkflowFlowchart',
   'createSwotTemplate',
@@ -56,6 +65,9 @@ const STRUCTURED_ARTIFACT_TOOL_NAMES = new Set([
 ])
 const BOARD_MUTATION_VERB_REGEX =
   /\b(?:add|create|make|generate|build|insert|put|arrange|organize|organise|move|resize|rotate|delete|duplicate|connect|group|cluster|layout|map|draft|brainstorm|draw|outline)\b/
+const BULK_OPERATION_COMMAND_REGEX =
+  /\b(?:all|every|everything|many|multiple|bulk|group|ungroup|recolor)\b|\b(?:create|add|make|generate|build)\s+\d+\b|delete all|remove all|clear all/
+
 const BOARD_ARTIFACT_REGEX =
   /\b(?:board|whiteboard|sticky(?:\s*note)?s?|sticker(?:s)?|notes?|frame(?:s)?|shape(?:s)?|connector(?:s)?|canvas|matrix|map|roadmap|retrospective|swot|journey(?:\s+map)?|mind\s*map|business\s+model\s+canvas|flow\s*chart|workflow|process\s+flow)\b/
 const STRUCTURED_ARTIFACT_COMMAND_REGEX =
@@ -95,6 +107,8 @@ const normalizeStickyVocabulary = (value) =>
 
 const normalizeCommand = (command) =>
   normalizeStickyVocabulary(String(command || '').toLowerCase().trim())
+    .replace(/\bcolour\b/g, 'color')
+    .replace(/\bcollor\b/g, 'color')
 
 const shouldUseFullToolSet = (command) => {
   const normalized = normalizeCommand(command)
@@ -107,6 +121,8 @@ const isSimpleSingleStickyCommand = (command) => {
   const normalized = normalizeCommand(command)
   return SIMPLE_SINGLE_STICKY_COMMAND_REGEX.test(normalized) && !/\bsticky\s+notes\b/.test(normalized)
 }
+
+const isBulkOperationCommand = (command) => BULK_OPERATION_COMMAND_REGEX.test(normalizeCommand(command))
 
 const isGridFocusedCommand = (command) => {
   const normalized = normalizeCommand(command)
@@ -129,6 +145,10 @@ const filterToolDefinitions = (toolNames) => {
 const selectToolDefinitions = (command) => {
   if (shouldUseFullToolSet(command)) {
     return TOOL_DEFINITIONS
+  }
+
+  if (isBulkOperationCommand(command)) {
+    return filterToolDefinitions(CREATION_FOCUSED_TOOL_NAMES)
   }
 
   if (isSimpleSingleStickyCommand(command)) {
@@ -161,6 +181,10 @@ const resolveToolChoice = (command, explicitToolChoice) => {
   }
 
   if (isStructuredArtifactCommand(command) || isGridFocusedCommand(command)) {
+    return 'required'
+  }
+
+  if (isBulkOperationCommand(command)) {
     return 'required'
   }
 
@@ -367,8 +391,15 @@ async function callGLM(userCommand, boardContext, options = {}) {
     ? buildCompactSystemPrompt(boardContext, userCommand)
     : buildSystemPrompt(boardContext)
   const configuredTimeoutMs = readPositiveInt(readEnv('AI_PROVIDER_TIMEOUT_MS', 'ai_provider_timeout_ms'), TIMEOUT_MS)
+  const configuredBulkTimeoutMs = readPositiveInt(
+    readEnv('AI_PROVIDER_BULK_TIMEOUT_MS', 'ai_provider_bulk_timeout_ms'),
+    BULK_OPERATION_TIMEOUT_MS,
+  )
+  const bulkCommand = isBulkOperationCommand(userCommand)
   const timeoutOverrideMs = readPositiveInt(options?.timeoutMs, 0)
-  const timeoutMs = timeoutOverrideMs > 0 ? timeoutOverrideMs : configuredTimeoutMs
+  const timeoutMs = timeoutOverrideMs > 0
+    ? timeoutOverrideMs
+    : (bulkCommand ? configuredBulkTimeoutMs : configuredTimeoutMs)
   const parsedRetryOverride = Number(options?.maxRetries)
   const maxRetriesOverride =
     Number.isFinite(parsedRetryOverride) && parsedRetryOverride >= 0

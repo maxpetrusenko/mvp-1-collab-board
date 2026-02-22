@@ -18,6 +18,35 @@ try {
   console.warn('GLM client modules not available:', importError.message)
 }
 
+// Bulk operation fallback imports
+let bulkCreateFallback = null
+try {
+  bulkCreateFallback = require('./src/bulk-create-fallback')
+} catch (importError) {
+  console.warn('Bulk create fallback module not available:', importError.message)
+}
+
+let bulkOperations = null
+try {
+  bulkOperations = require('./src/bulk-operations')
+} catch (importError) {
+  console.warn('Bulk operations module not available:', importError.message)
+}
+
+let bulkColorOperations = null
+try {
+  bulkColorOperations = require('./src/bulk-color-operations')
+} catch (importError) {
+  console.warn('Bulk color operations module not available:', importError.message)
+}
+
+let shapeComposition = null
+try {
+  shapeComposition = require('./src/shape-composition')
+} catch (importError) {
+  console.warn('Shape composition module not available:', importError.message)
+}
+
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
@@ -32,12 +61,14 @@ const COLOR_MAP = {
   red: '#fca5a5',
   orange: '#fdba74',
   purple: '#c4b5fd',
+  brown: '#a16207',
   gray: '#e2e8f0',
+  grey: '#e2e8f0',
 }
 const COLOR_NAME_LIST = Object.keys(COLOR_MAP)
 const FRAME_TEMPLATE_COLOR_SEQUENCE = ['gray', 'blue', 'green', 'pink', 'orange', 'purple']
 const STICKY_TEMPLATE_COLOR_SEQUENCE = ['yellow', 'blue', 'green', 'pink', 'orange', 'purple', 'red', 'gray']
-const COLOR_NAME_ALTERNATION = 'yellow|blue|green|pink|red|orange|purple|gray'
+const COLOR_NAME_ALTERNATION = COLOR_NAME_LIST.join('|')
 const COLOR_OR_HEX_PATTERN = `(?:${COLOR_NAME_ALTERNATION}|#(?:[0-9a-f]{3}|[0-9a-f]{6}))`
 const COLOR_NAME_PATTERN = `(?:${COLOR_NAME_ALTERNATION})`
 const CREATE_VERB_PATTERN = '(?:add(?:ed)?|create(?:d)?|make|generate|build|insert|put)'
@@ -203,6 +234,58 @@ const AI_PROVIDER_MAX_RETRIES = 0
 const AI_LOCK_WAIT_TIMEOUT_MS = 90_000
 const AI_LOCK_RETRY_INTERVAL_MS = 75
 const AI_LOCK_TTL_MS = 20_000
+const MAX_COMMAND_OBJECT_COUNT = 200
+const DELETE_VERB_TOKENS = new Set(['delete', 'remove', 'clear', 'erase', 'wipe', 'purge', 'trash'])
+const DELETE_SCOPE_TOKENS = new Set([
+  'all',
+  'every',
+  'everything',
+  'entire',
+  'whole',
+  'board',
+  'whiteboard',
+  'canvas',
+  'items',
+  'objects',
+  'notes',
+  'stickies',
+  'frames',
+  'shapes',
+  'connectors',
+])
+const OBJECT_TOKEN_TYPE_MAP = {
+  sticky: 'stickyNote',
+  stickies: 'stickyNote',
+  sticker: 'stickyNote',
+  stickers: 'stickyNote',
+  note: 'stickyNote',
+  notes: 'stickyNote',
+  frame: 'frame',
+  frames: 'frame',
+  shape: 'shape',
+  shapes: 'shape',
+  connector: 'connector',
+  connectors: 'connector',
+  object: 'any',
+  objects: 'any',
+  item: 'any',
+  items: 'any',
+}
+const SHAPE_TOKEN_TYPE_MAP = {
+  circle: 'circle',
+  circles: 'circle',
+  triangle: 'triangle',
+  triangles: 'triangle',
+  diamond: 'diamond',
+  diamonds: 'diamond',
+  rhombus: 'diamond',
+  rhombuses: 'diamond',
+  romb: 'diamond',
+  rectangle: 'rectangle',
+  rectangles: 'rectangle',
+  box: 'rectangle',
+  boxes: 'rectangle',
+}
 
 const normalizeShapeType = (rawShapeType, fallback = 'rectangle') => {
   const normalized = String(rawShapeType || '').toLowerCase().trim()
@@ -321,6 +404,7 @@ const normalizeCommandForPlan = (value) =>
     .replace(/\bchnage\b/gi, 'change')
     .replace(/\borganise\b/gi, 'organize')
     .replace(/\bcolour\b/gi, 'color')
+    .replace(/\bcollor\b/gi, 'color')
 const isOrganizeByColorCommand = (lowerCommand) =>
   (lowerCommand.includes('organize') && lowerCommand.includes('color')) ||
   (lowerCommand.includes('group') && lowerCommand.includes('color')) ||
@@ -353,7 +437,7 @@ const parseStickyCountToken = (token) => {
     return null
   }
 
-  return Math.min(10, Math.max(1, numericValue))
+  return Math.min(MAX_COMMAND_OBJECT_COUNT, Math.max(1, numericValue))
 }
 
 const startsWithCountToken = (value) => new RegExp(`^\\s*(?:${COUNT_TOKEN_ALTERNATION})\\b`, 'i').test(String(value || ''))
@@ -470,6 +554,15 @@ const normalizeSearchText = (value) =>
     .replace(/[^a-z0-9#\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
+
+const tokenizeCommandWords = (command) =>
+  normalizeSearchText(normalizeCommandForPlan(command))
+    .split(' ')
+    .filter(Boolean)
+
+const resolveObjectTypeFromToken = (token) => OBJECT_TOKEN_TYPE_MAP[String(token || '').toLowerCase().trim()] || null
+
+const resolveShapeTypeFromToken = (token) => SHAPE_TOKEN_TYPE_MAP[String(token || '').toLowerCase().trim()] || null
 
 const extractColorMutationIntent = (command) => {
   const normalized = normalizeCommandForPlan(command).toLowerCase()
@@ -616,21 +709,34 @@ const parseBulkColorMutationIntent = (command) => {
     return null
   }
 
+  const objectTypePattern = '(sticky(?:\\s*note)?s?|stickers?|notes?|shapes?|frames?|objects?|items?)'
   const hasMutationVerb = /\b(?:change|changing|changed|set|update|recolor|edit|turn|make)\b/i.test(normalized)
-  if (!hasMutationVerb || !/\ball\b/i.test(normalized)) {
+  if (!hasMutationVerb) {
     return null
   }
 
   const allColorThenTypePattern = new RegExp(
-    `\\ball\\s+(${COLOR_OR_HEX_PATTERN})\\s+(sticky(?:\\s*note)?s?|stickers?|notes?|shapes?|frames?|objects?|items?)\\b(?:\\s+(?:to|into|as)\\s+|\\s+color\\s+to\\s+|\\s+to\\s+color\\s+)(?:the\\s+)?(${COLOR_OR_HEX_PATTERN})\\b`,
+    `\\ball\\s+(${COLOR_OR_HEX_PATTERN})\\s+${objectTypePattern}\\b(?:\\s+(?:to|into|as)\\s+|\\s+color\\s+to\\s+|\\s+to\\s+color\\s+)(?:the\\s+)?(${COLOR_OR_HEX_PATTERN})\\b`,
     'i',
   )
   const allTypeFromToPattern = new RegExp(
-    `\\ball\\s+(sticky(?:\\s*note)?s?|stickers?|notes?|shapes?|frames?|objects?|items?)\\b\\s+from\\s+(${COLOR_OR_HEX_PATTERN})\\s+to\\s+(${COLOR_OR_HEX_PATTERN})\\b`,
+    `\\ball\\s+${objectTypePattern}\\b\\s+from\\s+(${COLOR_OR_HEX_PATTERN})\\s+to\\s+(${COLOR_OR_HEX_PATTERN})\\b`,
     'i',
   )
   const allTypeToPattern = new RegExp(
-    `\\ball\\s+(sticky(?:\\s*note)?s?|stickers?|notes?|shapes?|frames?|objects?|items?)\\b(?:\\s+(?:to|into|as)\\s+|\\s+color\\s+to\\s+|\\s+to\\s+color\\s+)(?:the\\s+)?(${COLOR_OR_HEX_PATTERN})\\b`,
+    `\\ball\\s+${objectTypePattern}\\b(?:\\s+(?:to|into|as)\\s+|\\s+color\\s+to\\s+|\\s+to\\s+color\\s+)(?:the\\s+)?(${COLOR_OR_HEX_PATTERN})\\b`,
+    'i',
+  )
+  const verbColorTypeToPattern = new RegExp(
+    `\\b(?:change|changing|changed|set|update|recolor|edit|turn|make)\\s+(?:all\\s+)?(${COLOR_OR_HEX_PATTERN})\\s+(?:color\\s+)?${objectTypePattern}\\b(?:\\s+(?:to|into|as)\\s+|\\s+color\\s+to\\s+|\\s+to\\s+color\\s+)(?:the\\s+)?(${COLOR_OR_HEX_PATTERN})\\b`,
+    'i',
+  )
+  const verbTypeFromToPattern = new RegExp(
+    `\\b(?:change|changing|changed|set|update|recolor|edit|turn|make)\\s+(?:all\\s+)?${objectTypePattern}\\b\\s+from\\s+(${COLOR_OR_HEX_PATTERN})\\s+to\\s+(${COLOR_OR_HEX_PATTERN})\\b`,
+    'i',
+  )
+  const verbTypeToPattern = new RegExp(
+    `\\b(?:change|changing|changed|set|update|recolor|edit|turn|make)\\s+(?:all\\s+)?${objectTypePattern}\\b(?:\\s+(?:to|into|as)\\s+|\\s+color\\s+to\\s+|\\s+to\\s+color\\s+)(?:the\\s+)?(${COLOR_OR_HEX_PATTERN})\\b`,
     'i',
   )
 
@@ -673,14 +779,167 @@ const parseBulkColorMutationIntent = (command) => {
     }
   }
 
+  const hasBroadScopeCue =
+    /\ball\b/i.test(normalized) ||
+    /\b(?:sticky(?:\s*note)?s|stickers|notes|shapes|frames|objects|items)\b/i.test(normalized)
+  if (!hasBroadScopeCue) {
+    return null
+  }
+
+  const verbColorTypeToMatch = normalized.match(verbColorTypeToPattern)
+  if (verbColorTypeToMatch) {
+    const objectType = normalizeColorMutationObjectType(verbColorTypeToMatch[2])
+    if (!objectType) {
+      return null
+    }
+    return {
+      objectType,
+      sourceColor: verbColorTypeToMatch[1],
+      targetColor: verbColorTypeToMatch[3],
+    }
+  }
+
+  const verbTypeFromToMatch = normalized.match(verbTypeFromToPattern)
+  if (verbTypeFromToMatch) {
+    const objectType = normalizeColorMutationObjectType(verbTypeFromToMatch[1])
+    if (!objectType) {
+      return null
+    }
+    return {
+      objectType,
+      sourceColor: verbTypeFromToMatch[2],
+      targetColor: verbTypeFromToMatch[3],
+    }
+  }
+
+  const verbTypeToMatch = normalized.match(verbTypeToPattern)
+  if (verbTypeToMatch) {
+    const objectType = normalizeColorMutationObjectType(verbTypeToMatch[1])
+    if (!objectType) {
+      return null
+    }
+    return {
+      objectType,
+      sourceColor: undefined,
+      targetColor: verbTypeToMatch[2],
+    }
+  }
+
   return null
 }
 
 const normalizeResolvedColor = (value) => String(toColor(value, String(value || '').trim())).toLowerCase().trim()
 
+const hexToRgb = (value) => {
+  const normalized = String(value || '')
+    .toLowerCase()
+    .replace(/[^0-9a-f]/g, '')
+  if (normalized.length === 3) {
+    const r = Number.parseInt(`${normalized[0]}${normalized[0]}`, 16)
+    const g = Number.parseInt(`${normalized[1]}${normalized[1]}`, 16)
+    const b = Number.parseInt(`${normalized[2]}${normalized[2]}`, 16)
+    return Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b) ? { r, g, b } : null
+  }
+  if (normalized.length !== 6) {
+    return null
+  }
+  const r = Number.parseInt(normalized.slice(0, 2), 16)
+  const g = Number.parseInt(normalized.slice(2, 4), 16)
+  const b = Number.parseInt(normalized.slice(4, 6), 16)
+  return Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b) ? { r, g, b } : null
+}
+
+const rgbToHsl = ({ r, g, b }) => {
+  const rn = r / 255
+  const gn = g / 255
+  const bn = b / 255
+  const max = Math.max(rn, gn, bn)
+  const min = Math.min(rn, gn, bn)
+  const delta = max - min
+  const l = (max + min) / 2
+  let h = 0
+  let s = 0
+
+  if (delta > 0) {
+    s = delta / (1 - Math.abs(2 * l - 1))
+    switch (max) {
+      case rn:
+        h = 60 * (((gn - bn) / delta) % 6)
+        break
+      case gn:
+        h = 60 * ((bn - rn) / delta + 2)
+        break
+      default:
+        h = 60 * ((rn - gn) / delta + 4)
+        break
+    }
+  }
+
+  if (h < 0) {
+    h += 360
+  }
+
+  return { h, s, l }
+}
+
+const normalizeColorFamilyName = (value) => {
+  const normalized = String(value || '').toLowerCase().trim()
+  if (normalized === 'grey') return 'gray'
+  if (COLOR_NAME_LIST.includes(normalized)) return normalized
+  return null
+}
+
+const inferColorFamily = (rawColor) => {
+  const named = normalizeColorFamilyName(rawColor)
+  if (named) {
+    return named
+  }
+
+  const normalized = normalizeResolvedColor(rawColor)
+  if (!normalized || !normalized.startsWith('#')) {
+    return null
+  }
+
+  const rgb = hexToRgb(normalized)
+  if (!rgb) {
+    return null
+  }
+
+  const { h, s, l } = rgbToHsl(rgb)
+  if (s < 0.12) {
+    return 'gray'
+  }
+  if (l < 0.38 && h >= 15 && h < 45) {
+    return 'brown'
+  }
+  if (h < 15 || h >= 345) {
+    return 'red'
+  }
+  if (h >= 15 && h < 45) {
+    return 'orange'
+  }
+  if (h >= 45 && h < 75) {
+    return 'yellow'
+  }
+  if (h >= 75 && h < 170) {
+    return 'green'
+  }
+  if (h >= 170 && h < 255) {
+    return 'blue'
+  }
+  if (h >= 255 && h < 300) {
+    return 'purple'
+  }
+  if (h >= 300 && h < 345) {
+    return 'pink'
+  }
+  return null
+}
+
 const resolveBulkColorMutationTargets = (state = [], intent) => {
   const sourceColor = normalizeResolvedColor(intent?.sourceColor)
   const hasSourceColor = sourceColor.length > 0
+  const sourceColorFamily = inferColorFamily(intent?.sourceColor)
 
   const allowedTypes =
     intent?.objectType && intent.objectType !== 'any'
@@ -695,7 +954,13 @@ const resolveBulkColorMutationTargets = (state = [], intent) => {
       return true
     }
     const candidateColor = normalizeResolvedColor(candidate.color || '')
-    return candidateColor === sourceColor
+    if (candidateColor === sourceColor) {
+      return true
+    }
+    if (!sourceColorFamily) {
+      return false
+    }
+    return inferColorFamily(candidateColor) === sourceColorFamily
   })
 }
 
@@ -713,27 +978,121 @@ const tryApplyBulkColorMutationFallback = async (ctx, command) => {
     return null
   }
 
-  const targets = resolveBulkColorMutationTargets(ctx.state, intent)
+  let targets = resolveBulkColorMutationTargets(ctx.state, intent)
+  let usedBroadTypeFallback = false
+  if (targets.length === 0) {
+    const requestedType =
+      intent?.objectType && intent.objectType !== 'any' ? intent.objectType : null
+    if (requestedType) {
+      const requestedTypeExists = ctx.state.some((candidate) => candidate?.type === requestedType)
+      if (!requestedTypeExists) {
+        const broadTargets = resolveBulkColorMutationTargets(ctx.state, {
+          ...intent,
+          objectType: 'any',
+        })
+        if (broadTargets.length > 0) {
+          targets = broadTargets
+          usedBroadTypeFallback = true
+        }
+      }
+    }
+  }
+
   if (targets.length === 0) {
     return null
   }
 
-  let changedCount = 0
-  for (const target of targets) {
-    const updated = await changeColor(ctx, {
-      objectId: target.id,
-      color: intent.targetColor,
-    })
-    if (updated) {
-      changedCount += 1
+  const targetIds = targets.map(t => t.id)
+  if (!bulkColorOperations?.changeColors) {
+    for (const objectId of targetIds) {
+      const object = ctx.state.find((item) => item?.id === objectId)
+      if (!object) {
+        continue
+      }
+      const color = toColor(intent.targetColor, object.color)
+      object.color = color
+      object.updatedAt = nowMs()
+      object.updatedBy = ctx.userId
+      object.version = Number.isFinite(Number(object.version)) ? Number(object.version) + 1 : 1
+      try {
+        await writeObject({ boardId: ctx.boardId, objectId, payload: {
+          color,
+          updatedAt: object.updatedAt,
+          updatedBy: object.updatedBy,
+          version: object.version,
+        }, merge: true })
+      } catch (writeError) {
+        console.warn('bulk color fallback persistence failed:', writeError?.message || writeError)
+      }
+    }
+    const changedCount = targetIds.filter((objectId) => ctx.state.some((item) => item?.id === objectId)).length
+    if (changedCount === 0) {
+      return null
+    }
+    const effectiveType = usedBroadTypeFallback ? 'any' : intent.objectType
+    const typeLabel = toBulkColorMutationLabel(effectiveType, changedCount)
+    const message = sanitizeAiAssistantResponse(
+      intent.sourceColor
+        ? `Changed ${changedCount} ${typeLabel} from ${intent.sourceColor} to ${intent.targetColor}.`
+        : `Changed ${changedCount} ${typeLabel} to ${intent.targetColor}.`,
+    )
+    ctx.executedTools.push({ tool: 'changeColors', count: changedCount, ids: targetIds })
+    return {
+      count: changedCount,
+      color: toColor(intent.targetColor, intent.targetColor),
+      message,
     }
   }
+
+  let colorMutation
+  try {
+    colorMutation = await bulkColorOperations.changeColors(
+      ctx,
+      { objectIds: targetIds, color: intent.targetColor },
+      {
+        toColor,
+        db,
+        getObjectsRef,
+        nowMs,
+      },
+    )
+  } catch (error) {
+    if (/\b(project|project id|unable to detect a Project Id|firestore|permission|insufficient permission)\b/i.test(String(error?.message || ''))) {
+      for (const objectId of targetIds) {
+        const object = ctx.state.find((item) => item?.id === objectId)
+        if (!object) {
+          continue
+        }
+        const color = toColor(intent.targetColor, object.color)
+        object.color = color
+        object.updatedAt = nowMs()
+        object.updatedBy = ctx.userId
+        object.version = Number.isFinite(Number(object.version)) ? Number(object.version) + 1 : 1
+        try {
+          await writeObject({ boardId: ctx.boardId, objectId, payload: {
+            color,
+            updatedAt: object.updatedAt,
+            updatedBy: object.updatedBy,
+            version: object.version,
+          }, merge: true })
+        } catch (writeError) {
+          console.warn('bulk color fallback persistence failed:', writeError?.message || writeError)
+        }
+      }
+      colorMutation = { count: targetIds.filter((objectId) => ctx.state.some((item) => item?.id === objectId)).length }
+    } else {
+      throw error
+    }
+  }
+
+  const changedCount = colorMutation?.count || 0
 
   if (changedCount === 0) {
     return null
   }
 
-  const typeLabel = toBulkColorMutationLabel(intent.objectType, changedCount)
+  const effectiveType = usedBroadTypeFallback ? 'any' : intent.objectType
+  const typeLabel = toBulkColorMutationLabel(effectiveType, changedCount)
   const message = sanitizeAiAssistantResponse(
     intent.sourceColor
       ? `Changed ${changedCount} ${typeLabel} from ${intent.sourceColor} to ${intent.targetColor}.`
@@ -742,6 +1101,199 @@ const tryApplyBulkColorMutationFallback = async (ctx, command) => {
   return {
     count: changedCount,
     color: toColor(intent.targetColor, intent.targetColor),
+    message,
+  }
+}
+
+const parseBulkDeleteIntent = (command) => {
+  const normalized = normalizeCommandForPlan(command).toLowerCase()
+  if (!normalized) {
+    return null
+  }
+
+  const tokens = tokenizeCommandWords(normalized)
+  if (tokens.length === 0) {
+    return null
+  }
+
+  const hasDeleteVerb = tokens.some((token) => DELETE_VERB_TOKENS.has(token))
+  if (!hasDeleteVerb) {
+    return null
+  }
+
+  const hasBroadScope = tokens.some((token) => DELETE_SCOPE_TOKENS.has(token))
+  if (!hasBroadScope) {
+    return null
+  }
+
+  const hasAllScope = tokens.some((token) => token === 'all' || token === 'every' || token === 'everything')
+  const requestedCountToken = hasAllScope ? null : tokens.find((token) => parseStickyCountToken(token) !== null)
+  const requestedCount = requestedCountToken ? parseStickyCountToken(requestedCountToken) : null
+  const shapeType = tokens.map((token) => resolveShapeTypeFromToken(token)).find(Boolean) || null
+  const color = tokens.find((token) => isKnownColor(token)) || null
+
+  const explicitTypes = new Set()
+  let hasBroadObjectAlias = false
+  for (const token of tokens) {
+    const type = resolveObjectTypeFromToken(token)
+    if (!type) {
+      continue
+    }
+    if (type === 'any') {
+      hasBroadObjectAlias = true
+      continue
+    }
+    explicitTypes.add(type)
+  }
+
+  const targetTypes = hasBroadObjectAlias || explicitTypes.size === 0 ? null : explicitTypes
+  return {
+    targetTypes,
+    color,
+    shapeType,
+    count: requestedCount,
+  }
+}
+
+const resolveBulkDeleteTargets = (state = [], intent) => {
+  if (!intent) {
+    return []
+  }
+
+  let candidates = state.filter(Boolean)
+  if (intent.targetTypes instanceof Set && intent.targetTypes.size > 0) {
+    candidates = candidates.filter((item) => intent.targetTypes.has(item.type))
+  }
+
+  if (intent.shapeType) {
+    candidates = candidates.filter(
+      (item) =>
+        item.type === 'shape' &&
+        normalizeShapeType(item.shapeType || item.type, 'rectangle') === intent.shapeType,
+    )
+  }
+
+  if (intent.color) {
+    const targetColor = normalizeResolvedColor(intent.color)
+    candidates = candidates.filter((item) => normalizeResolvedColor(item.color || '') === targetColor)
+  }
+
+  candidates = [...candidates].sort((left, right) => (right.updatedAt || 0) - (left.updatedAt || 0))
+  if (Number.isFinite(intent.count) && intent.count > 0) {
+    return candidates.slice(0, intent.count)
+  }
+  return candidates
+}
+
+const toBulkDeleteLabel = (intent, count) => {
+  const safeCount = Math.max(1, parseNumber(count, 1))
+  if (intent?.targetTypes instanceof Set && intent.targetTypes.size === 1) {
+    const [singleType] = [...intent.targetTypes]
+    if (singleType === 'stickyNote') return safeCount === 1 ? 'sticky note' : 'sticky notes'
+    if (singleType === 'shape') return safeCount === 1 ? 'shape' : 'shapes'
+    if (singleType === 'frame') return safeCount === 1 ? 'frame' : 'frames'
+    if (singleType === 'connector') return safeCount === 1 ? 'connector' : 'connectors'
+  }
+  return safeCount === 1 ? 'object' : 'objects'
+}
+
+const tryApplyBulkDeleteFallback = async (ctx, command) => {
+  const intent = parseBulkDeleteIntent(command)
+  if (!intent) {
+    return null
+  }
+
+  const targets = resolveBulkDeleteTargets(ctx.state, intent)
+  if (targets.length === 0) {
+    return null
+  }
+
+  const targetIds = targets.map(t => t.id)
+  if (!bulkOperations?.applyBatchDelete) {
+    let deletedCount = 0
+    for (const objectId of targetIds) {
+      const index = ctx.state.findIndex((item) => item?.id === objectId)
+      if (index === -1) {
+        continue
+      }
+      const payload = {
+        deleted: true,
+        deletedAt: nowMs(),
+        deletedBy: ctx.userId,
+        updatedAt: nowMs(),
+        updatedBy: ctx.userId,
+      }
+      try {
+        await writeObject({ boardId: ctx.boardId, objectId, payload, merge: true })
+      } catch (writeError) {
+        console.warn('bulk delete fallback persistence failed:', writeError?.message || writeError)
+      }
+      ctx.state.splice(index, 1)
+      deletedCount += 1
+    }
+
+    if (deletedCount === 0) {
+      return null
+    }
+
+    const label = toBulkDeleteLabel(intent, deletedCount)
+    const message = sanitizeAiAssistantResponse(`Deleted ${deletedCount} ${label}.`)
+    return {
+      count: deletedCount,
+      message,
+    }
+  }
+
+  let deletionResult
+  try {
+    deletionResult = await bulkOperations.applyBatchDelete(
+      ctx,
+      targetIds,
+      {
+        db,
+        getObjectsRef,
+        nowMs,
+      },
+    )
+  } catch (error) {
+    if (/\b(project|project id|unable to detect a Project Id|firestore|permission|insufficient permission)\b/i.test(String(error?.message || ''))) {
+      let fallbackDeleted = 0
+      for (const objectId of targetIds) {
+        const index = ctx.state.findIndex((item) => item?.id === objectId)
+        if (index === -1) {
+          continue
+        }
+        const payload = {
+          deleted: true,
+          deletedAt: nowMs(),
+          deletedBy: ctx.userId,
+          updatedAt: nowMs(),
+          updatedBy: ctx.userId,
+        }
+        try {
+          await writeObject({ boardId: ctx.boardId, objectId, payload, merge: true })
+        } catch (writeError) {
+          console.warn('bulk delete fallback persistence failed:', writeError?.message || writeError)
+        }
+        ctx.state.splice(index, 1)
+        fallbackDeleted += 1
+      }
+      deletionResult = { count: fallbackDeleted }
+    } else {
+      throw error
+    }
+  }
+
+  const deletedCount = deletionResult?.count || 0
+
+  if (deletedCount === 0) {
+    return null
+  }
+
+  const label = toBulkDeleteLabel(intent, deletedCount)
+  const message = sanitizeAiAssistantResponse(`Deleted ${deletedCount} ${label}.`)
+  return {
+    count: deletedCount,
     message,
   }
 }
@@ -1435,7 +1987,7 @@ const parseExplicitStickyTexts = (command) => {
 }
 
 const getStickyBatchLayoutPositions = ({ count, anchor, shapeType = 'rectangle' }) => {
-  const safeCount = Math.max(1, Math.min(10, parseNumber(count, 1)))
+  const safeCount = Math.max(1, Math.min(MAX_COMMAND_OBJECT_COUNT, parseNumber(count, 1)))
   const normalizedShapeType = normalizeShapeType(shapeType, 'rectangle')
   const size = STICKY_SHAPE_SIZES[normalizedShapeType] || STICKY_SHAPE_SIZES.rectangle
   const safeAnchor = toFinitePoint(anchor) || { x: 220, y: 180 }
@@ -1826,6 +2378,237 @@ const parseSubjectColorFromCommand = (normalizedCommand, subjectPattern) => {
   return undefined
 }
 
+const extractCountedObjectMentions = (normalizedCommand, objectPattern) => {
+  const mentions = []
+  const pattern = new RegExp(`\\b(${COUNT_TOKEN_ALTERNATION})\\s+${objectPattern}\\b`, 'gi')
+  let match = pattern.exec(normalizedCommand)
+  while (match) {
+    const count = parseStickyCountToken(match[1]) || 0
+    if (count > 0) {
+      mentions.push({
+        count,
+        index: match.index,
+        endIndex: pattern.lastIndex,
+        raw: match[0],
+      })
+    }
+    match = pattern.exec(normalizedCommand)
+  }
+  return mentions
+}
+
+const parsePerParentChildCount = ({ normalizedCommand, parentPattern, childPattern }) => {
+  const patterns = [
+    new RegExp(
+      `\\b(${COUNT_TOKEN_ALTERNATION})\\s+${childPattern}\\b(?:\\s+\\w+){0,6}\\s+(?:in|inside|within|on)\\s+each\\s+${parentPattern}\\b`,
+      'i',
+    ),
+    new RegExp(
+      `\\beach\\s+${parentPattern}\\b(?:\\s+\\w+){0,8}\\s+(?:with|has|having|contains?|including)\\s+(${COUNT_TOKEN_ALTERNATION})\\s+${childPattern}\\b`,
+      'i',
+    ),
+    new RegExp(
+      `\\b(${COUNT_TOKEN_ALTERNATION})\\s+${childPattern}\\b(?:\\s+\\w+){0,4}\\s+(?:per|for)\\s+${parentPattern}\\b`,
+      'i',
+    ),
+    new RegExp(
+      `\\b(${COUNT_TOKEN_ALTERNATION})\\s+${childPattern}\\b\\s*(?:,|\\s)*(?:in\\s+)?each\\b`,
+      'i',
+    ),
+  ]
+
+  for (const pattern of patterns) {
+    const match = normalizedCommand.match(pattern)
+    if (!match) {
+      continue
+    }
+    const count = parseStickyCountToken(match[1]) || 0
+    if (count > 0) {
+      return count
+    }
+  }
+
+  const parentMentions = extractCountedObjectMentions(normalizedCommand, parentPattern)
+  const childMentions = extractCountedObjectMentions(normalizedCommand, childPattern)
+  if (parentMentions.length !== 1 || childMentions.length === 0) {
+    return null
+  }
+
+  const parent = parentMentions[0]
+  const child = childMentions.find((candidate) => candidate.index >= parent.endIndex)
+  if (!child) {
+    return null
+  }
+
+  const relationText = normalizedCommand.slice(parent.endIndex, child.index)
+  const hasContainmentCue = /\b(?:with|containing|contains?|including|has|having)\b/i.test(relationText)
+  return hasContainmentCue ? child.count : null
+}
+
+const parseRequestedCreateObjectType = (rawHint) => {
+  const normalizedHint = normalizeSearchText(rawHint)
+  if (!normalizedHint) {
+    return null
+  }
+  if (/\bframes?\b/.test(normalizedHint)) {
+    return 'frame'
+  }
+  if (/\b(?:shapes?|triangles?|circles?|diamonds?|rhombuses?|romb|rectangles?)\b/.test(normalizedHint)) {
+    return 'shape'
+  }
+  if (/\b(?:sticky(?:\s*notes?)?|stickers?|notes?|boxes?|items?|objects?)\b/.test(normalizedHint)) {
+    return 'stickyNote'
+  }
+  return null
+}
+
+const parseRequestedCreateCountSpec = (command) => {
+  const normalized = normalizeStickyVocabulary(normalizeCommandForPlan(command))
+  if (!normalized) {
+    return null
+  }
+
+  const hasCreateIntent = new RegExp(CREATE_VERB_PATTERN, 'i').test(normalized)
+  if (!hasCreateIntent) {
+    return null
+  }
+
+  const match = normalized.match(
+    new RegExp(
+      `\\b(${COUNT_TOKEN_ALTERNATION})\\s+((?:[a-z]+\\s+){0,3})?(sticky(?:\\s*note)?s?|stickers?|notes?|boxes?|items?|objects?|frames?|shapes?|triangles?|circles?|diamonds?|rectangles?)\\b`,
+      'i',
+    ),
+  )
+  if (!match) {
+    return null
+  }
+
+  const count = parseStickyCountToken(match[1]) || 0
+  if (count < 1) {
+    return null
+  }
+
+  const objectHint = `${match[2] || ''} ${match[3] || ''}`.trim()
+  const targetType = parseRequestedCreateObjectType(objectHint)
+  if (!targetType) {
+    return null
+  }
+
+  const colorMatch = normalized.match(new RegExp(`\\b(${COLOR_OR_HEX_PATTERN})\\b`, 'i'))
+  const shapeType = targetType === 'shape' ? inferStickyShapeType(normalized) : 'rectangle'
+  return {
+    targetType,
+    count,
+    shapeType,
+    color: colorMatch?.[1]?.toLowerCase(),
+  }
+}
+
+const countCreatedObjectsSinceBaseline = (ctx, baselineObjectIds, targetType) => {
+  const createdObjects = getObjectsCreatedSinceBaseline(ctx, baselineObjectIds)
+  if (targetType === 'frame') {
+    return createdObjects.filter((item) => item?.type === 'frame').length
+  }
+  if (targetType === 'shape') {
+    return createdObjects.filter((item) => item?.type === 'shape').length
+  }
+  return createdObjects.filter((item) => item?.type === 'stickyNote').length
+}
+
+const toCreatedObjectLabel = (targetType, count) => {
+  const safeCount = Math.max(1, parseNumber(count, 1))
+  if (targetType === 'frame') {
+    return safeCount === 1 ? 'frame' : 'frames'
+  }
+  if (targetType === 'shape') {
+    return safeCount === 1 ? 'shape' : 'shapes'
+  }
+  return safeCount === 1 ? 'sticky note' : 'sticky notes'
+}
+
+const tryApplyRequestedCreateCountFallback = async (ctx, spec, baselineObjectIds = null) => {
+  if (!spec || !spec.targetType || !Number.isFinite(spec.count)) {
+    return null
+  }
+
+  const alreadyCreated = countCreatedObjectsSinceBaseline(ctx, baselineObjectIds, spec.targetType)
+  const shortfall = Math.max(0, spec.count - alreadyCreated)
+  if (shortfall === 0) {
+    return null
+  }
+
+  for (let index = 0; index < shortfall; index += 1) {
+    const labelIndex = alreadyCreated + index + 1
+    if (spec.targetType === 'frame') {
+      await executeLlmToolCall(
+        ctx,
+        'createFrame',
+        {
+          title: `Frame ${labelIndex}`,
+          ...(spec.color ? { color: spec.color } : {}),
+        },
+        { userPlacementIntent: Boolean(ctx.userPlacementIntent) },
+      )
+      continue
+    }
+
+    if (spec.targetType === 'shape') {
+      await executeLlmToolCall(
+        ctx,
+        'createShape',
+        {
+          type: spec.shapeType || 'rectangle',
+          text: `Shape ${labelIndex}`,
+          ...(spec.color ? { color: spec.color } : {}),
+        },
+        { userPlacementIntent: Boolean(ctx.userPlacementIntent) },
+      )
+      continue
+    }
+
+    await executeLlmToolCall(
+      ctx,
+      'createStickyNote',
+      {
+        text: `Note ${labelIndex}`,
+        shapeType: 'rectangle',
+        ...(spec.color ? { color: spec.color } : {}),
+      },
+      { userPlacementIntent: Boolean(ctx.userPlacementIntent) },
+    )
+  }
+
+  const label = toCreatedObjectLabel(spec.targetType, spec.count)
+  const message = sanitizeAiAssistantResponse(`Created ${spec.count} ${label}.`)
+  return {
+    count: spec.count,
+    message,
+  }
+}
+
+const shouldApplyRequestedCreateCountFallback = ({ spec, command, textResponse = '' }) => {
+  if (!spec || !Number.isFinite(spec.count) || spec.count < 1) {
+    return false
+  }
+
+  const normalized = normalizeCommandForPlan(command).toLowerCase()
+  const hasMixedCreateSegments =
+    /\band\b/i.test(normalized) &&
+    /\band\b.*\b(?:sticky(?:\s*note)?|sticker|note|shape|frame|triangle|circle|diamond|rectangle|box|item|object)s?\b/i.test(
+      normalized,
+    )
+  if (hasMixedCreateSegments) {
+    return false
+  }
+
+  const isHighVolume = spec.count >= 20
+  if (!isHighVolume && String(textResponse || '').trim().length > 0) {
+    return false
+  }
+
+  return true
+}
+
 const parseFramesWithStickiesCommand = (command) => {
   const normalized = normalizeStickyVocabulary(normalizeCommandForPlan(command))
   if (!normalized) {
@@ -1847,34 +2630,17 @@ const parseFramesWithStickiesCommand = (command) => {
     return null
   }
 
-  const stickyCountPatterns = [
-    new RegExp(
-      `\\b(?:with\\s+)?(${COUNT_TOKEN_ALTERNATION})\\s+(?:different\\s+|distinct\\s+|colorful\\s+)?(?:sticky(?:\\s*note)?|sticker|note)s?\\s+(?:in|inside)\\s+each\\b`,
-      'i',
-    ),
-    new RegExp(
-      `\\b(${COUNT_TOKEN_ALTERNATION})\\s+(?:different\\s+|distinct\\s+|colorful\\s+)?(?:sticky(?:\\s*note)?|sticker|note)s?\\s+(?:per|for)\\s+frame\\b`,
-      'i',
-    ),
-    new RegExp(
-      `\\beach\\s+frames?\\s+(?:with|has|having)\\s+(${COUNT_TOKEN_ALTERNATION})\\s+(?:different\\s+|distinct\\s+|colorful\\s+)?(?:sticky(?:\\s*note)?|sticker|note)s?\\b`,
-      'i',
-    ),
-  ]
-
-  let stickyCountMatch = null
-  for (const pattern of stickyCountPatterns) {
-    stickyCountMatch = normalized.match(pattern)
-    if (stickyCountMatch) {
-      break
-    }
-  }
-  if (!stickyCountMatch) {
+  const stickiesPerFrame =
+    parsePerParentChildCount({
+      normalizedCommand: normalized,
+      parentPattern: 'frames?',
+      childPattern: '(?:different\\s+|distinct\\s+|colorful\\s+)?(?:sticky(?:\\s*note)?|sticker|note)s?',
+    }) || 0
+  if (stickiesPerFrame < 1) {
     return null
   }
 
   const frameCount = parseStickyCountToken(frameCountMatch[1]) || 0
-  const stickiesPerFrame = parseStickyCountToken(stickyCountMatch[1]) || 0
   if (frameCount < 1 || stickiesPerFrame < 1) {
     return null
   }
@@ -2550,7 +3316,7 @@ let writeObjectImpl = persistObjectToFirestore
 
 const writeObject = async (args) => writeObjectImpl(args)
 
-const commitObjectBatchWrites = async ({ boardId, objects }) => {
+const persistObjectBatchToFirestore = async ({ boardId, objects }) => {
   if (!Array.isArray(objects) || objects.length === 0) {
     return
   }
@@ -2564,6 +3330,10 @@ const commitObjectBatchWrites = async ({ boardId, objects }) => {
     await batch.commit()
   }
 }
+
+let commitObjectBatchWritesImpl = persistObjectBatchToFirestore
+
+const commitObjectBatchWrites = async (args) => commitObjectBatchWritesImpl(args)
 
 const buildStickyNotePayload = (ctx, args = {}) => {
   const id = crypto.randomUUID()
@@ -3348,6 +4118,141 @@ const executeLlmToolCall = async (ctx, toolName, rawArgs, options = {}) => {
   const userPlacementIntent = Boolean(options.userPlacementIntent || ctx.userPlacementIntent)
   const isCreateTool = toolName === 'createStickyNote' || toolName === 'createShape' || toolName === 'createFrame'
   const createSequenceIndex = isCreateTool ? Math.max(0, parseNumber(ctx.aiCreatePlacementIndex, 0)) : 0
+  const bulkOperationDeps = {
+    toColor,
+    sanitizeText,
+    nowMs,
+    getNextZIndex,
+    resolvePlacementAnchor,
+    resolveViewportCenterFromPlacement,
+    commitObjectBatchWrites,
+    db,
+    getObjectsRef,
+  }
+  const colorOperationDeps = {
+    toColor,
+    nowMs,
+    db,
+    getObjectsRef,
+  }
+  const shapeCompositionDeps = {
+    toColor,
+    sanitizeText,
+    nowMs,
+    resolvePlacementAnchor,
+    resolveViewportCenterFromPlacement,
+    commitObjectBatchWrites,
+    getObjectsRef,
+    getNextZIndex,
+    db,
+  }
+
+  const runCreateObjects = async () => {
+    if (!bulkOperations?.createObjects) {
+      throw new Error('createObjects tool is not available.')
+    }
+    return bulkOperations.createObjects(ctx, args, bulkOperationDeps)
+  }
+  const runChangeColors = async () => {
+    if (!bulkColorOperations?.changeColors) {
+      throw new Error('changeColors tool is not available.')
+    }
+    try {
+      return await bulkColorOperations.changeColors(ctx, args, colorOperationDeps)
+    } catch (error) {
+      if (/\b(project|project id|unable to detect a Project Id|firestore|permission|insufficient permission)\b/i.test(String(error?.message || ''))) {
+        const objectId = String(args?.objectId || '').trim()
+        if (!objectId) {
+          return { count: 0 }
+        }
+
+        const object = ctx.state.find((candidate) => candidate?.id === objectId)
+        if (!object) {
+          return { count: 0 }
+        }
+
+        const color = toColor(args?.color, object.color || '#e2e8f0')
+        const patch = {
+          color,
+          updatedAt: nowMs(),
+          updatedBy: ctx.userId,
+          version: Number.isFinite(Number(object.version)) ? Number(object.version) + 1 : 1,
+        }
+        Object.assign(object, patch)
+        ctx.executedTools.push({ tool: 'changeColor', id: objectId })
+        try {
+          await writeObject({ boardId: ctx.boardId, objectId, payload: patch, merge: true })
+        } catch (writeError) {
+          console.warn('changeColor fallback persistence failed:', writeError?.message || writeError)
+        }
+        return { count: 1, color }
+      }
+      throw error
+    }
+  }
+  const runDeleteObjects = async () => {
+    if (!bulkOperations?.applyBatchDelete) {
+      throw new Error('deleteObjects tool is not available.')
+    }
+    try {
+      return await bulkOperations.applyBatchDelete(ctx, args?.objectIds, {
+        db,
+        getObjectsRef,
+        nowMs,
+      })
+    } catch (error) {
+      if (/\b(project|project id|unable to detect a Project Id|firestore|permission|insufficient permission)\b/i.test(String(error?.message || ''))) {
+        const now = nowMs()
+        const targetIds = [...new Set((args?.objectIds || []).map((id) => String(id || '').trim()).filter(Boolean))]
+        let deletedCount = 0
+
+        for (const objectId of targetIds) {
+          const index = ctx.state.findIndex((candidate) => candidate?.id === objectId)
+          if (index === -1) {
+            continue
+          }
+
+          const object = ctx.state[index]
+          const payload = {
+            deleted: true,
+            deletedAt: now,
+            deletedBy: ctx.userId,
+            updatedAt: now,
+            updatedBy: ctx.userId,
+          }
+          try {
+            await writeObject({ boardId: ctx.boardId, objectId, payload, merge: true })
+          } catch (writeError) {
+            console.warn('deleteObjects fallback persistence failed:', writeError?.message || writeError)
+          }
+          ctx.state.splice(index, 1)
+          deletedCount += 1
+        }
+
+        return { count: deletedCount }
+      }
+      throw error
+    }
+  }
+  const runGroupObjects = async () => {
+    if (!shapeComposition?.groupObjects) {
+      throw new Error('groupObjects tool is not available.')
+    }
+    return shapeComposition.groupObjects(ctx, args, shapeCompositionDeps)
+  }
+  const runUngroupObjects = async () => {
+    if (!shapeComposition?.ungroupObjects) {
+      throw new Error('ungroupObjects tool is not available.')
+    }
+    return shapeComposition.ungroupObjects(ctx, args, shapeCompositionDeps)
+  }
+  const runCreateShapeTemplate = async () => {
+    if (!shapeComposition?.createShapeTemplate) {
+      throw new Error('createShapeTemplate tool is not available.')
+    }
+    return shapeComposition.createShapeTemplate(ctx, args, shapeCompositionDeps)
+  }
+
   if (isCreateTool) {
     ctx.aiCreatePlacementIndex = createSequenceIndex + 1
   }
@@ -3424,6 +4329,9 @@ const executeLlmToolCall = async (ctx, toolName, rawArgs, options = {}) => {
         toAnchor: args.toAnchor,
       })
       return
+    case 'createObjects':
+      await runCreateObjects()
+      return
     case 'moveObject':
       await moveObject(ctx, {
         objectId: args.objectId,
@@ -3449,6 +4357,21 @@ const executeLlmToolCall = async (ctx, toolName, rawArgs, options = {}) => {
         objectId: args.objectId,
         color: args.color,
       })
+      return
+    case 'changeColors':
+      await runChangeColors()
+      return
+    case 'deleteObjects':
+      await runDeleteObjects()
+      return
+    case 'groupObjects':
+      await runGroupObjects()
+      return
+    case 'ungroupObjects':
+      await runUngroupObjects()
+      return
+    case 'createShapeTemplate':
+      await runCreateShapeTemplate()
       return
     case 'getBoardState':
       ctx.state = await getBoardState(ctx.boardId)
@@ -3774,7 +4697,13 @@ const createWorkflowFlowchart = async (ctx, spec = {}) => {
 const executeParsedToolCalls = async (ctx, toolCalls = []) => {
   for (const toolCall of toolCalls) {
     if (toolCall.parseError) {
-      throw new Error(`Failed to parse tool call arguments for ${toolCall.name}`)
+      ctx.executedTools.push({
+        tool: toolCall.name || 'unknown',
+        llmGenerated: true,
+        parseError: true,
+        skipped: true,
+      })
+      continue
     }
 
     console.log('LLM tool call:', toolCall.name, toolCall.arguments)
@@ -3798,6 +4727,9 @@ const countPlannedStickyOperations = (toolCalls = []) => {
 
   let planned = 0
   for (const toolCall of toolCalls) {
+    if (toolCall?.parseError) {
+      continue
+    }
     const toolName = typeof toolCall?.name === 'string' ? toolCall.name : ''
     if (toolName === 'createStickyNote') {
       planned += 1
@@ -3888,6 +4820,7 @@ const executeViaLLM = async (ctx, command) => {
   const baselineMutationToken = buildBoardMutationToken(ctx.state)
   const boardMutationIntent = isLikelyBoardMutationCommand(command)
   const conversationalIntent = isLikelyConversationalCommand(command)
+  const requestedCreateCountSpec = parseRequestedCreateCountSpec(command)
 
   const requestLlmPass = async (commandText) => {
     const remainingBudgetMs = getRemainingAiLatencyBudgetMs(ctx)
@@ -3949,6 +4882,8 @@ const executeViaLLM = async (ctx, command) => {
 
   let expectedStickyCount = countPlannedStickyOperations(llmPass.toolCalls)
   let structuralFallbackResult = null
+  let requestedCountFallbackResult = null
+  let bulkColorFallbackResult = null
 
   if (llmPass.toolCalls.length === 0 && boardMutationIntent) {
     const singleStickyFallbackResult = await executeSingleStickyTextOnlyFallback(ctx, command, llmPass.textResponse)
@@ -3966,11 +4901,64 @@ const executeViaLLM = async (ctx, command) => {
 
   if (llmPass.toolCalls.length === 0) {
     if (boardMutationIntent) {
+      // Try bulk create fallback first (e.g., "create 100 stickies")
+      if (bulkCreateFallback) {
+        const bulkCreateHelpers = {
+          resolvePlacementAnchor,
+          resolveViewportCenterFromPlacement,
+          getNextZIndex,
+          commitObjectBatchWrites,
+          toColor,
+          nowMs,
+          getObjectsRef,
+          db,
+          normalizeCommandForPlan,
+          tokenizeCommandWords,
+          parseStickyCountToken,
+          isKnownColor,
+        }
+        const bulkCreateResult = await bulkCreateFallback.tryApplyBulkCreateFallback(ctx, bulkCreateHelpers, command)
+        if (bulkCreateResult) {
+          return {
+            message: bulkCreateResult.message,
+            aiResponse: bulkCreateResult.message,
+          }
+        }
+      }
+
       structuralFallbackResult = await tryApplyFramesWithStickiesFallback(ctx, command, baselineObjectIds)
       if (structuralFallbackResult) {
         return {
           message: structuralFallbackResult.message,
           aiResponse: structuralFallbackResult.message,
+        }
+      }
+
+      if (
+        shouldApplyRequestedCreateCountFallback({
+          spec: requestedCreateCountSpec,
+          command,
+          textResponse: llmPass.textResponse,
+        })
+      ) {
+        requestedCountFallbackResult = await tryApplyRequestedCreateCountFallback(
+          ctx,
+          requestedCreateCountSpec,
+          baselineObjectIds,
+        )
+        if (requestedCountFallbackResult) {
+          return {
+            message: requestedCountFallbackResult.message,
+            aiResponse: requestedCountFallbackResult.message,
+          }
+        }
+      }
+
+      const deleteFallback = await tryApplyBulkDeleteFallback(ctx, command)
+      if (deleteFallback) {
+        return {
+          message: deleteFallback.message,
+          aiResponse: deleteFallback.message,
         }
       }
 
@@ -4045,7 +5033,39 @@ const executeViaLLM = async (ctx, command) => {
     }
   }
 
+  if (
+    shouldApplyRequestedCreateCountFallback({
+      spec: requestedCreateCountSpec,
+      command,
+      textResponse: llmPass.textResponse,
+    })
+  ) {
+    requestedCountFallbackResult = await tryApplyRequestedCreateCountFallback(
+      ctx,
+      requestedCreateCountSpec,
+      baselineObjectIds,
+    )
+    if (requestedCountFallbackResult) {
+      boardMutationApplied = buildBoardMutationToken(ctx.state) !== baselineMutationToken || boardMutationApplied
+    }
+  }
+
+  if (boardMutationIntent) {
+    bulkColorFallbackResult = await tryApplyBulkColorMutationFallback(ctx, command)
+    if (bulkColorFallbackResult) {
+      boardMutationApplied = buildBoardMutationToken(ctx.state) !== baselineMutationToken || boardMutationApplied
+    }
+  }
+
   if (boardMutationIntent && !boardMutationApplied) {
+    const deleteFallback = await tryApplyBulkDeleteFallback(ctx, command)
+    if (deleteFallback) {
+      return {
+        message: deleteFallback.message,
+        aiResponse: deleteFallback.message,
+      }
+    }
+
     const colorMutationFallback = await tryApplyColorMutationFallback(ctx, command)
     if (colorMutationFallback) {
       return {
@@ -4075,6 +5095,18 @@ const executeViaLLM = async (ctx, command) => {
     return {
       message: structuralFallbackResult.message,
       aiResponse: structuralFallbackResult.message,
+    }
+  }
+  if (!llmPass.textResponse && requestedCountFallbackResult?.message) {
+    return {
+      message: requestedCountFallbackResult.message,
+      aiResponse: requestedCountFallbackResult.message,
+    }
+  }
+  if (!llmPass.textResponse && bulkColorFallbackResult?.message) {
+    return {
+      message: bulkColorFallbackResult.message,
+      aiResponse: bulkColorFallbackResult.message,
     }
   }
   return llmPass.textResponse
@@ -4663,9 +5695,14 @@ const __setObjectWriterForTests = (writer) => {
   writeObjectImpl = typeof writer === 'function' ? writer : persistObjectToFirestore
 }
 
+const __setCommitBatchWritesForTests = (impl) => {
+  commitObjectBatchWritesImpl = typeof impl === 'function' ? impl : persistObjectBatchToFirestore
+}
+
 exports.__test = {
   __setGlmClientForTests,
   __setObjectWriterForTests,
+  __setCommitBatchWritesForTests,
   runCommandPlan,
   resolveCommandStatus,
   resolvePlacementAnchor,
@@ -4683,6 +5720,7 @@ exports.__test = {
   parseWorkflowFlowchartCommand,
   parseStickyCommand,
   parseCompoundStickyCreateOperations,
+  parseBulkDeleteIntent,
   parseReasonListCommand,
   buildReasonStickyTexts,
   countPlannedStickyOperations,
