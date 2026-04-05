@@ -43,6 +43,21 @@ Optional overrides:
 Notes:
 - Do not commit API keys into git or share them in plaintext.
 - If the primary provider fails (timeout/5xx/429), the function automatically tries the next configured provider.
+- Non-Firebase hosts can pass Firebase Admin credentials with either `GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json`
+  or inline JSON via `FIREBASE_SERVICE_ACCOUNT_JSON`.
+
+## Standalone server
+
+For Coolify or any generic container host:
+
+```bash
+npm start
+```
+
+Endpoints:
+- `GET /api/health`
+- `POST /api/ai/command`
+- `POST /api/boards/share`
 
 ## Deploy with Firebase
 From `mvp-1-collab-board/` root:

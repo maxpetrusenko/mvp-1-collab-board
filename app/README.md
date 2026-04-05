@@ -53,6 +53,11 @@ npm run dev
 npm run build
 ```
 
+## Container deploy
+
+`app/Dockerfile` builds the Vite bundle and serves it with nginx. Set the Firebase
+`VITE_FIREBASE_*` values and `VITE_AI_API_BASE_URL_PROD` as build-time variables.
+
 ## Deploy (Firebase Hosting)
 From `mvp-1-collab-board/`:
 1. Set `dev` and `prod` aliases in `.firebaserc` (copy from `.firebaserc.example`).

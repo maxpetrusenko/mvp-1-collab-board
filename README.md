@@ -11,6 +11,7 @@ Loom demo: https://www.loom.com/share/b2016cdf9d4a4b4e96fec12253fec0d9
 - Multi-user collaborative board with cursor/object sync.
 - Frontend app built with React + Vite + TypeScript.
 - Firebase backend for Hosting, Auth, Firestore, Realtime Database, and Cloud Functions.
+- Portable container targets for the frontend and HTTP API so the app can run on Coolify while keeping Firebase Auth/data.
 - E2E testing flow with Playwright.
 
 ## Repository Structure

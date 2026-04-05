@@ -7,10 +7,12 @@
     "node": "22"
   },
   "scripts": {
+    "start": "node server.js",
     "deploy": "bash ../scripts/deploy-dev.sh --only functions",
     "test": "node --test"
   },
   "dependencies": {
+    "express": "^5.2.1",
     "firebase-admin": "^13.5.0",
     "firebase-functions": "^6.6.0",
     "jsonwebtoken": "^9.0.3"

@@ -1,9 +1,27 @@
 /* eslint-disable no-console */
+const fs = require('fs')
 const admin = require('firebase-admin')
 const { onRequest } = require('firebase-functions/v2/https')
 
+const resolveFirebaseCredential = () => {
+  const serviceAccountJson = String(process.env.FIREBASE_SERVICE_ACCOUNT_JSON || '').trim()
+  if (serviceAccountJson) {
+    const payload = JSON.parse(serviceAccountJson)
+    return admin.credential.cert(payload)
+  }
+
+  const serviceAccountPath = String(process.env.GOOGLE_APPLICATION_CREDENTIALS || '').trim()
+  if (serviceAccountPath) {
+    const payload = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'))
+    return admin.credential.cert(payload)
+  }
+
+  return null
+}
+
 if (!admin.apps.length) {
-  admin.initializeApp()
+  const credential = resolveFirebaseCredential()
+  admin.initializeApp(credential ? { credential } : undefined)
 }
 
 const db = admin.firestore()
@@ -4231,7 +4249,7 @@ const startBoardLockHeartbeat = ({
   }
 }
 
-exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) => {
+const apiHandler = async (req, res) => {
   Object.entries(CORS_HEADERS).forEach(([key, value]) => res.setHeader(key, value))
 
   if (req.method === 'OPTIONS') {
@@ -4653,7 +4671,10 @@ exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) =>
       : errorMessage
     res.status(responseStatus).json({ error: responseErrorMessage })
   }
-})
+}
+
+exports.api = onRequest({ timeoutSeconds: 120, cors: true }, apiHandler)
+exports.apiHandler = apiHandler
 
 const __setGlmClientForTests = (client) => {
   glmClient = client

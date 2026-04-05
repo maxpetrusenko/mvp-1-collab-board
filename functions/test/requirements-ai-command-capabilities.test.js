@@ -1180,7 +1180,7 @@ test('AI-CMDS-029: max token budget scales by command complexity', () => {
 })
 
 test('AI-CMDS-022: warning-level command results persist warning status for command history parity', () => {
-  const apiBlock = extractTopLevelBlock(functionsSource, 'exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) => {')
+  const apiBlock = extractTopLevelBlock(functionsSource, 'const apiHandler = async (req, res) => {')
   assert.match(apiBlock, /const normalizedExistingStatus = resolveCommandStatus\(existingData\.status, existingData\.result\)/)
   assert.match(apiBlock, /status: normalizedExistingStatus/)
   assert.match(apiBlock, /const resultLevel = planResult\?\.level === 'warning' \? 'warning' : undefined/)
@@ -1196,7 +1196,7 @@ test('AI-CMDS-024: status normalization upgrades success records with warning-le
 })
 
 test('AI-CMDS-025: queue-timeout errors return explicit board-busy responses with 429 status', () => {
-  const apiBlock = extractTopLevelBlock(functionsSource, 'exports.api = onRequest({ timeoutSeconds: 120, cors: true }, async (req, res) => {')
+  const apiBlock = extractTopLevelBlock(functionsSource, 'const apiHandler = async (req, res) => {')
   assert.match(apiBlock, /const queueTimeoutError = \/another ai command is still running\/i\.test\(errorMessage\)/)
   assert.match(apiBlock, /const responseStatus = queueTimeoutError \? 429 : 500/)
   assert.match(apiBlock, /res\.status\(responseStatus\)\.json\(\{ error: responseErrorMessage \}\)/)
